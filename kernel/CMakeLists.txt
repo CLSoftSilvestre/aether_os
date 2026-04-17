@@ -19,6 +19,13 @@ set(KERNEL_SOURCES
     # Memory management
     mm/pmm.c
     mm/kmalloc.c
+    mm/vmm.c
+
+    # Syscall interface
+    core/syscall.c
+
+    # First user-space program (embedded in kernel binary)
+    user/init_task.S
 
     # Drivers
     drivers/char/uart_pl011.c

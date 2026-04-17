@@ -2,9 +2,9 @@
  * AetherOS — Kernel Entry Point
  * File: kernel/core/main.c
  *
- * Phase 2 initialisation sequence:
- *   UART → printk → exceptions → PMM → kmalloc → GIC → timer
- *   → scheduler → tasks → enable IRQs → idle loop
+ * Phase 3 initialisation sequence:
+ *   UART → exceptions → PMM → kmalloc → VMM (MMU on)
+ *   → GIC → timer → scheduler → IRQs → launch EL0 user process
  */
 
 #include "aether/printk.h"
@@ -12,6 +12,7 @@
 #include "aether/mm.h"
 #include "aether/kmalloc.h"
 #include "aether/scheduler.h"
+#include "aether/vmm.h"
 #include "drivers/char/uart_pl011.h"
 #include "drivers/irq/gic_v2.h"
 #include "drivers/timer/arm_timer.h"
@@ -19,54 +20,13 @@
 
 extern u8 __stack_top[];
 
-/* ── Kernel tasks ────────────────────────────────────────────────────────── */
-
 /*
- * task_monitor — a kernel thread that wakes every second and prints a
- * system status report. Shows the scheduler is alive and context switching
- * between the idle task and this task.
+ * Symbols emitted by init_task.S — the first user-space program.
+ * The code lives in kernel .text (EL1-only after MMU setup).
+ * We copy it at runtime to VMM_USER_CODE_BASE (EL0-accessible region).
  */
-static void task_monitor(void)
-{
-    u64 iteration = 0;
-
-    kinfo("[monitor] started on PID %lu\n",
-          (unsigned long)task_current_pid());
-
-    while (1) {
-        iteration++;
-        kinfo("[monitor] iteration %lu | ticks=%lu | free pages=%lu\n",
-              (unsigned long)iteration,
-              (unsigned long)timer_get_ticks(),
-              (unsigned long)pmm_free_pages());
-
-        if (iteration == 1) {
-            /* Print task list on first run to show the scheduler state */
-            scheduler_print_tasks();
-        }
-
-        /* Sleep for 2 seconds (200 ticks at 100Hz) then yield */
-        task_sleep(200);
-    }
-}
-
-/*
- * task_counter — a kernel thread that counts slowly and yields between
- * each step, demonstrating fine-grained cooperative scheduling.
- */
-static void task_counter(void)
-{
-    kinfo("[counter] started on PID %lu\n",
-          (unsigned long)task_current_pid());
-
-    for (u32 i = 1; i <= 10; i++) {
-        kinfo("[counter] count = %lu\n", (unsigned long)i);
-        task_sleep(50);   /* sleep 500ms between counts */
-    }
-
-    kinfo("[counter] done — exiting\n");
-    task_exit();
-}
+extern u8 user_init_start[];
+extern u8 user_init_end[];
 
 /* ── Kernel entry ────────────────────────────────────────────────────────── */
 
@@ -77,8 +37,8 @@ void kernel_main(void)
     uart_init();
     uart_puts("\r\n");
     uart_puts("╔══════════════════════════════════════╗\r\n");
-    uart_puts("║         AetherOS v0.0.2              ║\r\n");
-    uart_puts("║        Phase 2 — Memory + Tasks      ║\r\n");
+    uart_puts("║         AetherOS v0.0.3              ║\r\n");
+    uart_puts("║     Phase 3 — MMU + User Space       ║\r\n");
     uart_puts("╚══════════════════════════════════════╝\r\n");
     uart_puts("\r\n");
 
@@ -91,64 +51,57 @@ void kernel_main(void)
     exceptions_init();
 
     /* ── 3. Physical Memory Manager ─────────────────────────────────── */
-    /*
-     * Discovers free RAM and builds the page bitmap.
-     * Everything after this can allocate physical pages.
-     */
     pmm_init();
     pmm_print_stats();
 
     /* ── 4. Kernel heap ──────────────────────────────────────────────── */
-    /*
-     * Sets up the first-fit free-list allocator on top of the PMM.
-     * After this, kmalloc()/kfree() are available.
-     */
     kmalloc_init();
 
-    /* ── 5. GIC + Timer ─────────────────────────────────────────────── */
+    /* ── 5. MMU ─────────────────────────────────────────────────────── */
+    /*
+     * Enable the MMU with an identity map (VA==PA).
+     * After this call:
+     *   - D-cache and I-cache are active
+     *   - EL0 can access RAM (0x40000000–0x7FFFFFFF)
+     *   - EL0 cannot access MMIO (0x00000000–0x3FFFFFFF)
+     * Must come before GIC/timer so device-memory AP bits are in effect.
+     */
+    vmm_init();
+
+    /* ── 6. GIC + Timer ─────────────────────────────────────────────── */
     gic_init();
     timer_init();
 
-    /* ── 6. Scheduler ───────────────────────────────────────────────── */
-    /*
-     * Register the current execution context (kernel_main) as the idle
-     * task. It will run whenever no other task is ready.
-     */
+    /* ── 7. Scheduler ───────────────────────────────────────────────── */
     scheduler_init();
     scheduler_add_idle();
 
-    /* Create two kernel threads */
-    task_create(task_monitor, "monitor");
-    task_create(task_counter, "counter");
-
-    /* ── 7. Enable IRQs ─────────────────────────────────────────────── */
-    /*
-     * From this point forward, the timer fires every 10ms.
-     * The timer handler increments g_ticks, which task_sleep() uses
-     * to decide when to wake sleeping tasks.
-     *
-     * IRQ unmasking must happen AFTER the GIC and vector table are ready.
-     */
-    kinfo("Enabling IRQs — entering idle loop\n");
+    /* ── 8. Enable IRQs ─────────────────────────────────────────────── */
+    kinfo("Enabling IRQs\n");
     kinfo("────────────────────────────────────────────\n");
     __asm__ volatile("msr daifclr, #2" ::: "memory");
 
-    /* ── 8. Idle loop ───────────────────────────────────────────────── */
+    /* ── 9. Copy user code to EL0-accessible region and launch ─────── */
     /*
-     * The idle task: sleep until an IRQ wakes us, then yield to let
-     * any newly-ready tasks run.
+     * After the MMU is enabled, the kernel binary lives in EL1-only pages
+     * (AP=EL1_RW).  EL0 cannot execute from there.
      *
-     * wfi (Wait For Interrupt) is the ARM equivalent of x86 HLT —
-     * it halts the CPU core in a low-power state until an interrupt fires.
+     * The last 4MB of RAM (0x7FC00000–0x7FFFFFFF) is mapped AP=BOTH_RW:
+     *   - VMM_USER_CODE_BASE (0x7FC00000): we copy user_init_start here
+     *   - VMM_USER_STACK_TOP (0x7FFFF000): initial SP_EL0
      *
-     * After wfi returns (a timer IRQ fired):
-     *   1. The IRQ handler incremented g_ticks
-     *   2. task_yield() checks if any sleeping task's wake_tick has passed
-     *   3. If yes, that task's state → READY and we switch to it
-     *   4. The task runs, eventually sleeps again, and we return here
+     * user_init_start uses PC-relative addressing (adr instruction), so
+     * copying the blob verbatim to any address works correctly.
      */
-    while (1) {
-        __asm__ volatile("wfi");
-        task_yield();
-    }
+    uintptr_t code_size = (uintptr_t)user_init_end - (uintptr_t)user_init_start;
+    u8 *dst = (u8 *)VMM_USER_CODE_BASE;
+    for (uintptr_t i = 0; i < code_size; i++)
+        dst[i] = user_init_start[i];
+
+    kinfo("Phase 3: copied %lu bytes of user code to %p\n",
+          (unsigned long)code_size, dst);
+    kinfo("Phase 3: launching EL0 — entry=%p  stack=%p\n",
+          (void *)VMM_USER_CODE_BASE, (void *)VMM_USER_STACK_TOP);
+
+    launch_el0(VMM_USER_CODE_BASE, VMM_USER_STACK_TOP);
 }

@@ -12,6 +12,7 @@
 
 #include "aether/exceptions.h"
 #include "aether/printk.h"
+#include "aether/syscall.h"
 #include "drivers/irq/gic_v2.h"
 #include "drivers/timer/arm_timer.h"
 
@@ -158,6 +159,10 @@ void el1_serror_handler(trap_frame_t *frame)
  */
 void el0_sync_handler(trap_frame_t *frame)
 {
+    if (ESR_EC(frame->esr) == EC_SVC64) {
+        frame->x[0] = (u64)syscall_dispatch(frame);
+        return;
+    }
     print_exception_info(frame, "Synchronous (EL0 — user)");
     kpanic("Unhandled user exception — halting\n");
 }
