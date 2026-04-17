@@ -27,10 +27,21 @@ set(KERNEL_SOURCES
     fs/initrd.c
     fs/elf.c
 
-    # Drivers
+    # Drivers — character
     drivers/char/uart_pl011.c
+
+    # Drivers — interrupt controller
     drivers/irq/gic_v2.c
+
+    # Drivers — timer
     drivers/timer/arm_timer.c
+
+    # Drivers — video (framebuffer)
+    drivers/video/fw_cfg.c
+    drivers/video/ramfb.c
+    drivers/video/fb.c
+    drivers/video/font.c
+    drivers/video/fb_console.c
 )
 
 set(LINKER_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/arch/arm64/boot/linker.ld)

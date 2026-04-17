@@ -18,6 +18,8 @@
 #include "drivers/char/uart_pl011.h"
 #include "drivers/irq/gic_v2.h"
 #include "drivers/timer/arm_timer.h"
+#include "drivers/video/ramfb.h"
+#include "drivers/video/fb_console.h"
 #include "aether/types.h"
 
 extern u8 __stack_top[];
@@ -31,8 +33,8 @@ void kernel_main(void)
     uart_init();
     uart_puts("\r\n");
     uart_puts("╔══════════════════════════════════════╗\r\n");
-    uart_puts("║         AetherOS v0.0.4              ║\r\n");
-    uart_puts("║   Phase 3.1 — initrd + ELF Loader   ║\r\n");
+    uart_puts("║         AetherOS v0.0.5              ║\r\n");
+    uart_puts("║   Phase 4.0 — Framebuffer + Shell    ║\r\n");
     uart_puts("╚══════════════════════════════════════╝\r\n");
     uart_puts("\r\n");
 
@@ -53,6 +55,17 @@ void kernel_main(void)
      * Kernel region: 0x40000000–0x6FFFFFFF (AP=EL1_RW only).
      */
     vmm_init();
+
+    /* ── 5b. Framebuffer (after MMU so caches are on) ───────────────── */
+    /*
+     * ramfb_init() configures QEMU's ramfb device via fw_cfg,
+     * allocates 3MB of contiguous RAM for the pixel buffer, and
+     * populates fb_base/fb_width/fb_height/fb_stride.
+     * fb_console_init() sets up the scrolling text console on the FB.
+     * After this point, printk() outputs to both UART and screen.
+     */
+    ramfb_init();
+    fb_console_init();
 
     /* ── 6. GIC + Timer ─────────────────────────────────────────────── */
     gic_init();

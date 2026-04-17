@@ -31,8 +31,12 @@ typedef u32                 bool;
 /* NULL */
 #define NULL ((void *)0)
 
-/* Volatile MMIO accessor — prevents compiler from optimising away I/O reads */
-#define MMIO_READ32(addr)        (*(volatile u32 *)(addr))
-#define MMIO_WRITE32(addr, val)  (*(volatile u32 *)(addr) = (val))
+/* Volatile MMIO accessors — prevent compiler from optimising away I/O reads */
+#define MMIO_READ8(addr)          (*(volatile u8  *)(addr))
+#define MMIO_WRITE8(addr, val)    (*(volatile u8  *)(addr) = (u8)(val))
+#define MMIO_READ16(addr)         (*(volatile u16 *)(addr))
+#define MMIO_WRITE16(addr, val)   (*(volatile u16 *)(addr) = (u16)(val))
+#define MMIO_READ32(addr)         (*(volatile u32 *)(addr))
+#define MMIO_WRITE32(addr, val)   (*(volatile u32 *)(addr) = (u32)(val))
 
 #endif /* AETHER_TYPES_H */

@@ -5,8 +5,9 @@
 #          no firmware blobs required. Perfect for early kernel development.
 #
 # Usage:
-#   ./scripts/run_qemu.sh          — normal run
-#   ./scripts/run_qemu.sh --debug  — pause at boot, wait for GDB on port 1234
+#   ./scripts/run_qemu.sh              — graphical window + UART on stdio
+#   ./scripts/run_qemu.sh --headless   — UART only, no graphical window
+#   ./scripts/run_qemu.sh --debug      — graphical + GDB stub on port 1234
 
 set -e
 
@@ -20,8 +21,23 @@ if [ ! -f "${KERNEL_IMG}" ]; then
     exit 1
 fi
 
+# Parse flags
+HEADLESS=0
+DEBUG=0
+for arg in "$@"; do
+    case "$arg" in
+        --headless) HEADLESS=1 ;;
+        --debug)    DEBUG=1    ;;
+    esac
+done
+
 echo "[QEMU] Starting AetherOS..."
 echo "[QEMU] Kernel: ${KERNEL_IMG}"
+if [ "$HEADLESS" = "1" ]; then
+    echo "[QEMU] Mode: headless (UART only)"
+else
+    echo "[QEMU] Mode: graphical (1024×768 ramfb + UART on stdio)"
+fi
 echo "[QEMU] Press Ctrl-A X to exit QEMU"
 echo ""
 
@@ -29,23 +45,33 @@ echo ""
 QEMU_ARGS=(
     -M virt,highmem=off     # Virtual ARM board, no >4GB memory regions
     -cpu cortex-a76         # Pi 5 CPU core
-    -smp 1                  # Single core for now (Phase 2 adds SMP)
-    -m 1G                   # 1GB RAM (matches Pi 5 minimum config)
-    -kernel "${KERNEL_IMG}" # Load kernel image at RAM start (0x40000000)
+    -smp 1                  # Single core for now
+    -m 1G                   # 1GB RAM
+    -kernel "${KERNEL_IMG}" # Load kernel image
     -serial mon:stdio       # UART0 + QEMU monitor → your terminal
-    -nographic              # No graphical window (framebuffer comes in Phase 2)
-    -no-reboot              # Don't restart on crash — make the failure visible
+    -no-reboot              # Don't restart on crash
 )
 
-# Debug mode: pause at first instruction, expose GDB stub on port 1234
-if [ "${1}" = "--debug" ]; then
+if [ "$HEADLESS" = "1" ]; then
+    QEMU_ARGS+=(-nographic)
+else
+    # Phase 4.0: ramfb provides a 1024×768 display window.
+    # -vga none: disable default VGA device (conflicts with ramfb).
+    # -device ramfb: QEMU renders fb_base[] to a graphical window.
+    QEMU_ARGS+=(
+        -device ramfb
+        -vga none
+    )
+fi
+
+if [ "$DEBUG" = "1" ]; then
     echo "[QEMU] Debug mode: connect GDB with:"
     echo "       aarch64-elf-gdb build/kernel/aether_kernel.elf"
     echo "       (gdb) target remote localhost:1234"
     echo "       (gdb) break kernel_main"
     echo "       (gdb) continue"
     echo ""
-    QEMU_ARGS+=(-s -S)      # -s = GDB server on :1234, -S = pause at start
+    QEMU_ARGS+=(-s -S)
 fi
 
 qemu-system-aarch64 "${QEMU_ARGS[@]}"

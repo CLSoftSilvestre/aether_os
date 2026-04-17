@@ -20,7 +20,20 @@
 
 #include "aether/printk.h"
 #include "drivers/char/uart_pl011.h"
+#include "drivers/video/fb_console.h"
 #include <stdarg.h>   /* va_list — provided by compiler even in -ffreestanding */
+
+/* Output one character to all active sinks (UART always; framebuffer when ready) */
+static void pk_putc(char c)
+{
+    uart_putc(c);
+    fb_console_putc(c);
+}
+
+static void pk_puts(const char *s)
+{
+    while (*s) pk_putc(*s++);
+}
 
 /* ── Level prefixes ────────────────────────────────────────────────────── */
 static const char *const level_prefix[] = {
@@ -46,9 +59,9 @@ static void print_hex(u64 value, int uppercase, int min_digits)
     if (value == 0) {
         /* pad with zeros to min_digits */
         while (min_digits-- > 0)
-            uart_putc('0');
+            pk_putc('0');
         if (min_digits < 0)
-            uart_putc('0');
+            pk_putc('0');
         return;
     }
 
@@ -59,9 +72,9 @@ static void print_hex(u64 value, int uppercase, int min_digits)
     }
     /* pad with leading zeros if needed */
     while (min_digits-- > 0)
-        uart_putc('0');
+        pk_putc('0');
 
-    uart_puts(&buf[i]);
+    pk_puts(&buf[i]);
 }
 
 static void print_udec(u64 value)
@@ -71,7 +84,7 @@ static void print_udec(u64 value)
     buf[i] = '\0';
 
     if (value == 0) {
-        uart_putc('0');
+        pk_putc('0');
         return;
     }
 
@@ -80,7 +93,7 @@ static void print_udec(u64 value)
         value /= 10;
     }
 
-    uart_puts(&buf[i]);
+    pk_puts(&buf[i]);
 }
 
 static void print_sdec(s64 value)
@@ -100,7 +113,7 @@ static void vprintk(const char *fmt, va_list args)
 {
     for (; *fmt; fmt++) {
         if (*fmt != '%') {
-            uart_putc(*fmt);
+            pk_putc(*fmt);
             continue;
         }
 
@@ -115,12 +128,12 @@ static void vprintk(const char *fmt, va_list args)
 
         switch (*fmt) {
         case 'c':
-            uart_putc((char)va_arg(args, int));
+            pk_putc((char)va_arg(args, int));
             break;
 
         case 's': {
             const char *s = va_arg(args, const char *);
-            uart_puts(s ? s : "(null)");
+            pk_puts(s ? s : "(null)");
             break;
         }
 
@@ -156,20 +169,20 @@ static void vprintk(const char *fmt, va_list args)
         case 'p': {
             /* Pointer: always 64-bit, printed as 0x<16 digits> */
             u64 ptr = (u64)(uintptr_t)va_arg(args, void *);
-            uart_puts("0x");
+            pk_puts("0x");
             print_hex(ptr, 0, 16);
             break;
         }
 
         case '%':
-            uart_putc('%');
+            pk_putc('%');
             break;
 
         default:
             /* Unknown specifier — print literally */
-            uart_putc('%');
-            if (is_long) uart_putc('l');
-            uart_putc(*fmt);
+            pk_putc('%');
+            if (is_long) pk_putc('l');
+            pk_putc(*fmt);
             break;
         }
     }
@@ -184,7 +197,7 @@ void printk(int level, const char *fmt, ...)
 
     /* Print level prefix */
     if (level >= LOG_DEBUG && level <= LOG_PANIC)
-        uart_puts(level_prefix[level]);
+        pk_puts(level_prefix[level]);
 
     va_list args;
     va_start(args, fmt);
