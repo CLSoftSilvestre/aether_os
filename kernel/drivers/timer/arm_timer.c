@@ -115,12 +115,7 @@ void timer_irq_handler(void)
     /* Reload the countdown for the next tick */
     write_cntp_tval(g_interval);
 
-    /* Print a heartbeat every 100 ticks (once per second) */
-    if (g_ticks % TIMER_HZ == 0) {
-        kinfo("Timer: %lu seconds elapsed, tick=%lu\n",
-              (unsigned long)(g_ticks / TIMER_HZ),
-              (unsigned long)g_ticks);
-    }
+    /* nothing — heartbeat removed; use sys_get_ticks() from user space */
 }
 
 u64 timer_get_ticks(void)

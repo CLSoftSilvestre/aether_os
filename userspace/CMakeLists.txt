@@ -19,6 +19,7 @@ add_library(libaether STATIC
     lib/libaether/string.c
     lib/libaether/stdio.c
     lib/libaether/stdlib.c
+    lib/libaether/gfx.c
 )
 
 target_include_directories(libaether PUBLIC

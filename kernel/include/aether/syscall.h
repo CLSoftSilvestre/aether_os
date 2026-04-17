@@ -40,6 +40,12 @@
 /* AetherOS-specific extensions */
 #define SYS_INITRD_LS   500   /* sys_initrd_ls(buf, len) → bytes written     */
 
+/* Graphics syscalls (Phase 4.1) — arg packing documented in syscall.c */
+#define SYS_FB_FILL     601   /* fill rect:  (x<<32|y, w<<32|h, color)       */
+#define SYS_FB_CHAR     602   /* draw char:  (x<<32|y, ch<<32|fg, bg)        */
+#define SYS_GET_TICKS   603   /* → u64 100Hz tick count since boot            */
+#define SYS_FB_CLAIM    604   /* user owns FB: disable kernel fb_console      */
+
 /* File descriptor numbers */
 #define FD_STDIN   0
 #define FD_STDOUT  1

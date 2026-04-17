@@ -18,11 +18,18 @@ ENTRY(_start)
 SECTIONS
 {
     /*
-     * Kernel load address: start of RAM on QEMU virt machine.
-     * ". = <address>" sets the current location counter.
-     * Think of it like ORG in 8086 assembly.
+     * Kernel load address.
+     *
+     * QEMU 10.x virt machine places a 512KB bootloader stub at the
+     * start of RAM (0x40000000) and loads the kernel at +0x80000.
+     * Linking at 0x40080000 ensures all absolute addresses are correct.
+     *
+     * The bootloader stub passes:
+     *   x0 = DTB address
+     *   x1–x3 = 0
+     *   x4 = kernel entry (0x40080000) → br x4
      */
-    . = 0x40000000;
+    . = 0x40080000;
 
     /*
      * .text.boot — boot code MUST be at the very beginning of the image
@@ -58,6 +65,7 @@ SECTIONS
         __bss_start = .;
         *(.bss*)
         *(COMMON)
+        . = ALIGN(8);   /* ensure size is a multiple of 8 for the zeroing loop */
         __bss_end = .;
     }
 

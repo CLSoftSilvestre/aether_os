@@ -26,6 +26,10 @@
 #include "aether/scheduler.h"
 #include "aether/types.h"
 #include "drivers/char/uart_pl011.h"
+#include "drivers/timer/arm_timer.h"
+#include "drivers/video/fb.h"
+#include "drivers/video/font.h"
+#include "drivers/video/fb_console.h"
 
 /* ── Individual syscall implementations ─────────────────────────────────── */
 
@@ -126,6 +130,48 @@ static long do_sys_sched_yield(void)
     return 0;
 }
 
+/* ── Graphics syscalls ───────────────────────────────────────────────────── */
+
+/*
+ * Arg packing (all use _sys3 ABI):
+ *
+ *  sys_fb_fill:  arg0 = (x << 32 | y)   arg1 = (w << 32 | h)   arg2 = color
+ *  sys_fb_char:  arg0 = (x << 32 | y)   arg1 = (ch << 32 | fg) arg2 = bg
+ *
+ * This avoids needing a struct pointer and works with the existing 3-arg ABI.
+ */
+
+static long do_sys_fb_fill(u64 xy, u64 wh, u64 color)
+{
+    u32 x = (u32)(xy >> 32);
+    u32 y = (u32)(xy & 0xFFFFFFFFu);
+    u32 w = (u32)(wh >> 32);
+    u32 h = (u32)(wh & 0xFFFFFFFFu);
+    fb_fill_rect(x, y, w, h, (u32)color);
+    return 0;
+}
+
+static long do_sys_fb_char(u64 xy, u64 ch_fg, u64 bg)
+{
+    u32 x  = (u32)(xy >> 32);
+    u32 y  = (u32)(xy & 0xFFFFFFFFu);
+    u8  ch = (u8)(ch_fg >> 32);
+    u32 fg = (u32)(ch_fg & 0xFFFFFFFFu);
+    font_draw_char(x, y, ch, fg, (u32)bg);
+    return 0;
+}
+
+static long do_sys_get_ticks(void)
+{
+    return (long)timer_get_ticks();
+}
+
+static long do_sys_fb_claim(void)
+{
+    fb_console_claim();
+    return 0;
+}
+
 /* ── Dispatcher ─────────────────────────────────────────────────────────── */
 
 /*
@@ -158,6 +204,18 @@ long syscall_dispatch(trap_frame_t *frame)
 
     case SYS_SCHED_YIELD:
         return do_sys_sched_yield();
+
+    case SYS_FB_FILL:
+        return do_sys_fb_fill(arg0, arg1, arg2);
+
+    case SYS_FB_CHAR:
+        return do_sys_fb_char(arg0, arg1, arg2);
+
+    case SYS_GET_TICKS:
+        return do_sys_get_ticks();
+
+    case SYS_FB_CLAIM:
+        return do_sys_fb_claim();
 
     default:
         kwarn("[SYS] unknown syscall #%lu from PID %lu\n",

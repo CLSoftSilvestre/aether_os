@@ -32,6 +32,7 @@
 static u32 cur_col;
 static u32 cur_row;
 static int con_ready;
+static int con_claimed;   /* set by fb_console_claim() — user process took over */
 
 /* ── Scroll one line up ──────────────────────────────────────────────── */
 
@@ -61,11 +62,17 @@ void fb_console_init(void)
     cur_col = 0;
     cur_row = 0;
     con_ready = 1;
+    con_claimed = 0;
+}
+
+void fb_console_claim(void)
+{
+    con_claimed = 1;
 }
 
 void fb_console_putc(char c)
 {
-    if (!con_ready || !fb_base) return;
+    if (!con_ready || !fb_base || con_claimed) return;
 
     if (c == '\r') {
         cur_col = 0;
