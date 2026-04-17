@@ -91,41 +91,29 @@ void scheduler_add_idle(void)
     g_current_idx = 0;
 }
 
-int task_create(void (*entry)(void), const char *name)
+/* ── Internal: allocate a task slot and initialise its kernel stack ─ */
+
+static task_t *alloc_task(void (*entry_fn)(void), const char *name)
 {
     if (g_num_tasks >= MAX_TASKS) {
         kerror("Scheduler: too many tasks (max %d)\n", MAX_TASKS);
-        return -1;
+        return NULL;
     }
 
-    task_t *t = &g_tasks[g_num_tasks];
-
-    /* Allocate a stack for this task */
     uintptr_t stack_phys = pmm_alloc_pages(TASK_STACK_PAGES);
     if (!stack_phys) {
         kerror("Scheduler: cannot allocate stack for '%s'\n", name);
-        return -1;
+        return NULL;
     }
 
-    /*
-     * Stack top: physical address of top of stack region.
-     * Stack grows downward — we start SP at the highest address.
-     * AArch64 ABI requires SP to be 16-byte aligned.
-     */
     uintptr_t stack_top = stack_phys + TASK_STACK_PAGES * PMM_PAGE_SIZE;
 
-    /*
-     * Initialise cpu_context_t so that when context_switch() loads this
-     * task and executes 'ret', it jumps to the entry function.
-     *
-     * x19–x29 = 0 (a new task starts with no callee-saved state)
-     * x30     = entry function address (ret → entry())
-     * sp      = top of stack (AArch64: full-descending)
-     */
+    task_t *t = &g_tasks[g_num_tasks];
+
     t->ctx.x19 = t->ctx.x20 = t->ctx.x21 = t->ctx.x22 = 0;
     t->ctx.x23 = t->ctx.x24 = t->ctx.x25 = t->ctx.x26 = 0;
     t->ctx.x27 = t->ctx.x28 = t->ctx.x29 = 0;
-    t->ctx.x30 = (u64)entry;      /* ret will jump here on first schedule */
+    t->ctx.x30 = (u64)entry_fn;
     t->ctx.sp  = stack_top;
 
     t->pid        = g_num_tasks;
@@ -133,15 +121,47 @@ int task_create(void (*entry)(void), const char *name)
     t->wake_tick  = 0;
     t->name       = name;
     t->stack_phys = stack_phys;
+    t->el0_entry  = 0;
+    t->el0_sp     = 0;
 
-    kinfo("Scheduler: created task[%lu] '%s' entry=%p stack=%p–%p\n",
+    return t;
+}
+
+int task_create(void (*entry)(void), const char *name)
+{
+    task_t *t = alloc_task(entry, name);
+    if (!t) return -1;
+
+    kinfo("Scheduler: created task[%lu] '%s' entry=%p stack=%p\n",
           (unsigned long)g_num_tasks, name,
-          (void *)entry,
-          (void *)stack_phys,
-          (void *)stack_top);
+          (void *)entry, (void *)t->stack_phys);
 
     g_num_tasks++;
     return 0;
+}
+
+int task_create_user(uintptr_t el0_entry, uintptr_t el0_sp,
+                     const char *name, void (*trampoline)(void))
+{
+    task_t *t = alloc_task(trampoline, name);
+    if (!t) return -1;
+
+    t->el0_entry = el0_entry;
+    t->el0_sp    = el0_sp;
+
+    kinfo("Scheduler: created user task[%lu] '%s' el0_entry=%p el0_sp=%p\n",
+          (unsigned long)g_num_tasks, name,
+          (void *)el0_entry, (void *)el0_sp);
+
+    g_num_tasks++;
+    return 0;
+}
+
+void task_get_user_regs(uintptr_t *entry_out, uintptr_t *sp_out)
+{
+    task_t *t = &g_tasks[g_current_idx];
+    if (entry_out) *entry_out = t->el0_entry;
+    if (sp_out)    *sp_out    = t->el0_sp;
 }
 
 void task_yield(void)

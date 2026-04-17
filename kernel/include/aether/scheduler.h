@@ -68,6 +68,10 @@ typedef struct {
     u64           wake_tick;   /* tick counter when task should wake (for sleep) */
     const char   *name;        /* human-readable name for debugging */
     uintptr_t     stack_phys;  /* physical address of stack allocation */
+    /* Phase 3.1: user-process fields (only valid for tasks created via
+     * task_create_user; kernel tasks leave these as 0) */
+    uintptr_t     el0_entry;   /* EL0 entry point (user-space VA) */
+    uintptr_t     el0_sp;      /* EL0 initial stack pointer (SP_EL0) */
 } task_t;
 
 /* ── Public API ─────────────────────────────────────────────────────── */
@@ -85,6 +89,26 @@ void scheduler_add_idle(void);
  * Returns 0 on success, -1 if too many tasks.
  */
 int task_create(void (*entry)(void), const char *name);
+
+/*
+ * task_create_user — create a kernel task that will launch a user (EL0) process.
+ *
+ * el0_entry:  virtual address of the EL0 entry point (from ELF e_entry)
+ * el0_sp:     initial SP_EL0 (user stack top)
+ * name:       display name for debugging
+ * trampoline: kernel-mode function that calls launch_el0(el0_entry, el0_sp)
+ *             (defined in process.c to keep vmm.h out of scheduler.c)
+ *
+ * Returns 0 on success, -1 on error.
+ */
+int task_create_user(uintptr_t el0_entry, uintptr_t el0_sp,
+                     const char *name, void (*trampoline)(void));
+
+/*
+ * task_get_user_regs — retrieve the EL0 entry/stack of the current task.
+ * Called from user_task_trampoline() in process.c just before eret.
+ */
+void task_get_user_regs(uintptr_t *entry_out, uintptr_t *sp_out);
 
 /*
  * task_yield — voluntarily surrender the CPU to the next ready task.

@@ -15,17 +15,17 @@ set(KERNEL_SOURCES
     core/printk.c
     core/exceptions.c
     core/scheduler.c
+    core/syscall.c
+    core/process.c
 
     # Memory management
     mm/pmm.c
     mm/kmalloc.c
     mm/vmm.c
 
-    # Syscall interface
-    core/syscall.c
-
-    # First user-space program (embedded in kernel binary)
-    user/init_task.S
+    # Filesystem (initrd + ELF loader)
+    fs/initrd.c
+    fs/elf.c
 
     # Drivers
     drivers/char/uart_pl011.c

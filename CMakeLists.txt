@@ -30,7 +30,17 @@ include_directories(
 )
 
 # ── Subdirectories ──────────────────────────────────────────────────────────
+# userspace must be added first — its initrd.o is linked into the kernel.
+add_subdirectory(userspace)
 add_subdirectory(kernel)
+
+# ── Wire initrd.o into the kernel binary ────────────────────────────────────
+# The CPIO archive (built by the userspace target) is embedded via an object
+# file generated with objcopy -I binary.  The kernel references these symbols:
+#   _binary_initrd_cpio_start / _binary_initrd_cpio_end
+set(INITRD_OBJ ${CMAKE_BINARY_DIR}/initrd.o)
+add_dependencies(aether_kernel initrd)
+target_link_options(aether_kernel PRIVATE ${INITRD_OBJ})
 
 # ── Bootable image target ───────────────────────────────────────────────────
 # After building, convert the ELF to a raw binary that QEMU / Pi can load

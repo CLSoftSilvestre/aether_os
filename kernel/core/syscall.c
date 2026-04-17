@@ -102,12 +102,6 @@ long syscall_dispatch(trap_frame_t *frame)
     u64 arg1 = frame->x[1];
     u64 arg2 = frame->x[2];
 
-    kdebug("[SYS] syscall #%lu (x0=%lu x1=%p x2=%lu)\n",
-           (unsigned long)nr,
-           (unsigned long)arg0,
-           (void *)arg1,
-           (unsigned long)arg2);
-
     switch (nr) {
     case SYS_EXIT:
         do_sys_exit((long)arg0);   /* noreturn */

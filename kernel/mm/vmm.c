@@ -101,19 +101,20 @@ void vmm_init(void)
      *   [53]    = PXN (0 = EL1 may execute)
      *   [54]    = UXN (0 = EL0 may execute)
      */
-    for (int i = 0; i < 512; i++) {
+    for (u32 i = 0; i < 512; i++) {
         uintptr_t pa = 0x40000000UL + (uintptr_t)i * 0x200000UL;
 
-        if (i >= 510) {
+        if (i >= VMM_USER_L2_START) {
             /*
-             * Last 4MB (L2[510-511]): user-accessible region.
+             * User region (L2[384-511] = 0x70000000–0x7FFFFFFF, 256MB).
              *
              * AP=BOTH_RW: EL0 and EL1 can read/write.
-             * UXN=0: EL0 may execute (user code lives here).
-             * PXN=1: EL1 should not execute from user pages.
+             * UXN=0:      EL0 may execute (user code and stack live here).
+             * PXN=1:      EL1 should not execute from user pages.
              *
-             * Corresponds to VMM_USER_CODE_BASE (0x7FC00000) and
-             * VMM_USER_STACK_TOP (0x7FE00000).
+             * Layout:
+             *   0x70000000–0x7FEFFFFF  user code and data (ELF loads here)
+             *   0x7FF00000–0x7FFFFFFF  user stack (SP_EL0 starts at 0x7FFFF000)
              */
             l2_table_ram[i] = pa
                             | PTE_ATTR_NORMAL
@@ -124,7 +125,7 @@ void vmm_init(void)
                             | PTE_TYPE_BLOCK;
         } else {
             /*
-             * Kernel region (L2[0-509]): EL1-only access.
+             * Kernel region (L2[0-383] = 0x40000000–0x6FFFFFFF, 768MB).
              *
              * AP=EL1_RW: only EL1 can read/write. EL0 is blocked.
              * UXN=1: EL0 may not execute kernel pages.
@@ -169,7 +170,8 @@ void vmm_init(void)
     kinfo("VMM: L1 table at %p  L2-RAM at %p\n",
           (void *)l1_table, (void *)l2_table_ram);
     kinfo("VMM: [0] MMIO  0x00000000–0x3FFFFFFF  → 1GB block (device, EL1)\n");
-    kinfo("VMM: [1] RAM   0x40000000–0x7FFFFFFF  → L2 table (510×EL1, 2×user)\n");
+    kinfo("VMM: [1] RAM   0x40000000–0x6FFFFFFF  → L2[0-383]   768MB kernel (EL1)\n");
+    kinfo("VMM: [1] RAM   0x70000000–0x7FFFFFFF  → L2[384-511] 256MB user (EL0+EL1)\n");
 
     /*
      * Step 2: Configure MAIR_EL1.

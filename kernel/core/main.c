@@ -2,9 +2,9 @@
  * AetherOS — Kernel Entry Point
  * File: kernel/core/main.c
  *
- * Phase 3 initialisation sequence:
+ * Phase 3.1 initialisation sequence:
  *   UART → exceptions → PMM → kmalloc → VMM (MMU on)
- *   → GIC → timer → scheduler → IRQs → launch EL0 user process
+ *   → GIC → timer → scheduler → initrd → process_spawn → IRQs → idle
  */
 
 #include "aether/printk.h"
@@ -13,20 +13,14 @@
 #include "aether/kmalloc.h"
 #include "aether/scheduler.h"
 #include "aether/vmm.h"
+#include "aether/initrd.h"
+#include "aether/process.h"
 #include "drivers/char/uart_pl011.h"
 #include "drivers/irq/gic_v2.h"
 #include "drivers/timer/arm_timer.h"
 #include "aether/types.h"
 
 extern u8 __stack_top[];
-
-/*
- * Symbols emitted by init_task.S — the first user-space program.
- * The code lives in kernel .text (EL1-only after MMU setup).
- * We copy it at runtime to VMM_USER_CODE_BASE (EL0-accessible region).
- */
-extern u8 user_init_start[];
-extern u8 user_init_end[];
 
 /* ── Kernel entry ────────────────────────────────────────────────────────── */
 
@@ -37,17 +31,12 @@ void kernel_main(void)
     uart_init();
     uart_puts("\r\n");
     uart_puts("╔══════════════════════════════════════╗\r\n");
-    uart_puts("║         AetherOS v0.0.3              ║\r\n");
-    uart_puts("║     Phase 3 — MMU + User Space       ║\r\n");
+    uart_puts("║         AetherOS v0.0.4              ║\r\n");
+    uart_puts("║   Phase 3.1 — initrd + ELF Loader   ║\r\n");
     uart_puts("╚══════════════════════════════════════╝\r\n");
     uart_puts("\r\n");
 
     /* ── 2. Exception vector table ──────────────────────────────────── */
-    /*
-     * Must come before anything that could trigger an exception
-     * (including printk, which does MMIO writes to the UART).
-     * In practice it works without this, but it is the correct order.
-     */
     exceptions_init();
 
     /* ── 3. Physical Memory Manager ─────────────────────────────────── */
@@ -59,12 +48,9 @@ void kernel_main(void)
 
     /* ── 5. MMU ─────────────────────────────────────────────────────── */
     /*
-     * Enable the MMU with an identity map (VA==PA).
-     * After this call:
-     *   - D-cache and I-cache are active
-     *   - EL0 can access RAM (0x40000000–0x7FFFFFFF)
-     *   - EL0 cannot access MMIO (0x00000000–0x3FFFFFFF)
-     * Must come before GIC/timer so device-memory AP bits are in effect.
+     * Identity map, caches on.
+     * User region: 0x70000000–0x7FFFFFFF (AP=BOTH_RW, EL0 can execute).
+     * Kernel region: 0x40000000–0x6FFFFFFF (AP=EL1_RW only).
      */
     vmm_init();
 
@@ -76,32 +62,29 @@ void kernel_main(void)
     scheduler_init();
     scheduler_add_idle();
 
-    /* ── 8. Enable IRQs ─────────────────────────────────────────────── */
-    kinfo("Enabling IRQs\n");
+    /* ── 8. initrd ──────────────────────────────────────────────────── */
+    initrd_init();
+
+    /* ── 9. Spawn first user process from initrd ELF ───────────────── */
+    /*
+     * process_spawn() locates "init" in the CPIO archive, loads its ELF
+     * segments into the user region (0x70000000+), and creates a kernel
+     * task whose entry is user_task_trampoline → launch_el0(entry, sp).
+     */
+    if (process_spawn("/init") != 0)
+        kpanic("kernel_main: failed to spawn /init\n");
+
+    /* ── 10. Enable IRQs and enter idle loop ────────────────────────── */
+    kinfo("Enabling IRQs — entering idle loop\n");
     kinfo("────────────────────────────────────────────\n");
     __asm__ volatile("msr daifclr, #2" ::: "memory");
 
-    /* ── 9. Copy user code to EL0-accessible region and launch ─────── */
     /*
-     * After the MMU is enabled, the kernel binary lives in EL1-only pages
-     * (AP=EL1_RW).  EL0 cannot execute from there.
-     *
-     * The last 4MB of RAM (0x7FC00000–0x7FFFFFFF) is mapped AP=BOTH_RW:
-     *   - VMM_USER_CODE_BASE (0x7FC00000): we copy user_init_start here
-     *   - VMM_USER_STACK_TOP (0x7FFFF000): initial SP_EL0
-     *
-     * user_init_start uses PC-relative addressing (adr instruction), so
-     * copying the blob verbatim to any address works correctly.
+     * The scheduler will yield from idle to the init task on the next
+     * timer tick.  Until then, spin here.
      */
-    uintptr_t code_size = (uintptr_t)user_init_end - (uintptr_t)user_init_start;
-    u8 *dst = (u8 *)VMM_USER_CODE_BASE;
-    for (uintptr_t i = 0; i < code_size; i++)
-        dst[i] = user_init_start[i];
-
-    kinfo("Phase 3: copied %lu bytes of user code to %p\n",
-          (unsigned long)code_size, dst);
-    kinfo("Phase 3: launching EL0 — entry=%p  stack=%p\n",
-          (void *)VMM_USER_CODE_BASE, (void *)VMM_USER_STACK_TOP);
-
-    launch_el0(VMM_USER_CODE_BASE, VMM_USER_STACK_TOP);
+    for (;;) {
+        task_yield();
+        __asm__ volatile("wfi" ::: "memory");
+    }
 }

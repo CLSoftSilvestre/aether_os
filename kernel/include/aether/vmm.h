@@ -123,18 +123,22 @@
 
 /* ── User-space memory region ────────────────────────────────────────── */
 /*
- * Phase 3 MVP: the last 4MB of RAM (two 2MB L2 blocks) are mapped with
- * AP=BOTH_RW so EL0 can read, write, and execute there.
+ * Phase 3.1: the top 256MB of RAM (L2[384-511] = 0x70000000–0x7FFFFFFF)
+ * is mapped AP=BOTH_RW so EL0 can read, write, and execute there.
  *
- * The kernel copies user_init_start code to VMM_USER_CODE_BASE at boot,
- * then launches EL0 pointing there.  The user stack lives in the second
- * block so code and stack don't overlap.
+ * User ELF programs are linked at VMM_USER_BASE (0x70000000).
+ * The user stack grows down from VMM_USER_STACK_TOP (0x7FFFF000).
  *
- *   0x7FC00000 – 0x7FDFFFFF  (L2[510])  user code  (AP=BOTH_RW, UXN=0)
- *   0x7FE00000 – 0x7FFFFFFF  (L2[511])  user stack (AP=BOTH_RW, UXN=0)
+ *   0x70000000 – 0x7FEFFFFF  (L2[384-510])  user code/data  (AP=BOTH_RW)
+ *   0x7FF00000 – 0x7FFFFFFF  (L2[511])      user stack      (AP=BOTH_RW)
+ *
+ * VMM_USER_L2_START is the L2 index where the user region begins.
+ * L2[i] covers PA = 0x40000000 + i * 0x200000.
+ * L2[384]: 0x40000000 + 384 * 0x200000 = 0x70000000.
  */
-#define VMM_USER_CODE_BASE  0x7FC00000UL   /* EL0 entry point is copied here */
-#define VMM_USER_STACK_TOP  0x7FFFF000UL   /* EL0 SP_EL0 initial value       */
+#define VMM_USER_L2_START   384UL          /* L2 index where user region begins */
+#define VMM_USER_BASE       0x70000000UL   /* start of user virtual address space */
+#define VMM_USER_STACK_TOP  0x7FFFF000UL   /* EL0 SP_EL0 initial value           */
 
 /* ── Public API ──────────────────────────────────────────────────────── */
 
