@@ -1,9 +1,33 @@
 cmake_minimum_required(VERSION 3.20)
 
+# ── Shared compile flags for all userspace targets ───────────────────────────
+set(USER_COMPILE_FLAGS
+    -ffreestanding
+    -fno-builtin
+    -nostdinc
+    -fno-stack-protector
+    -fpic
+)
+
+set(USER_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/lib/include)
+
 # ── Userspace linker script ──────────────────────────────────────────────────
 set(USER_LINKER_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/lib/user.ld)
 
-# ── init — first user-space process (PID 1) ──────────────────────────────────
+# ── libaether — freestanding C runtime ───────────────────────────────────────
+add_library(libaether STATIC
+    lib/libaether/string.c
+    lib/libaether/stdio.c
+    lib/libaether/stdlib.c
+)
+
+target_include_directories(libaether PUBLIC
+    lib/include
+)
+
+target_compile_options(libaether PRIVATE ${USER_COMPILE_FLAGS})
+
+# ── init / aesh — first user-space process (PID 1) ───────────────────────────
 add_executable(user_init
     apps/init/main.c
     lib/crt0.S
@@ -13,13 +37,9 @@ target_include_directories(user_init PRIVATE
     lib/include
 )
 
-target_compile_options(user_init PRIVATE
-    -ffreestanding
-    -fno-builtin
-    -nostdinc
-    -fno-stack-protector
-    -fpic               # position-independent for future per-process ASLR
-)
+target_compile_options(user_init PRIVATE ${USER_COMPILE_FLAGS})
+
+target_link_libraries(user_init PRIVATE libaether)
 
 target_link_options(user_init PRIVATE
     -T ${USER_LINKER_SCRIPT}

@@ -15,7 +15,9 @@
 /* Syscall numbers */
 #define SYS_EXIT         0
 #define SYS_SCHED_YIELD  3
+#define SYS_READ         63
 #define SYS_WRITE        34
+#define SYS_INITRD_LS   500
 
 /* Standard file descriptors */
 #define STDIN_FILENO   0
@@ -52,6 +54,11 @@ static inline void sys_exit(int code)
     __builtin_unreachable();
 }
 
+static inline long sys_read(int fd, char *buf, long len)
+{
+    return _sys3(SYS_READ, (long)fd, (long)(void *)buf, len);
+}
+
 static inline long sys_write(int fd, const char *buf, long len)
 {
     return _sys3(SYS_WRITE, (long)fd, (long)(const void *)buf, len);
@@ -60,6 +67,11 @@ static inline long sys_write(int fd, const char *buf, long len)
 static inline long sys_sched_yield(void)
 {
     return _sys1(SYS_SCHED_YIELD, 0);
+}
+
+static inline long sys_initrd_ls(char *buf, long len)
+{
+    return _sys3(SYS_INITRD_LS, (long)(void *)buf, len, 0);
 }
 
 /* ── String helpers (no libc) ────────────────────────────────────── */

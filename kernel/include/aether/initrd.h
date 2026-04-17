@@ -43,4 +43,12 @@ void initrd_init(void);
  */
 const void *initrd_find(const char *path, u32 *size_out);
 
+/*
+ * initrd_list — write a newline-separated listing of all files into buf.
+ *
+ * Returns the number of bytes written (not including NUL terminator).
+ * Output is always NUL-terminated.
+ */
+u32 initrd_list(char *buf, u32 len);
+
 #endif /* AETHER_INITRD_H */

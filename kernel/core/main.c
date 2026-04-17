@@ -56,6 +56,7 @@ void kernel_main(void)
 
     /* ── 6. GIC + Timer ─────────────────────────────────────────────── */
     gic_init();
+    uart_enable_rx_irq();
     timer_init();
 
     /* ── 7. Scheduler ───────────────────────────────────────────────── */

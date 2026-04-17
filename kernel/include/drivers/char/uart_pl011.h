@@ -26,7 +26,14 @@
 #define UART_LCR_H  0x02C   /* Line Control Register                      */
 #define UART_CR     0x030   /* Control Register                           */
 #define UART_IMSC   0x038   /* Interrupt Mask Set/Clear                   */
+#define UART_MIS    0x040   /* Masked Interrupt Status                    */
 #define UART_ICR    0x044   /* Interrupt Clear Register                   */
+
+/* IMSC / ICR bit for the receive FIFO interrupt */
+#define UART_INT_RX  (1U << 4)   /* RXIM / RXIC */
+
+/* GIC SPI 1 = interrupt ID 33 — PL011 UART0 on QEMU virt */
+#define UART_IRQ_ID  33U
 
 /* ── Flag Register (FR) bits ──────────────────────────────────────────── */
 #define UART_FR_RXFE  (1 << 4)   /* Receive FIFO Empty  */
@@ -47,7 +54,19 @@
 void uart_init(void);
 void uart_putc(char c);
 void uart_puts(const char *s);
-void uart_puthex(u64 value);    /* print 64-bit value as hex — useful for debugging */
-void uart_putdec(u64 value);    /* print 64-bit value as decimal */
+void uart_puthex(u64 value);
+void uart_putdec(u64 value);
+
+/* Enable RX interrupt in the UART and GIC.  Call after gic_init(). */
+void uart_enable_rx_irq(void);
+
+/* Called from el1_irq_handler when IRQ ID == UART_IRQ_ID */
+void uart_irq_handler(void);
+
+/* Non-blocking: returns 1 if receive ring buffer has data */
+int  uart_rx_empty(void);
+
+/* Non-blocking read — caller must check uart_rx_empty() first */
+char uart_getc_nowait(void);
 
 #endif /* UART_PL011_H */

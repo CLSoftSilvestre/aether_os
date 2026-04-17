@@ -15,6 +15,7 @@
 #include "aether/syscall.h"
 #include "drivers/irq/gic_v2.h"
 #include "drivers/timer/arm_timer.h"
+#include "drivers/char/uart_pl011.h"
 
 /* ── Vector table installation ──────────────────────────────────────────── */
 
@@ -128,6 +129,10 @@ void el1_irq_handler(trap_frame_t *frame)
     switch (irq) {
     case TIMER_IRQ_ID:
         timer_irq_handler();
+        break;
+
+    case UART_IRQ_ID:
+        uart_irq_handler();
         break;
 
     default:

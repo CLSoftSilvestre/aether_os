@@ -167,3 +167,36 @@ const void *initrd_find(const char *path, u32 *size_out)
     kerror("initrd: '%s' not found\n", path);
     return NULL;
 }
+
+u32 initrd_list(char *buf, u32 len)
+{
+    if (!buf || len == 0) return 0;
+
+    const u8 *p   = _binary_initrd_cpio_start;
+    const u8 *end = _binary_initrd_cpio_end;
+    u32 out = 0;
+
+    while (p + CPIO_HDR_SIZE <= end) {
+        const struct cpio_hdr *h = (const struct cpio_hdr *)p;
+        if (!cpio_memeq(h->magic, CPIO_MAGIC, 6)) break;
+
+        u32 namesize = hex8(h->namesize);
+        u32 filesize = hex8(h->filesize);
+        const char *name = (const char *)(p + CPIO_HDR_SIZE);
+
+        if (namesize >= 11 && cpio_memeq(name, "TRAILER!!!", 10))
+            break;
+
+        /* Write "name\n" into buf */
+        for (u32 i = 0; name[i] && out + 1 < len; i++)
+            buf[out++] = name[i];
+        if (out + 1 < len) buf[out++] = '\n';
+
+        u32 data_off = align4(CPIO_HDR_SIZE + namesize);
+        u32 next_off = align4(data_off + filesize);
+        p += next_off;
+    }
+
+    buf[out] = '\0';
+    return out;
+}

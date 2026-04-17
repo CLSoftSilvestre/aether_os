@@ -2,15 +2,21 @@
  * PL011 UART Driver — AetherOS
  * File: kernel/drivers/char/uart_pl011.c
  *
- * The PL011 is a memory-mapped UART. To send a character:
- *   1. Wait until the transmit FIFO is not full (check UART_FR_TXFF bit)
- *   2. Write the character byte to UART_DR
- *
- * There is no C standard library available — every function here is
- * implemented from scratch.
+ * TX: polled (busy-wait on TXFF).
+ * RX: interrupt-driven.  A 256-byte ring buffer is filled by uart_irq_handler()
+ *     (called from el1_irq_handler when IRQ 33 fires).  Consumers call
+ *     uart_rx_empty() / uart_getc_nowait() to drain the buffer.
  */
 
 #include "drivers/char/uart_pl011.h"
+#include "drivers/irq/gic_v2.h"
+
+/* ── RX ring buffer ──────────────────────────────────────────────────── */
+#define RX_BUF_SIZE  256U
+
+static volatile u8  rx_buf[RX_BUF_SIZE];
+static volatile u32 rx_head = 0;   /* ISR writes here */
+static volatile u32 rx_tail = 0;   /* reader reads here */
 
 /* Helper: read a 32-bit MMIO register */
 static inline u32 uart_read(u32 offset)
@@ -142,4 +148,45 @@ void uart_putdec(u64 value)
     }
 
     uart_puts(&buf[i + 1]);
+}
+
+/* ── RX interrupt support ────────────────────────────────────────────── */
+
+void uart_enable_rx_irq(void)
+{
+    uart_write(UART_IMSC, UART_INT_RX);   /* unmask RX interrupt in UART */
+    gic_enable_irq(UART_IRQ_ID);          /* enable in GIC distributor   */
+}
+
+/*
+ * uart_irq_handler — called from el1_irq_handler when IRQ 33 fires.
+ *
+ * Drains the RX FIFO into the ring buffer. Drops bytes if the buffer
+ * is full rather than blocking (safe in an ISR context).
+ * Clears the interrupt after draining.
+ */
+void uart_irq_handler(void)
+{
+    while (!(uart_read(UART_FR) & UART_FR_RXFE)) {
+        u8  ch   = (u8)(uart_read(UART_DR) & 0xFF);
+        u32 next = (rx_head + 1u) & (RX_BUF_SIZE - 1u);
+        if (next != rx_tail) {
+            rx_buf[rx_head] = ch;
+            rx_head = next;
+        }
+        /* else: buffer full — drop byte */
+    }
+    uart_write(UART_ICR, UART_INT_RX);   /* clear RX interrupt */
+}
+
+int uart_rx_empty(void)
+{
+    return rx_head == rx_tail;
+}
+
+char uart_getc_nowait(void)
+{
+    u8 ch    = rx_buf[rx_tail];
+    rx_tail  = (rx_tail + 1u) & (RX_BUF_SIZE - 1u);
+    return (char)ch;
 }

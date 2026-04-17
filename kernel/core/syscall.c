@@ -21,6 +21,7 @@
 
 #include "aether/syscall.h"
 #include "aether/exceptions.h"
+#include "aether/initrd.h"
 #include "aether/printk.h"
 #include "aether/scheduler.h"
 #include "aether/types.h"
@@ -77,6 +78,45 @@ static long do_sys_write(long fd, const char *buf, long len)
 }
 
 /*
+ * sys_read — read up to len bytes from fd into buf.
+ *
+ * Phase 3.2 MVP: only fd=0 (stdin/UART) is implemented.
+ * Blocks using WFI until at least one byte is available, then reads
+ * up to len bytes without further blocking.
+ *
+ * Returns number of bytes read, or -1 on error.
+ */
+static long do_sys_read(long fd, char *buf, long len)
+{
+    if (fd != FD_STDIN) {
+        kwarn("[SYS] sys_read: unsupported fd=%ld\n", fd);
+        return -1;
+    }
+    if (!buf || len <= 0) return 0;
+
+    /* Block until ring buffer has at least one byte */
+    while (uart_rx_empty())
+        __asm__ volatile("wfi" ::: "memory");
+
+    long n = 0;
+    while (n < len && !uart_rx_empty())
+        buf[n++] = uart_getc_nowait();
+
+    return n;
+}
+
+/*
+ * sys_initrd_ls — list initrd files into a user-supplied buffer.
+ *
+ * Returns bytes written (not counting NUL), or -1 on error.
+ */
+static long do_sys_initrd_ls(char *buf, long len)
+{
+    if (!buf || len <= 0) return -1;
+    return (long)initrd_list(buf, (u32)len);
+}
+
+/*
  * sys_sched_yield — voluntarily surrender the CPU.
  * Delegates to the cooperative scheduler's task_yield().
  */
@@ -107,8 +147,14 @@ long syscall_dispatch(trap_frame_t *frame)
         do_sys_exit((long)arg0);   /* noreturn */
         return 0;                  /* unreachable, but silences warning */
 
+    case SYS_READ:
+        return do_sys_read((long)arg0, (char *)arg1, (long)arg2);
+
     case SYS_WRITE:
         return do_sys_write((long)arg0, (const char *)arg1, (long)arg2);
+
+    case SYS_INITRD_LS:
+        return do_sys_initrd_ls((char *)arg0, (long)arg1);
 
     case SYS_SCHED_YIELD:
         return do_sys_sched_yield();

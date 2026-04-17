@@ -33,10 +33,15 @@
 #define SYS_EXIT         0    /* sys_exit(code)                              */
 #define SYS_SCHED_YIELD  3    /* sys_sched_yield()                           */
 
-/* Filesystem / I/O (Phase 3 MVP: only stdout write) */
+/* Filesystem / I/O */
+#define SYS_READ         63   /* sys_read(fd, buf, len)  → bytes read        */
 #define SYS_WRITE        34   /* sys_write(fd, buf, len) → bytes written     */
 
-/* fd 1 = stdout (UART) — the only "file" that exists in Phase 3 */
+/* AetherOS-specific extensions */
+#define SYS_INITRD_LS   500   /* sys_initrd_ls(buf, len) → bytes written     */
+
+/* File descriptor numbers */
+#define FD_STDIN   0
 #define FD_STDOUT  1
 
 #include "aether/exceptions.h"   /* trap_frame_t */
