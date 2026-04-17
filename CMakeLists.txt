@@ -41,6 +41,8 @@ add_subdirectory(kernel)
 set(INITRD_OBJ ${CMAKE_BINARY_DIR}/initrd.o)
 add_dependencies(aether_kernel initrd)
 target_link_options(aether_kernel PRIVATE ${INITRD_OBJ})
+# Tell CMake to re-link the kernel whenever initrd.o changes on disk.
+set_property(TARGET aether_kernel APPEND PROPERTY LINK_DEPENDS ${INITRD_OBJ})
 
 # ── Bootable image target ───────────────────────────────────────────────────
 # After building, convert the ELF to a raw binary that QEMU / Pi can load

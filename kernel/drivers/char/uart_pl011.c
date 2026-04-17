@@ -181,6 +181,16 @@ void uart_irq_handler(void)
 
 int uart_rx_empty(void)
 {
+    /* Drain hardware FIFO into the ring buffer so pollers work without
+     * needing the UART RX interrupt to be enabled. */
+    while (!(uart_read(UART_FR) & UART_FR_RXFE)) {
+        u8  ch   = (u8)(uart_read(UART_DR) & 0xFF);
+        u32 next = (rx_head + 1u) & (RX_BUF_SIZE - 1u);
+        if (next != rx_tail) {
+            rx_buf[rx_head] = ch;
+            rx_head = next;
+        }
+    }
     return rx_head == rx_tail;
 }
 

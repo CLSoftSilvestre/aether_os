@@ -22,6 +22,7 @@
 #include "aether/syscall.h"
 #include "aether/exceptions.h"
 #include "aether/initrd.h"
+#include "aether/mm.h"
 #include "aether/printk.h"
 #include "aether/scheduler.h"
 #include "aether/types.h"
@@ -130,6 +131,20 @@ static long do_sys_sched_yield(void)
     return 0;
 }
 
+static long do_sys_initrd_read(const char *name, char *buf, long len)
+{
+    if (!name || !buf || len <= 0) return -1;
+    u32 n = initrd_read(name, buf, (u32)len);
+    return (n == (u32)-1) ? -1L : (long)n;
+}
+
+static long do_sys_pmm_stats(void)
+{
+    u32 free  = pmm_free_pages();
+    u32 total = pmm_total_pages();
+    return (long)(((u64)free << 32) | (u64)total);
+}
+
 /* ── Graphics syscalls ───────────────────────────────────────────────────── */
 
 /*
@@ -201,6 +216,12 @@ long syscall_dispatch(trap_frame_t *frame)
 
     case SYS_INITRD_LS:
         return do_sys_initrd_ls((char *)arg0, (long)arg1);
+
+    case SYS_INITRD_READ:
+        return do_sys_initrd_read((const char *)arg0, (char *)arg1, (long)arg2);
+
+    case SYS_PMM_STATS:
+        return do_sys_pmm_stats();
 
     case SYS_SCHED_YIELD:
         return do_sys_sched_yield();

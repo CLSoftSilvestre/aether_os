@@ -1,0 +1,8 @@
+
+  Welcome to AetherOS v0.0.5
+  Lumina Graphical Desktop  --  Phase 4.2
+
+  Commands: help  ls  cat  mem  time  echo  clear  uname  exit
+
+  Try: cat motd.txt    mem    time    ls
+

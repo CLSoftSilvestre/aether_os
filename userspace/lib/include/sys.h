@@ -18,6 +18,8 @@
 #define SYS_READ         63
 #define SYS_WRITE        34
 #define SYS_INITRD_LS   500
+#define SYS_INITRD_READ 501
+#define SYS_PMM_STATS   502
 #define SYS_FB_FILL     601
 #define SYS_FB_CHAR     602
 #define SYS_GET_TICKS   603
@@ -84,6 +86,16 @@ static inline long sys_sched_yield(void)
 static inline long sys_initrd_ls(char *buf, long len)
 {
     return _sys3(SYS_INITRD_LS, (long)(void *)buf, len, 0);
+}
+
+static inline long sys_initrd_read(const char *name, char *buf, long len)
+{
+    return _sys3(SYS_INITRD_READ, (long)(const void *)name, (long)(void *)buf, len);
+}
+
+static inline long sys_pmm_stats(void)
+{
+    return _sys0(SYS_PMM_STATS);
 }
 
 /* ── Graphics syscalls ───────────────────────────────────────────────── */

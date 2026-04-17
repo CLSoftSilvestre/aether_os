@@ -67,13 +67,22 @@ set(INITRD_STAGING ${CMAKE_BINARY_DIR}/initrd_staging)
 set(INITRD_CPIO    ${CMAKE_BINARY_DIR}/initrd.cpio)
 set(INITRD_OBJ     ${CMAKE_BINARY_DIR}/initrd.o)
 
+# Copy static initrd files (motd.txt, etc.) into the staging directory.
+set(INITRD_FILES_SRC ${CMAKE_CURRENT_SOURCE_DIR}/initrd_files)
+add_custom_command(
+    OUTPUT  ${INITRD_STAGING}/motd.txt
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${INITRD_FILES_SRC} ${INITRD_STAGING}
+    DEPENDS ${INITRD_FILES_SRC}/motd.txt
+    COMMENT "Copying initrd static files"
+)
+
 # Step 1: build the CPIO archive from the staging directory
 add_custom_command(
     OUTPUT  ${INITRD_CPIO}
     COMMAND ${CMAKE_SOURCE_DIR}/scripts/make_initrd.sh
                 ${INITRD_STAGING}
                 ${INITRD_CPIO}
-    DEPENDS user_init
+    DEPENDS user_init ${INITRD_STAGING}/motd.txt
     COMMENT "Packaging initrd.cpio"
 )
 

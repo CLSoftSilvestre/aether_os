@@ -187,10 +187,23 @@ u32 initrd_list(char *buf, u32 len)
         if (namesize >= 11 && cpio_memeq(name, "TRAILER!!!", 10))
             break;
 
-        /* Write "name\n" into buf */
+        /* Write "name  <size> bytes\n" into buf */
         for (u32 i = 0; name[i] && out + 1 < len; i++)
             buf[out++] = name[i];
-        if (out + 1 < len) buf[out++] = '\n';
+        /* pad name to column 16 */
+        u32 col = 0; for (u32 i = 0; name[i]; i++) col++;
+        for (; col < 16 && out + 1 < len; col++) buf[out++] = ' ';
+        /* print size in decimal */
+        char nbuf[12]; int ni = 0;
+        u32 tmp = filesize;
+        if (tmp == 0) { nbuf[ni++] = '0'; }
+        else { while (tmp) { nbuf[ni++] = (char)('0' + tmp % 10); tmp /= 10; } }
+        for (int k = ni - 1; k >= 0 && out + 1 < len; k--)
+            buf[out++] = nbuf[k];
+        /* " bytes\n" */
+        const char *suf = " bytes\n";
+        for (int k = 0; suf[k] && out + 1 < len; k++)
+            buf[out++] = suf[k];
 
         u32 data_off = align4(CPIO_HDR_SIZE + namesize);
         u32 next_off = align4(data_off + filesize);
@@ -199,4 +212,19 @@ u32 initrd_list(char *buf, u32 len)
 
     buf[out] = '\0';
     return out;
+}
+
+u32 initrd_read(const char *path, char *buf, u32 max)
+{
+    if (!buf || max == 0) return (u32)-1;
+
+    u32 size = 0;
+    const void *data = initrd_find(path, &size);
+    if (!data) return (u32)-1;
+
+    u32 n = size < max ? size : max;
+    const u8 *src = (const u8 *)data;
+    for (u32 i = 0; i < n; i++)
+        buf[i] = (char)src[i];
+    return n;
 }

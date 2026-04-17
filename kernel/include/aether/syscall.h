@@ -39,6 +39,8 @@
 
 /* AetherOS-specific extensions */
 #define SYS_INITRD_LS   500   /* sys_initrd_ls(buf, len) → bytes written     */
+#define SYS_INITRD_READ 501   /* sys_initrd_read(name, buf, len) → bytes     */
+#define SYS_PMM_STATS   502   /* → (free_pages << 32) | total_pages          */
 
 /* Graphics syscalls (Phase 4.1) — arg packing documented in syscall.c */
 #define SYS_FB_FILL     601   /* fill rect:  (x<<32|y, w<<32|h, color)       */

@@ -44,11 +44,18 @@ void initrd_init(void);
 const void *initrd_find(const char *path, u32 *size_out);
 
 /*
- * initrd_list — write a newline-separated listing of all files into buf.
+ * initrd_list — write "name  size\n" lines for all files into buf.
  *
- * Returns the number of bytes written (not including NUL terminator).
- * Output is always NUL-terminated.
+ * Returns bytes written (not including NUL). Output is always NUL-terminated.
  */
 u32 initrd_list(char *buf, u32 len);
+
+/*
+ * initrd_read — copy a file's contents into buf.
+ *
+ * Returns bytes copied, or (u32)-1 if the file is not found or buf is NULL.
+ * At most `max` bytes are copied; the result is NOT NUL-terminated.
+ */
+u32 initrd_read(const char *path, char *buf, u32 max);
 
 #endif /* AETHER_INITRD_H */
