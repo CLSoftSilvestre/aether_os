@@ -2,104 +2,153 @@
  * AetherOS — Kernel Entry Point
  * File: kernel/core/main.c
  *
- * kernel_main() is called from boot.S after:
- *   - CPU is in EL1 (kernel mode), SP_EL1 active
- *   - Stack is set up at __stack_top
- *   - BSS is zeroed
- *
- * Milestone 1.2 initialisation sequence:
- *   printk → exceptions → GIC → timer → idle (waiting for timer IRQs)
+ * Phase 2 initialisation sequence:
+ *   UART → printk → exceptions → PMM → kmalloc → GIC → timer
+ *   → scheduler → tasks → enable IRQs → idle loop
  */
 
 #include "aether/printk.h"
 #include "aether/exceptions.h"
+#include "aether/mm.h"
+#include "aether/kmalloc.h"
+#include "aether/scheduler.h"
 #include "drivers/char/uart_pl011.h"
 #include "drivers/irq/gic_v2.h"
 #include "drivers/timer/arm_timer.h"
 #include "aether/types.h"
 
-extern u8 __bss_start[];
-extern u8 __bss_end[];
-extern u8 __kernel_end[];
 extern u8 __stack_top[];
+
+/* ── Kernel tasks ────────────────────────────────────────────────────────── */
+
+/*
+ * task_monitor — a kernel thread that wakes every second and prints a
+ * system status report. Shows the scheduler is alive and context switching
+ * between the idle task and this task.
+ */
+static void task_monitor(void)
+{
+    u64 iteration = 0;
+
+    kinfo("[monitor] started on PID %lu\n",
+          (unsigned long)task_current_pid());
+
+    while (1) {
+        iteration++;
+        kinfo("[monitor] iteration %lu | ticks=%lu | free pages=%lu\n",
+              (unsigned long)iteration,
+              (unsigned long)timer_get_ticks(),
+              (unsigned long)pmm_free_pages());
+
+        if (iteration == 1) {
+            /* Print task list on first run to show the scheduler state */
+            scheduler_print_tasks();
+        }
+
+        /* Sleep for 2 seconds (200 ticks at 100Hz) then yield */
+        task_sleep(200);
+    }
+}
+
+/*
+ * task_counter — a kernel thread that counts slowly and yields between
+ * each step, demonstrating fine-grained cooperative scheduling.
+ */
+static void task_counter(void)
+{
+    kinfo("[counter] started on PID %lu\n",
+          (unsigned long)task_current_pid());
+
+    for (u32 i = 1; i <= 10; i++) {
+        kinfo("[counter] count = %lu\n", (unsigned long)i);
+        task_sleep(50);   /* sleep 500ms between counts */
+    }
+
+    kinfo("[counter] done — exiting\n");
+    task_exit();
+}
+
+/* ── Kernel entry ────────────────────────────────────────────────────────── */
 
 __attribute__((noreturn))
 void kernel_main(void)
 {
-    /* ── Stage 1: UART (no printk yet, output directly) ─────────────── */
+    /* ── 1. UART — first, so we can see output immediately ─────────── */
     uart_init();
     uart_puts("\r\n");
     uart_puts("╔══════════════════════════════════════╗\r\n");
-    uart_puts("║         AetherOS v0.0.1              ║\r\n");
-    uart_puts("║   Milestone 1.2 — Kernel Core        ║\r\n");
+    uart_puts("║         AetherOS v0.0.2              ║\r\n");
+    uart_puts("║        Phase 2 — Memory + Tasks      ║\r\n");
     uart_puts("╚══════════════════════════════════════╝\r\n");
     uart_puts("\r\n");
 
-    /* ── Stage 2: printk (UART is up, structured logging from here) ── */
-    kinfo("UART initialised\n");
-    kinfo("Kernel loaded at 0x40000000\n");
-    kinfo("BSS:        %p – %p (%lu bytes)\n",
-          (void *)__bss_start, (void *)__bss_end,
-          (unsigned long)(__bss_end - __bss_start));
-    kinfo("Kernel end: %p\n", (void *)__kernel_end);
-    kinfo("Stack top:  %p\n", (void *)__stack_top);
-
-    /* ── Stage 3: Exception vector table ────────────────────────────── */
+    /* ── 2. Exception vector table ──────────────────────────────────── */
     /*
-     * Install VBAR_EL1 so the CPU knows where to jump for every exception.
-     * Without this, any IRQ or fault will jump to address 0x0 and hang.
-     *
-     * Must be done BEFORE enabling any interrupts.
+     * Must come before anything that could trigger an exception
+     * (including printk, which does MMIO writes to the UART).
+     * In practice it works without this, but it is the correct order.
      */
     exceptions_init();
 
-    /* ── Stage 4: GIC — interrupt controller ────────────────────────── */
+    /* ── 3. Physical Memory Manager ─────────────────────────────────── */
     /*
-     * The GIC routes peripheral interrupts (timer, UART, etc.) to CPUs.
-     * Must be initialised before enabling individual device IRQs.
+     * Discovers free RAM and builds the page bitmap.
+     * Everything after this can allocate physical pages.
      */
-    gic_init();
+    pmm_init();
+    pmm_print_stats();
 
-    /* ── Stage 5: ARM Generic Timer ─────────────────────────────────── */
+    /* ── 4. Kernel heap ──────────────────────────────────────────────── */
     /*
-     * Sets up a 100 Hz periodic interrupt (IRQ 30).
-     * After timer_init(), the GIC will start delivering IRQs every 10 ms.
+     * Sets up the first-fit free-list allocator on top of the PMM.
+     * After this, kmalloc()/kfree() are available.
      */
+    kmalloc_init();
+
+    /* ── 5. GIC + Timer ─────────────────────────────────────────────── */
+    gic_init();
     timer_init();
 
-    /* ── Stage 6: Enable IRQs ────────────────────────────────────────── */
+    /* ── 6. Scheduler ───────────────────────────────────────────────── */
     /*
-     * Up to this point, IRQs have been masked in PSTATE (the DAIF bits).
-     * DAIF = Debug, Asynchronous abort, IRQ, FIQ — all masked at boot.
-     *
-     * msr daifclr, #2  clears the 'I' (IRQ mask) bit → IRQs are now live.
-     *
-     * In x86 terms: this is the STI (Set Interrupt Flag) instruction.
-     *
-     * After this line, every 10 ms the CPU will:
-     *   1. Finish the current instruction
-     *   2. Save PC and PSTATE to ELR_EL1 / SPSR_EL1
-     *   3. Jump to vector_table + 0x280 (EL1 IRQ handler)
-     *   4. Our _el1_irq stub saves all registers
-     *   5. Calls el1_irq_handler() → gic_acknowledge() → timer_irq_handler()
-     *   6. Returns, restores registers, eret back to the instruction after wfi
+     * Register the current execution context (kernel_main) as the idle
+     * task. It will run whenever no other task is ready.
      */
-    kinfo("Enabling IRQs...\n");
-    __asm__ volatile("msr daifclr, #2" ::: "memory");
-    kinfo("IRQs enabled — timer running at %d Hz\n", TIMER_HZ);
-    kinfo("\n");
-    kinfo("Entering idle loop. Watch for timer ticks below.\n");
-    kinfo("─────────────────────────────────────────────\n");
+    scheduler_init();
+    scheduler_add_idle();
 
-    /* ── Idle loop ───────────────────────────────────────────────────── */
+    /* Create two kernel threads */
+    task_create(task_monitor, "monitor");
+    task_create(task_counter, "counter");
+
+    /* ── 7. Enable IRQs ─────────────────────────────────────────────── */
     /*
-     * wfi = Wait For Interrupt — the CPU sleeps until an IRQ fires.
-     * Each timer tick wakes the CPU, runs the handler, then returns here.
+     * From this point forward, the timer fires every 10ms.
+     * The timer handler increments g_ticks, which task_sleep() uses
+     * to decide when to wake sleeping tasks.
      *
-     * This is Phase 1's "scheduler" — one task, the idle task.
-     * The real scheduler arrives in Milestone 1.2 (round-robin, Phase 2).
+     * IRQ unmasking must happen AFTER the GIC and vector table are ready.
      */
-    for (;;) {
+    kinfo("Enabling IRQs — entering idle loop\n");
+    kinfo("────────────────────────────────────────────\n");
+    __asm__ volatile("msr daifclr, #2" ::: "memory");
+
+    /* ── 8. Idle loop ───────────────────────────────────────────────── */
+    /*
+     * The idle task: sleep until an IRQ wakes us, then yield to let
+     * any newly-ready tasks run.
+     *
+     * wfi (Wait For Interrupt) is the ARM equivalent of x86 HLT —
+     * it halts the CPU core in a low-power state until an interrupt fires.
+     *
+     * After wfi returns (a timer IRQ fired):
+     *   1. The IRQ handler incremented g_ticks
+     *   2. task_yield() checks if any sleeping task's wake_tick has passed
+     *   3. If yes, that task's state → READY and we switch to it
+     *   4. The task runs, eventually sleeps again, and we return here
+     */
+    while (1) {
         __asm__ volatile("wfi");
+        task_yield();
     }
 }

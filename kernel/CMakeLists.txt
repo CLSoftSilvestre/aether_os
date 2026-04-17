@@ -1,17 +1,24 @@
 cmake_minimum_required(VERSION 3.20)
 
-# ── Source files ─────────────────────────────────────────────────────────────
 set(KERNEL_SOURCES
-    # Boot — must be first so _start lands at load address 0x40000000
+    # Boot — first in link order so _start lands at 0x40000000
     arch/arm64/boot/boot.S
 
-    # Exception vector table — must come early (2KB alignment enforced by .align 11)
+    # Exception vector table
     arch/arm64/exceptions.S
+
+    # Context switch (cooperative scheduler)
+    arch/arm64/context_switch.S
 
     # Core kernel
     core/main.c
     core/printk.c
     core/exceptions.c
+    core/scheduler.c
+
+    # Memory management
+    mm/pmm.c
+    mm/kmalloc.c
 
     # Drivers
     drivers/char/uart_pl011.c
@@ -19,10 +26,8 @@ set(KERNEL_SOURCES
     drivers/timer/arm_timer.c
 )
 
-# ── Linker script ─────────────────────────────────────────────────────────────
 set(LINKER_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/arch/arm64/boot/linker.ld)
 
-# ── Kernel ELF target ─────────────────────────────────────────────────────────
 add_executable(aether_kernel ${KERNEL_SOURCES})
 
 target_include_directories(aether_kernel PRIVATE
