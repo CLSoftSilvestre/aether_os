@@ -138,21 +138,25 @@ int main(void)
     /* Show the mouse cursor once apps are up */
     sys_cursor_show(1);
 
-    /* Refresh bars every second; poll mouse on each tick */
+    /* Main desktop loop — runs at ~10 ms per iteration */
+    int bar_counter = 0;
     for (;;) {
-        long ticks = gfx_ticks();
-        refresh_top_bar(ticks);
-        refresh_bot_bar();
+        /* Refresh clock and memory bar once per second (every 100 ticks) */
+        if (++bar_counter >= 100) {
+            bar_counter = 0;
+            refresh_top_bar(gfx_ticks());
+            refresh_bot_bar();
+        }
 
-        /* Drain all pending mouse events and move cursor */
+        /* Drain all pending mouse events (cursor already moved by kernel IRQ;
+         * this loop handles button state for future window hit-testing) */
         unsigned long long me;
         while ((me = sys_mouse_poll()) != 0) {
             mouse_event_t ev = mouse_event_unpack(me);
             sys_cursor_move(ev.x, ev.y);
-            /* Future: hit-test ev.buttons against window regions */
         }
 
-        sys_sleep(100);
+        sys_sleep(1);   /* 1 tick ≈ 10 ms at 100 Hz */
     }
 
     return 0;

@@ -17,6 +17,7 @@
 #include "drivers/input/virtio_input.h"
 #include "drivers/input/pl050_mouse.h"
 #include "drivers/input/keycodes.h"
+#include "drivers/video/cursor.h"
 #include "drivers/irq/gic_v2.h"
 #include "aether/printk.h"
 #include "aether/types.h"
@@ -164,6 +165,9 @@ void virtio_input_irq_handler(void)
             else if (ev->code == BTN_MIDDLE) vi_cur_btns = (u8)((vi_cur_btns & ~4u) | (u8)(p << 2));
         } else if (ev->type == EV_SYN && ev->code == 0u) {
             if (vi_has_pos) {
+                /* Move cursor immediately in IRQ context — no poll-loop lag */
+                cursor_move(vi_cur_x, vi_cur_y);
+                /* Also push to mouse ring so userspace can read button state */
                 mouse_event_t me;
                 me.x = vi_cur_x; me.y = vi_cur_y; me.buttons = vi_cur_btns;
                 mouse_post_event(mouse_event_pack(me));
