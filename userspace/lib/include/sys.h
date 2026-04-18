@@ -18,6 +18,7 @@
 #define SYS_SCHED_YIELD  3
 #define SYS_WAITPID      4
 #define SYS_GETPID       5
+#define SYS_SLEEP_TICKS  6
 #define SYS_PIPE        22
 #define SYS_DUP2        24
 #define SYS_READ         63
@@ -96,6 +97,12 @@ static inline long sys_write(int fd, const char *buf, long len)
 static inline long sys_sched_yield(void)
 {
     return _sys1(SYS_SCHED_YIELD, 0);
+}
+
+/* Sleep for N 100Hz ticks (~10ms per tick) */
+static inline void sys_sleep(long ticks)
+{
+    _sys1(SYS_SLEEP_TICKS, ticks);
 }
 
 /* ── Process management (Phase 4.3) ─────────────────────────────────── */

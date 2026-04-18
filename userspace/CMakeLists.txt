@@ -55,6 +55,70 @@ set_target_properties(user_init PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
 )
 
+# ── aether_term — Phase 4.4 terminal process ─────────────────────────────────
+add_executable(user_aether_term
+    apps/aether_term/main.c
+    lib/crt0.S
+)
+target_include_directories(user_aether_term PRIVATE lib/include)
+target_compile_options(user_aether_term PRIVATE ${USER_COMPILE_FLAGS})
+target_link_libraries(user_aether_term PRIVATE libaether)
+target_link_options(user_aether_term PRIVATE
+    -T ${USER_LINKER_SCRIPT} -nostdlib -static -Wl,--build-id=none
+)
+set_target_properties(user_aether_term PROPERTIES
+    OUTPUT_NAME "aether_term" SUFFIX ""
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
+)
+
+# ── statusbar — Phase 4.4 sidebar daemon ─────────────────────────────────────
+add_executable(user_statusbar
+    apps/statusbar/main.c
+    lib/crt0.S
+)
+target_include_directories(user_statusbar PRIVATE lib/include)
+target_compile_options(user_statusbar PRIVATE ${USER_COMPILE_FLAGS})
+target_link_libraries(user_statusbar PRIVATE libaether)
+target_link_options(user_statusbar PRIVATE
+    -T ${USER_LINKER_SCRIPT} -nostdlib -static -Wl,--build-id=none
+)
+set_target_properties(user_statusbar PROPERTIES
+    OUTPUT_NAME "statusbar" SUFFIX ""
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
+)
+
+# ── files — Phase 4.4 graphical file browser ─────────────────────────────────
+add_executable(user_files
+    apps/files/main.c
+    lib/crt0.S
+)
+target_include_directories(user_files PRIVATE lib/include)
+target_compile_options(user_files PRIVATE ${USER_COMPILE_FLAGS})
+target_link_libraries(user_files PRIVATE libaether)
+target_link_options(user_files PRIVATE
+    -T ${USER_LINKER_SCRIPT} -nostdlib -static -Wl,--build-id=none
+)
+set_target_properties(user_files PROPERTIES
+    OUTPUT_NAME "files" SUFFIX ""
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
+)
+
+# ── textviewer — Phase 4.4 text file pager ───────────────────────────────────
+add_executable(user_textviewer
+    apps/textviewer/main.c
+    lib/crt0.S
+)
+target_include_directories(user_textviewer PRIVATE lib/include)
+target_compile_options(user_textviewer PRIVATE ${USER_COMPILE_FLAGS})
+target_link_libraries(user_textviewer PRIVATE libaether)
+target_link_options(user_textviewer PRIVATE
+    -T ${USER_LINKER_SCRIPT} -nostdlib -static -Wl,--build-id=none
+)
+set_target_properties(user_textviewer PROPERTIES
+    OUTPUT_NAME "textviewer" SUFFIX ""
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
+)
+
 # ── initrd CPIO archive ───────────────────────────────────────────────────────
 #
 # Step 1 — package all files from initrd_staging/ into a CPIO newc archive.
@@ -82,7 +146,8 @@ add_custom_command(
     COMMAND ${CMAKE_SOURCE_DIR}/scripts/make_initrd.sh
                 ${INITRD_STAGING}
                 ${INITRD_CPIO}
-    DEPENDS user_init ${INITRD_STAGING}/motd.txt
+    DEPENDS user_init user_aether_term user_statusbar user_files user_textviewer
+            ${INITRD_STAGING}/motd.txt
     COMMENT "Packaging initrd.cpio"
 )
 

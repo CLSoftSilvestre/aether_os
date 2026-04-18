@@ -29,12 +29,13 @@
  *   80–95:  Device
  */
 
-/* Process management (Phase 4.3) */
+/* Process management (Phase 4.3 / 4.4) */
 #define SYS_EXIT         0    /* sys_exit(code)                              */
 #define SYS_SPAWN        1    /* sys_spawn(path) → child PID or -1           */
 #define SYS_SCHED_YIELD  3    /* sys_sched_yield()                           */
 #define SYS_WAITPID      4    /* sys_waitpid(pid, *status) → pid or -1       */
 #define SYS_GETPID       5    /* sys_getpid() → current PID                  */
+#define SYS_SLEEP_TICKS  6    /* sys_sleep(ticks) — sleep N 100Hz ticks      */
 
 /* IPC (Phase 4.3) */
 #define SYS_PIPE        22    /* sys_pipe(fds[2]) → 0 or -1                  */

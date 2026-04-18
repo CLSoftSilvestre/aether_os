@@ -291,6 +291,10 @@ long syscall_dispatch(trap_frame_t *frame)
     case SYS_SCHED_YIELD:
         return do_sys_sched_yield();
 
+    case SYS_SLEEP_TICKS:
+        task_sleep((u64)arg0);
+        return 0;
+
     case SYS_FB_FILL:
         return do_sys_fb_fill(arg0, arg1, arg2);
 
