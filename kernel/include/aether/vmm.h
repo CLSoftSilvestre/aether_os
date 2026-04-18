@@ -142,25 +142,51 @@
 
 /* ── Public API ──────────────────────────────────────────────────────── */
 
-/*
- * vmm_init — set up page tables and enable the MMU.
- *
- * After this returns, all memory accesses go through the page tables.
- * Identity mapping means existing pointers remain valid.
- * Data and instruction caches are enabled.
- */
 void vmm_init(void);
 
-/*
- * launch_el0 — transfer execution to user space.
- *
- * Sets up ELR_EL1, SPSR_EL1, SP_EL0 and executes `eret`.
- * Does not return — the process communicates back via syscalls.
- *
- * entry:       virtual address of user entry function
- * user_stack:  initial SP_EL0 value (top of user stack)
- */
 __attribute__((noreturn))
 void launch_el0(uintptr_t entry, uintptr_t user_stack);
+
+/* ── Per-process page table API (Phase 4.3) ──────────────────────────── */
+
+/*
+ * vmm_create_process_pt — allocate and populate a per-process L1+L2
+ * page table pair.  Kernel entries (L2[0..383]) are copied from the
+ * global table so the kernel is reachable while the process runs.
+ * User entries (L2[384..511]) are left empty; fill them with
+ * vmm_map_user_pages() before scheduling the task.
+ *
+ * Returns physical address of the L1 table, or 0 on allocation failure.
+ */
+uintptr_t vmm_create_process_pt(void);
+
+/*
+ * vmm_map_user_pages — create 4KB page-table mappings in a per-process
+ * L1 table.  Maps n_pages consecutive 4KB pages:
+ *   VA [va .. va + n_pages*4KB) → PA [pa .. pa + n_pages*4KB)
+ *
+ * AP = EL0+EL1 RW, UXN=0 (executable from EL0).
+ * Allocates L3 tables (4KB each) as needed.
+ *
+ * Returns 0 on success, -1 on allocation failure.
+ */
+int vmm_map_user_pages(uintptr_t l1_phys, uintptr_t va,
+                       uintptr_t pa, u32 n_pages);
+
+/*
+ * vmm_switch_user_pt — switch TTBR0_EL1 to the given L1 table and
+ * flush the TLB.  Pass 0 to restore the global page table.
+ */
+void vmm_switch_user_pt(uintptr_t l1_phys);
+
+/*
+ * vmm_free_process_pt — release an L1 table and all L3 tables it
+ * owns in the user region (L2[384..511]).  The L2 table is also freed.
+ * Does NOT free the physical ELF/stack pages mapped by those L3 entries.
+ */
+void vmm_free_process_pt(uintptr_t l1_phys);
+
+/* Return physical address of the global L1 table (for TTBR0 restore). */
+uintptr_t vmm_get_global_l1(void);
 
 #endif /* AETHER_VMM_H */

@@ -14,7 +14,12 @@
 
 /* Syscall numbers */
 #define SYS_EXIT         0
+#define SYS_SPAWN        1
 #define SYS_SCHED_YIELD  3
+#define SYS_WAITPID      4
+#define SYS_GETPID       5
+#define SYS_PIPE        22
+#define SYS_DUP2        24
 #define SYS_READ         63
 #define SYS_WRITE        34
 #define SYS_INITRD_LS   500
@@ -45,6 +50,16 @@ static inline long _sys0(long nr)
     register long x0 asm("x0") = 0;
     register long x8 asm("x8") = nr;
     __asm__ volatile("svc #0" : "+r"(x0) : "r"(x8) : "memory", "cc");
+    return x0;
+}
+
+static inline long _sys2(long nr, long a0, long a1)
+{
+    register long x0 asm("x0") = a0;
+    register long x1 asm("x1") = a1;
+    register long x8 asm("x8") = nr;
+    __asm__ volatile("svc #0" : "+r"(x0) : "r"(x1), "r"(x8)
+                     : "memory", "cc");
     return x0;
 }
 
@@ -81,6 +96,37 @@ static inline long sys_write(int fd, const char *buf, long len)
 static inline long sys_sched_yield(void)
 {
     return _sys1(SYS_SCHED_YIELD, 0);
+}
+
+/* ── Process management (Phase 4.3) ─────────────────────────────────── */
+
+/* Spawn a process by initrd path; returns child PID or -1 */
+static inline long sys_spawn(const char *path)
+{
+    return _sys1(SYS_SPAWN, (long)(const void *)path);
+}
+
+/* Wait for child PID; writes exit code to *status (may be NULL) */
+static inline long sys_waitpid(long pid, int *status)
+{
+    return _sys2(SYS_WAITPID, pid, (long)(void *)status);
+}
+
+static inline long sys_getpid(void)
+{
+    return _sys0(SYS_GETPID);
+}
+
+/* Create a pipe; fds[0]=read end, fds[1]=write end */
+static inline long sys_pipe(int fds[2])
+{
+    return _sys1(SYS_PIPE, (long)(void *)fds);
+}
+
+/* Duplicate oldfd to newfd; returns newfd or -1 */
+static inline long sys_dup2(int oldfd, int newfd)
+{
+    return _sys2(SYS_DUP2, (long)oldfd, (long)newfd);
 }
 
 static inline long sys_initrd_ls(char *buf, long len)

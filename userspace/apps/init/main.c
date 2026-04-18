@@ -388,15 +388,18 @@ static int parse_args(char *line, char **argv, int maxargs)
 static void cmd_help(void)
 {
     term_puts("Built-in commands:\n");
-    term_puts("  help           show this message\n");
-    term_puts("  echo [args]    print arguments\n");
-    term_puts("  ls             list files in initrd\n");
-    term_puts("  cat <file>     print a file from initrd\n");
-    term_puts("  mem            show memory statistics\n");
-    term_puts("  time           show formatted uptime\n");
-    term_puts("  clear          clear terminal\n");
-    term_puts("  uname          print OS information\n");
-    term_puts("  exit [code]    exit the shell\n");
+    term_puts("  help              show this message\n");
+    term_puts("  echo [args]       print arguments\n");
+    term_puts("  ls                list files in initrd\n");
+    term_puts("  cat <file>        print a file from initrd\n");
+    term_puts("  mem               show memory statistics\n");
+    term_puts("  time              show formatted uptime\n");
+    term_puts("  clear             clear terminal\n");
+    term_puts("  uname             print OS information\n");
+    term_puts("  pid               print current process ID\n");
+    term_puts("  spawn <path>      launch an ELF from initrd (wait)\n");
+    term_puts("  spawn <path> &    launch in background (no wait)\n");
+    term_puts("  exit [code]       exit the shell\n");
 }
 
 static void cmd_echo(int argc, char **argv)
@@ -466,7 +469,33 @@ static void cmd_clear(void)
 
 static void cmd_uname(void)
 {
-    term_puts("AetherOS  aarch64  Phase 4.2  QEMU virt (Cortex-A76)\n");
+    term_puts("AetherOS  aarch64  Phase 4.3  QEMU virt (Cortex-A76)\n");
+}
+
+static void cmd_pid(void)
+{
+    long pid = sys_getpid();
+    term_printf("PID: %ld\n", pid);
+}
+
+static void cmd_spawn(const char *path, int background)
+{
+    if (!path || path[0] == '\0') {
+        term_puts("usage: spawn <initrd-path>\n");
+        return;
+    }
+    term_printf("Spawning '%s'%s...\n", path, background ? " [bg]" : "");
+    long child = sys_spawn(path);
+    if (child < 0) {
+        term_printf("spawn: failed to launch '%s'\n", path);
+        return;
+    }
+    term_printf("Child PID %ld started\n", child);
+    if (!background) {
+        int status = 0;
+        sys_waitpid(child, &status);
+        term_printf("Child PID %ld exited (status %d)\n", child, status);
+    }
 }
 
 /* ── Main ────────────────────────────────────────────────────────────── */
@@ -510,9 +539,18 @@ int main(void)
         int n = term_readline(line, LINE_MAX);
         if (n == 0) continue;
 
+        /* Trim trailing whitespace */
         while (n > 0 && (line[n-1] == ' ' || line[n-1] == '\t'))
             line[--n] = '\0';
         if (n == 0) continue;
+
+        /* Detect trailing '&' for background execution */
+        int background = 0;
+        if (n > 0 && line[n-1] == '&') {
+            background = 1;
+            line[--n] = '\0';
+            while (n > 0 && line[n-1] == ' ') line[--n] = '\0';
+        }
 
         int argc = parse_args(line, argv, ARGV_MAX);
         if (argc == 0) continue;
@@ -535,6 +573,10 @@ int main(void)
             cmd_clear();
         } else if (strcmp(cmd, "uname") == 0) {
             cmd_uname();
+        } else if (strcmp(cmd, "pid") == 0) {
+            cmd_pid();
+        } else if (strcmp(cmd, "spawn") == 0) {
+            cmd_spawn(argc > 1 ? argv[1] : NULL, background);
         } else if (strcmp(cmd, "exit") == 0) {
             int code = (argc > 1) ? atoi(argv[1]) : 0;
             term_puts("Goodbye!\n");

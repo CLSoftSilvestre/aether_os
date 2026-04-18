@@ -16,6 +16,8 @@
 
 #include "aether/scheduler.h"
 #include "aether/mm.h"
+#include "aether/pipe.h"
+#include "aether/vmm.h"
 #include "aether/printk.h"
 #include "drivers/timer/arm_timer.h"
 
@@ -116,15 +118,48 @@ static task_t *alloc_task(void (*entry_fn)(void), const char *name)
     t->ctx.x30 = (u64)entry_fn;
     t->ctx.sp  = stack_top;
 
-    t->pid        = g_num_tasks;
-    t->state      = TASK_READY;
-    t->wake_tick  = 0;
-    t->name       = name;
-    t->stack_phys = stack_phys;
-    t->el0_entry  = 0;
-    t->el0_sp     = 0;
+    t->pid              = g_num_tasks;
+    t->ppid             = 0;
+    t->state            = TASK_READY;
+    t->exit_code        = 0;
+    t->wait_pid         = 0;
+    t->wake_tick        = 0;
+    t->name             = name;
+    t->stack_phys       = stack_phys;
+    t->el0_entry        = 0;
+    t->el0_sp           = 0;
+    t->l1_table_phys    = 0;
+    t->user_code_phys   = 0;
+    t->user_code_pages  = 0;
+    t->user_stack_phys  = 0;
+    t->user_stack_pages = 0;
+
+    for (u32 i = 0; i < PROC_MAX_FD; i++) {
+        t->fd_table[i].type     = FD_TYPE_CLOSED;
+        t->fd_table[i].pipe_idx = 0;
+    }
 
     return t;
+}
+
+static void init_uart_fds(task_t *t)
+{
+    t->fd_table[0].type = FD_TYPE_UART;   /* stdin  */
+    t->fd_table[1].type = FD_TYPE_UART;   /* stdout */
+    t->fd_table[2].type = FD_TYPE_UART;   /* stderr */
+}
+
+/* Wake any task in TASK_WAITING state that is waiting for 'child_pid' */
+static void wake_waiting_parent(u32 child_pid)
+{
+    for (u32 i = 0; i < g_num_tasks; i++) {
+        task_t *t = &g_tasks[i];
+        if (t->state == TASK_WAITING && t->wait_pid == child_pid) {
+            t->state    = TASK_READY;
+            t->wait_pid = 0;
+            break;
+        }
+    }
 }
 
 int task_create(void (*entry)(void), const char *name)
@@ -148,20 +183,63 @@ int task_create_user(uintptr_t el0_entry, uintptr_t el0_sp,
 
     t->el0_entry = el0_entry;
     t->el0_sp    = el0_sp;
+    init_uart_fds(t);
 
-    kinfo("Scheduler: created user task[%lu] '%s' el0_entry=%p el0_sp=%p\n",
-          (unsigned long)g_num_tasks, name,
-          (void *)el0_entry, (void *)el0_sp);
+    kinfo("Scheduler: created user task[%lu] '%s' el0_entry=%p\n",
+          (unsigned long)g_num_tasks, name, (void *)el0_entry);
 
     g_num_tasks++;
     return 0;
 }
 
-void task_get_user_regs(uintptr_t *entry_out, uintptr_t *sp_out)
+int task_create_isolated(uintptr_t el0_entry, uintptr_t el0_sp,
+                         const char *name, void (*trampoline)(void),
+                         uintptr_t l1_phys, u32 ppid,
+                         uintptr_t user_code_phys, u32 user_code_pages,
+                         uintptr_t user_stack_phys, u32 user_stack_pages,
+                         u32 *pid_out)
+{
+    task_t *t = alloc_task(trampoline, name);
+    if (!t) return -1;
+
+    t->el0_entry        = el0_entry;
+    t->el0_sp           = el0_sp;
+    t->l1_table_phys    = l1_phys;
+    t->ppid             = ppid;
+    t->user_code_phys   = user_code_phys;
+    t->user_code_pages  = user_code_pages;
+    t->user_stack_phys  = user_stack_phys;
+    t->user_stack_pages = user_stack_pages;
+
+    /* Inherit parent's fd_table */
+    task_t *parent = NULL;
+    for (u32 i = 0; i < g_num_tasks; i++) {
+        if (g_tasks[i].pid == ppid) { parent = &g_tasks[i]; break; }
+    }
+    if (parent) {
+        for (u32 i = 0; i < PROC_MAX_FD; i++)
+            t->fd_table[i] = parent->fd_table[i];
+    } else {
+        init_uart_fds(t);
+    }
+
+    if (pid_out) *pid_out = t->pid;
+
+    kinfo("Scheduler: created isolated task[%lu] '%s' ppid=%lu l1=%p\n",
+          (unsigned long)g_num_tasks, name,
+          (unsigned long)ppid, (void *)l1_phys);
+
+    g_num_tasks++;
+    return 0;
+}
+
+void task_get_user_regs(uintptr_t *entry_out, uintptr_t *sp_out,
+                        uintptr_t *l1_phys_out)
 {
     task_t *t = &g_tasks[g_current_idx];
-    if (entry_out) *entry_out = t->el0_entry;
-    if (sp_out)    *sp_out    = t->el0_sp;
+    if (entry_out)   *entry_out   = t->el0_entry;
+    if (sp_out)      *sp_out      = t->el0_sp;
+    if (l1_phys_out) *l1_phys_out = t->l1_table_phys;
 }
 
 void task_yield(void)
@@ -170,29 +248,25 @@ void task_yield(void)
     u32    to_idx   = find_next();
 
     if (from_idx == to_idx)
-        return;   /* nothing else to run */
+        return;
 
     task_t *from = &g_tasks[from_idx];
     task_t *to   = &g_tasks[to_idx];
 
-    /* Update states */
     if (from->state == TASK_RUNNING)
         from->state = TASK_READY;
     to->state = TASK_RUNNING;
 
     g_current_idx = to_idx;
 
-    /*
-     * context_switch() saves from's callee-saved registers into from->ctx
-     * and loads to's callee-saved registers from to->ctx, then ret.
-     *
-     * From 'from' task's perspective: context_switch() is just a slow
-     * function call that returns when 'from' is scheduled again.
-     *
-     * From 'to' task's perspective: it resumes wherever it last called
-     * context_switch() (or starts at its entry function if new).
-     */
     context_switch(&from->ctx, &to->ctx);
+
+    /*
+     * After context_switch returns we are the *resumed* task (which is
+     * 'from' in the call above, but now g_current_idx points to us).
+     * Switch TTBR0_EL1 to match the task now executing.
+     */
+    vmm_switch_user_pt(g_tasks[g_current_idx].l1_table_phys);
 }
 
 void task_sleep(u64 ticks)
@@ -207,19 +281,113 @@ __attribute__((noreturn))
 void task_exit(void)
 {
     task_t *t = current_task();
-    kinfo("Scheduler: task[%lu] '%s' exited\n",
-          (unsigned long)t->pid, t->name);
-    t->state = TASK_DEAD;
-    task_yield();   /* should not return since this task is dead */
+    kinfo("Scheduler: task[%lu] '%s' exited (ppid=%lu)\n",
+          (unsigned long)t->pid, t->name, (unsigned long)t->ppid);
 
-    /* Safety net — if somehow we get here */
-    for (;;)
-        __asm__ volatile("wfi");
+    /* Switch back to global PT before freeing process-specific tables.
+     * This closes the window where we'd hold TTBR0 pointing to freed pages. */
+    if (t->l1_table_phys) {
+        vmm_switch_user_pt(0);
+        vmm_free_process_pt(t->l1_table_phys);
+        t->l1_table_phys = 0;
+    }
+    if (t->user_code_phys) {
+        for (u32 i = 0; i < t->user_code_pages; i++)
+            pmm_free_page(t->user_code_phys + (uintptr_t)i * PMM_PAGE_SIZE);
+        t->user_code_phys = 0;
+    }
+    if (t->user_stack_phys) {
+        for (u32 i = 0; i < t->user_stack_pages; i++)
+            pmm_free_page(t->user_stack_phys + (uintptr_t)i * PMM_PAGE_SIZE);
+        t->user_stack_phys = 0;
+    }
+
+    if (t->ppid) {
+        t->state = TASK_ZOMBIE;     /* parent may call waitpid */
+        wake_waiting_parent(t->pid);
+    } else {
+        t->state = TASK_DEAD;
+    }
+
+    task_yield();
+    for (;;) __asm__ volatile("wfi");
+}
+
+int task_waitpid(u32 pid, int *status)
+{
+    task_t *cur = current_task();
+
+    /* Search for a child with matching PID */
+    task_t *child = NULL;
+    for (u32 i = 0; i < g_num_tasks; i++) {
+        if (g_tasks[i].pid == pid && g_tasks[i].ppid == cur->pid) {
+            child = &g_tasks[i];
+            break;
+        }
+    }
+    if (!child) return -1;   /* no such child */
+
+    /* Block until the child becomes a zombie */
+    while (child->state != TASK_ZOMBIE) {
+        cur->state    = TASK_WAITING;
+        cur->wait_pid = pid;
+        task_yield();
+    }
+
+    /* Collect exit status and reap */
+    if (status) *status = child->exit_code;
+    child->state = TASK_DEAD;
+    return (int)pid;
 }
 
 u32 task_current_pid(void)
 {
     return g_tasks[g_current_idx].pid;
+}
+
+fd_entry_t *task_get_fd(u32 fd)
+{
+    if (fd >= PROC_MAX_FD) return NULL;
+    return &g_tasks[g_current_idx].fd_table[fd];
+}
+
+int task_alloc_fd(u8 type, u16 pipe_idx)
+{
+    task_t *t = current_task();
+    for (u32 i = 0; i < PROC_MAX_FD; i++) {
+        if (t->fd_table[i].type == FD_TYPE_CLOSED) {
+            t->fd_table[i].type     = type;
+            t->fd_table[i].pipe_idx = pipe_idx;
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
+void task_close_fd(u32 fd)
+{
+    if (fd >= PROC_MAX_FD) return;
+    task_t *t = current_task();
+    fd_entry_t *e = &t->fd_table[fd];
+    if (e->type == FD_TYPE_PIPE_R) pipe_close_read((int)e->pipe_idx);
+    if (e->type == FD_TYPE_PIPE_W) pipe_close_write((int)e->pipe_idx);
+    e->type     = FD_TYPE_CLOSED;
+    e->pipe_idx = 0;
+}
+
+long task_dup2_fd(u32 oldfd, u32 newfd)
+{
+    if (oldfd >= PROC_MAX_FD || newfd >= PROC_MAX_FD) return -1;
+    task_t *t = current_task();
+    if (t->fd_table[oldfd].type == FD_TYPE_CLOSED) return -1;
+
+    /* Close newfd's existing pipe end */
+    fd_entry_t *ne = &t->fd_table[newfd];
+    if (ne->type == FD_TYPE_PIPE_R) pipe_close_read((int)ne->pipe_idx);
+    if (ne->type == FD_TYPE_PIPE_W) pipe_close_write((int)ne->pipe_idx);
+
+    *ne = t->fd_table[oldfd];
+    return (long)newfd;
 }
 
 void scheduler_print_tasks(void)
@@ -230,6 +398,8 @@ void scheduler_print_tasks(void)
         [TASK_RUNNING]  = "RUNNING",
         [TASK_SLEEPING] = "SLEEPING",
         [TASK_DEAD]     = "DEAD",
+        [TASK_ZOMBIE]   = "ZOMBIE",
+        [TASK_WAITING]  = "WAITING",
     };
 
     kinfo("─── Task List ──────────────────────────\n");

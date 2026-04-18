@@ -40,6 +40,7 @@
  */
 
 #include "aether/vmm.h"
+#include "aether/mm.h"
 #include "aether/printk.h"
 #include "aether/types.h"
 
@@ -221,6 +222,137 @@ void vmm_init(void)
     kinfo("VMM: TCR_EL1=0x%lx  MAIR=0x%lx\n",
           (unsigned long)TCR_EL1_VAL,
           (unsigned long)MAIR_EL1_VAL);
+}
+
+/* ── Per-process page table helpers ─────────────────────────────────── */
+
+uintptr_t vmm_get_global_l1(void)
+{
+    return (uintptr_t)l1_table;
+}
+
+/*
+ * vmm_switch_user_pt — load a new L1 table into TTBR0_EL1 and flush
+ * the TLB.  Called on every context switch when l1_table_phys differs
+ * between the outgoing and incoming task.
+ */
+void vmm_switch_user_pt(uintptr_t l1_phys)
+{
+    uintptr_t target = l1_phys ? l1_phys : (uintptr_t)l1_table;
+    write_ttbr0_el1((u64)target);
+    __asm__ volatile(
+        "dsb ish\n"
+        "tlbi vmalle1\n"
+        "dsb ish\n"
+        "isb\n"
+        ::: "memory"
+    );
+}
+
+/*
+ * vmm_create_process_pt — allocate a private L1+L2 table pair for a
+ * new process.  Kernel L2 entries are copied from the global table.
+ * User L2 entries (384..511) start empty (TABLE entries filled later).
+ */
+uintptr_t vmm_create_process_pt(void)
+{
+    uintptr_t l1_phys = pmm_alloc_page();
+    if (!l1_phys) return 0;
+
+    uintptr_t l2_phys = pmm_alloc_page();
+    if (!l2_phys) { pmm_free_page(l1_phys); return 0; }
+
+    u64 *pl1 = (u64 *)l1_phys;
+    u64 *pl2 = (u64 *)l2_phys;
+
+    /* Kernel L2 entries: copy from global (AP=EL1_RW, 2MB blocks) */
+    for (u32 i = 0; i < VMM_USER_L2_START; i++)
+        pl2[i] = l2_table_ram[i];
+
+    /* User region: start empty — filled by vmm_map_user_pages() */
+    for (u32 i = VMM_USER_L2_START; i < 512; i++)
+        pl2[i] = 0;
+
+    /* L1 entries */
+    pl1[0] = l1_table[0];                       /* MMIO 1GB block */
+    pl1[1] = (u64)l2_phys | PTE_TYPE_TABLE;     /* RAM via private L2 */
+    pl1[2] = 0;
+    pl1[3] = 0;
+
+    return l1_phys;
+}
+
+/*
+ * vmm_map_user_pages — map n_pages 4KB pages VA→PA in a per-process L1.
+ *
+ * L2 entries in the user range are TABLE descriptors pointing to L3 tables
+ * (allocated on demand, one 4KB page per 2MB VA block).
+ * L3 entries are PAGE descriptors with AP=BOTH_RW, UXN=0.
+ */
+int vmm_map_user_pages(uintptr_t l1_phys, uintptr_t va,
+                       uintptr_t pa, u32 n_pages)
+{
+    u64 *pl1 = (u64 *)l1_phys;
+
+    for (u32 i = 0; i < n_pages; i++) {
+        uintptr_t page_va = va + (uintptr_t)i * PMM_PAGE_SIZE;
+        uintptr_t page_pa = pa + (uintptr_t)i * PMM_PAGE_SIZE;
+
+        u32 l1_idx = (u32)(page_va >> 30) & 0x3;
+        u64 l1e    = pl1[l1_idx];
+
+        /* L1 entry must be a TABLE pointing to our L2 */
+        if ((l1e & 0x3UL) != PTE_TYPE_TABLE) {
+            kerror("VMM: map_user_pages: L1[%u] is not a TABLE\n", l1_idx);
+            return -1;
+        }
+
+        u64 *pl2    = (u64 *)(l1e & ~0xFFFUL);
+        u32  l2_idx = (u32)(page_va >> 21) & 0x1FF;
+        u64  l2e    = pl2[l2_idx];
+
+        u64 *pl3;
+        if ((l2e & 0x3UL) == PTE_TYPE_TABLE) {
+            pl3 = (u64 *)(l2e & ~0xFFFUL);
+        } else {
+            /* Allocate a fresh L3 table for this 2MB block */
+            uintptr_t l3_phys = pmm_alloc_page();
+            if (!l3_phys) return -1;
+            pl2[l2_idx] = (u64)l3_phys | PTE_TYPE_TABLE;
+            pl3 = (u64 *)l3_phys;
+        }
+
+        u32 l3_idx = (u32)(page_va >> 12) & 0x1FF;
+        pl3[l3_idx] = (u64)page_pa
+                    | PTE_ATTR_NORMAL
+                    | PTE_AP_BOTH_RW   /* EL0 + EL1 read/write */
+                    | PTE_SH_INNER
+                    | PTE_AF
+                    | PTE_TYPE_PAGE;   /* 4KB page descriptor */
+    }
+
+    return 0;
+}
+
+/*
+ * vmm_free_process_pt — release an L1 table, its L2 table, and any
+ * L3 tables in the user region (L2[384..511]).
+ */
+void vmm_free_process_pt(uintptr_t l1_phys)
+{
+    if (!l1_phys) return;
+
+    u64 *pl1 = (u64 *)l1_phys;
+    u64  l1e1 = pl1[1];
+    if ((l1e1 & 0x3UL) == PTE_TYPE_TABLE) {
+        u64 *pl2 = (u64 *)(l1e1 & ~0xFFFUL);
+        for (u32 i = VMM_USER_L2_START; i < 512; i++) {
+            if ((pl2[i] & 0x3UL) == PTE_TYPE_TABLE)
+                pmm_free_page((uintptr_t)(pl2[i] & ~0xFFFUL));
+        }
+        pmm_free_page((uintptr_t)pl2);
+    }
+    pmm_free_page(l1_phys);
 }
 
 /* ── EL0 launch ──────────────────────────────────────────────────────── */

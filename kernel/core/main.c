@@ -11,6 +11,7 @@
 #include "aether/exceptions.h"
 #include "aether/mm.h"
 #include "aether/kmalloc.h"
+#include "aether/pipe.h"
 #include "aether/scheduler.h"
 #include "aether/vmm.h"
 #include "aether/initrd.h"
@@ -72,7 +73,8 @@ void kernel_main(void)
     uart_enable_rx_irq();
     timer_init();
 
-    /* ── 7. Scheduler ───────────────────────────────────────────────── */
+    /* ── 7. Scheduler + Pipe subsystem ─────────────────────────────── */
+    pipe_init();
     scheduler_init();
     scheduler_add_idle();
 

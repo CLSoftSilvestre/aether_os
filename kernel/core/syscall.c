@@ -23,7 +23,9 @@
 #include "aether/exceptions.h"
 #include "aether/initrd.h"
 #include "aether/mm.h"
+#include "aether/pipe.h"
 #include "aether/printk.h"
+#include "aether/process.h"
 #include "aether/scheduler.h"
 #include "aether/types.h"
 #include "drivers/char/uart_pl011.h"
@@ -53,61 +55,55 @@ static long do_sys_exit(long exit_code)
     task_exit();   /* noreturn — switches to another task */
 }
 
-/*
- * sys_write — write bytes to a file descriptor.
- *
- * Phase 3 MVP: only fd=1 (stdout) is implemented — writes to UART.
- * Future: VFS layer will dispatch to the appropriate driver/file.
- *
- * Returns number of bytes written, or -1 on error.
- *
- * Security note: 'buf' is a user-space pointer. In Phase 3.1 we will
- * add copy_from_user() to safely copy data across the privilege boundary.
- * For now, the identity map means kernel can read user pointers directly.
- */
-static long do_sys_write(long fd, const char *buf, long len)
+/* Resolve an fd number to an fd_entry_t* for the current task.
+ * Returns NULL if fd is out of range or closed. */
+static fd_entry_t *resolve_fd(long fd)
 {
-    if (fd != FD_STDOUT) {
-        kwarn("[SYS] sys_write: unsupported fd=%ld\n", fd);
-        return -1;
-    }
-    if (!buf || len <= 0) return 0;
-
-    /* Cap at 4KB to prevent a buggy user program from stalling the kernel */
-    if (len > 4096) len = 4096;
-
-    for (long i = 0; i < len; i++)
-        uart_putc(buf[i]);
-
-    return len;
+    if (fd < 0 || fd >= PROC_MAX_FD) return NULL;
+    fd_entry_t *e = task_get_fd((u32)fd);
+    if (!e || e->type == FD_TYPE_CLOSED) return NULL;
+    return e;
 }
 
-/*
- * sys_read — read up to len bytes from fd into buf.
- *
- * Phase 3.2 MVP: only fd=0 (stdin/UART) is implemented.
- * Blocks using WFI until at least one byte is available, then reads
- * up to len bytes without further blocking.
- *
- * Returns number of bytes read, or -1 on error.
- */
+static long do_sys_write(long fd, const char *buf, long len)
+{
+    if (!buf || len <= 0) return 0;
+    if (len > 4096) len = 4096;
+
+    fd_entry_t *e = resolve_fd(fd);
+    if (!e) { kwarn("[SYS] sys_write: bad fd=%ld\n", fd); return -1; }
+
+    if (e->type == FD_TYPE_UART) {
+        for (long i = 0; i < len; i++) uart_putc(buf[i]);
+        return len;
+    }
+    if (e->type == FD_TYPE_PIPE_W)
+        return pipe_write((int)e->pipe_idx, buf, len);
+
+    kwarn("[SYS] sys_write: fd=%ld has unwritable type %u\n", fd, e->type);
+    return -1;
+}
+
 static long do_sys_read(long fd, char *buf, long len)
 {
-    if (fd != FD_STDIN) {
-        kwarn("[SYS] sys_read: unsupported fd=%ld\n", fd);
-        return -1;
-    }
     if (!buf || len <= 0) return 0;
 
-    /* Block until ring buffer has at least one byte */
-    while (uart_rx_empty())
-        __asm__ volatile("wfi" ::: "memory");
+    fd_entry_t *e = resolve_fd(fd);
+    if (!e) { kwarn("[SYS] sys_read: bad fd=%ld\n", fd); return -1; }
 
-    long n = 0;
-    while (n < len && !uart_rx_empty())
-        buf[n++] = uart_getc_nowait();
+    if (e->type == FD_TYPE_UART) {
+        while (uart_rx_empty())
+            __asm__ volatile("wfi" ::: "memory");
+        long n = 0;
+        while (n < len && !uart_rx_empty())
+            buf[n++] = uart_getc_nowait();
+        return n;
+    }
+    if (e->type == FD_TYPE_PIPE_R)
+        return pipe_read((int)e->pipe_idx, buf, len);
 
-    return n;
+    kwarn("[SYS] sys_read: fd=%ld has unreadable type %u\n", fd, e->type);
+    return -1;
 }
 
 /*
@@ -143,6 +139,60 @@ static long do_sys_pmm_stats(void)
     u32 free  = pmm_free_pages();
     u32 total = pmm_total_pages();
     return (long)(((u64)free << 32) | (u64)total);
+}
+
+/* ── Process management syscalls (Phase 4.3) ─────────────────────────────── */
+
+static long do_sys_spawn(const char *path)
+{
+    if (!path) return -1;
+    u32 child_pid = 0;
+    u32 ppid = task_current_pid();
+    int rc = process_spawn_child(path, ppid, &child_pid);
+    return rc == 0 ? (long)child_pid : -1L;
+}
+
+static long do_sys_waitpid(long pid, int *status)
+{
+    return (long)task_waitpid((u32)pid, status);
+}
+
+static long do_sys_getpid(void)
+{
+    return (long)task_current_pid();
+}
+
+/* ── IPC syscalls (Phase 4.3) ────────────────────────────────────────────── */
+
+static long do_sys_pipe(int *fds)
+{
+    if (!fds) return -1;
+
+    int pipe_idx = pipe_alloc();
+    if (pipe_idx < 0) return -1;
+
+    /* Find two free fd slots in the current task */
+    int rfd = task_alloc_fd(FD_TYPE_PIPE_R, (u16)pipe_idx);
+    int wfd = task_alloc_fd(FD_TYPE_PIPE_W, (u16)pipe_idx);
+
+    if (rfd < 0 || wfd < 0) {
+        pipe_close_read(pipe_idx);
+        pipe_close_write(pipe_idx);
+        if (rfd >= 0) task_close_fd((u32)rfd);
+        if (wfd >= 0) task_close_fd((u32)wfd);
+        return -1;
+    }
+
+    fds[0] = rfd;
+    fds[1] = wfd;
+    return 0;
+}
+
+static long do_sys_dup2(long oldfd, long newfd)
+{
+    if (oldfd < 0 || newfd < 0 || oldfd >= PROC_MAX_FD || newfd >= PROC_MAX_FD)
+        return -1;
+    return task_dup2_fd((u32)oldfd, (u32)newfd);
 }
 
 /* ── Graphics syscalls ───────────────────────────────────────────────────── */
@@ -205,8 +255,23 @@ long syscall_dispatch(trap_frame_t *frame)
 
     switch (nr) {
     case SYS_EXIT:
-        do_sys_exit((long)arg0);   /* noreturn */
-        return 0;                  /* unreachable, but silences warning */
+        do_sys_exit((long)arg0);
+        return 0;
+
+    case SYS_SPAWN:
+        return do_sys_spawn((const char *)arg0);
+
+    case SYS_WAITPID:
+        return do_sys_waitpid((long)arg0, (int *)arg1);
+
+    case SYS_GETPID:
+        return do_sys_getpid();
+
+    case SYS_PIPE:
+        return do_sys_pipe((int *)arg0);
+
+    case SYS_DUP2:
+        return do_sys_dup2((long)arg0, (long)arg1);
 
     case SYS_READ:
         return do_sys_read((long)arg0, (char *)arg1, (long)arg2);
@@ -241,6 +306,6 @@ long syscall_dispatch(trap_frame_t *frame)
     default:
         kwarn("[SYS] unknown syscall #%lu from PID %lu\n",
               (unsigned long)nr, (unsigned long)task_current_pid());
-        return -1;   /* ENOSYS */
+        return -1;
     }
 }

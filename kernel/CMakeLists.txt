@@ -17,6 +17,7 @@ set(KERNEL_SOURCES
     core/scheduler.c
     core/syscall.c
     core/process.c
+    core/pipe.c
 
     # Memory management
     mm/pmm.c
