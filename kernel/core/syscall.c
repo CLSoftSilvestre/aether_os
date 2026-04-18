@@ -216,7 +216,9 @@ static long do_sys_fb_fill(u64 xy, u64 wh, u64 color)
     u32 y = (u32)(xy & 0xFFFFFFFFu);
     u32 w = (u32)(wh >> 32);
     u32 h = (u32)(wh & 0xFFFFFFFFu);
+    cursor_hide();
     fb_fill_rect(x, y, w, h, (u32)color);
+    cursor_show();
     return 0;
 }
 
@@ -226,7 +228,9 @@ static long do_sys_fb_char(u64 xy, u64 ch_fg, u64 bg)
     u32 y  = (u32)(xy & 0xFFFFFFFFu);
     u8  ch = (u8)(ch_fg >> 32);
     u32 fg = (u32)(ch_fg & 0xFFFFFFFFu);
+    cursor_hide();
     font_draw_char(x, y, ch, fg, (u32)bg);
+    cursor_show();
     return 0;
 }
 
