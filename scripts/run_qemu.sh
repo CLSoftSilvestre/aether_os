@@ -68,9 +68,13 @@ else
     #
     # Verify device presence: in QEMU monitor (Ctrl-A C) run:
     #   info qtree | grep pl050
+    # virtio-tablet-device: absolute-position tablet on the VirtIO MMIO bus.
+    # The kernel's virtio_input driver scans transports 0..31 for Device ID 18
+    # and maps tablet coords (0..32767) to screen pixels → mouse event ring.
     QEMU_ARGS+=(
         -device ramfb
         -vga none
+        -device virtio-tablet-device
     )
 fi
 

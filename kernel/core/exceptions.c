@@ -18,6 +18,7 @@
 #include "drivers/char/uart_pl011.h"
 #include "drivers/input/pl050_kbd.h"
 #include "drivers/input/pl050_mouse.h"
+#include "drivers/input/virtio_input.h"
 
 /* ── Vector table installation ──────────────────────────────────────────── */
 
@@ -146,7 +147,11 @@ void el1_irq_handler(trap_frame_t *frame)
         break;
 
     default:
-        kwarn("IRQ: unhandled interrupt ID %lu\n", (unsigned long)irq);
+        /* VirtIO MMIO IRQs: INTID 48..79 (SPI 16..47), assigned dynamically */
+        if (virtio_input_irq() >= 0 && irq == (u32)virtio_input_irq())
+            virtio_input_irq_handler();
+        else
+            kwarn("IRQ: unhandled interrupt ID %lu\n", (unsigned long)irq);
         break;
     }
 

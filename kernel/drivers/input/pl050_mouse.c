@@ -71,6 +71,8 @@ static void mouse_ring_push(unsigned long long ev)
 
 int mouse_event_empty(void) { return mouse_head == mouse_tail; }
 
+void mouse_post_event(unsigned long long ev) { mouse_ring_push(ev); }
+
 unsigned long long mouse_get_event(void)
 {
     unsigned long long v = mouse_ring[mouse_tail];

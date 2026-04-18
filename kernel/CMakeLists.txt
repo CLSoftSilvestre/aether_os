@@ -48,6 +48,7 @@ set(KERNEL_SOURCES
     # Drivers — input (Phase 4.5)
     drivers/input/pl050_kbd.c
     drivers/input/pl050_mouse.c
+    drivers/input/virtio_input.c
 )
 
 set(LINKER_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/arch/arm64/boot/linker.ld)

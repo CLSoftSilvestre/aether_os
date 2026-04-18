@@ -24,6 +24,7 @@
 #include "drivers/video/cursor.h"
 #include "drivers/input/pl050_kbd.h"
 #include "drivers/input/pl050_mouse.h"
+#include "drivers/input/virtio_input.h"
 #include "aether/types.h"
 
 extern u8 __stack_top[];
@@ -88,6 +89,7 @@ void kernel_main(void)
      * translation so the shell remains fully functional.
      */
     cursor_init();
+    virtio_input_init();
 
     /* ── 7. Scheduler + Pipe subsystem ─────────────────────────────── */
     pipe_init();

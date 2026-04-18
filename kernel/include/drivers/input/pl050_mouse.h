@@ -26,4 +26,7 @@ unsigned long long mouse_get_event(void);  /* returns packed mouse_event_t */
 /* Current absolute cursor position */
 void mouse_get_pos(unsigned int *x, unsigned int *y);
 
+/* Push a pre-packed mouse_event_t into the ring (used by virtio-input) */
+void mouse_post_event(unsigned long long packed_event);
+
 #endif /* AETHER_PL050_MOUSE_H */
