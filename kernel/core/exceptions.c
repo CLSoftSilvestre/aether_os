@@ -16,6 +16,8 @@
 #include "drivers/irq/gic_v2.h"
 #include "drivers/timer/arm_timer.h"
 #include "drivers/char/uart_pl011.h"
+#include "drivers/input/pl050_kbd.h"
+#include "drivers/input/pl050_mouse.h"
 
 /* ── Vector table installation ──────────────────────────────────────────── */
 
@@ -133,6 +135,14 @@ void el1_irq_handler(trap_frame_t *frame)
 
     case UART_IRQ_ID:
         uart_irq_handler();
+        break;
+
+    case 52:   /* PL050 keyboard (SPI 20) */
+        pl050_kbd_irq_handler();
+        break;
+
+    case 53:   /* PL050 mouse (SPI 21) */
+        pl050_mouse_irq_handler();
         break;
 
     default:

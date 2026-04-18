@@ -33,6 +33,10 @@
 #include "drivers/video/fb.h"
 #include "drivers/video/font.h"
 #include "drivers/video/fb_console.h"
+#include "drivers/video/cursor.h"
+#include "drivers/input/pl050_kbd.h"
+#include "drivers/input/pl050_mouse.h"
+#include "drivers/input/keycodes.h"
 
 /* ── Individual syscall implementations ─────────────────────────────────── */
 
@@ -237,6 +241,160 @@ static long do_sys_fb_claim(void)
     return 0;
 }
 
+/* ── UART → key_event fallback (used when PL050 KMI is absent) ─────────── */
+
+/*
+ * Maps ASCII bytes from UART (+ ANSI escape sequences for arrow keys) to
+ * packed key_event_t values.  This lets the shell run identically whether
+ * input comes from real PS/2 hardware or a UART terminal emulator.
+ */
+
+static const keycode_t lc_to_kc[26] = {
+    KEY_A,KEY_B,KEY_C,KEY_D,KEY_E,KEY_F,KEY_G,KEY_H,KEY_I,KEY_J,KEY_K,
+    KEY_L,KEY_M,KEY_N,KEY_O,KEY_P,KEY_Q,KEY_R,KEY_S,KEY_T,KEY_U,KEY_V,
+    KEY_W,KEY_X,KEY_Y,KEY_Z
+};
+static const keycode_t digit_to_kc[10] = {
+    KEY_0,KEY_1,KEY_2,KEY_3,KEY_4,KEY_5,KEY_6,KEY_7,KEY_8,KEY_9
+};
+
+static unsigned long long uart_to_key_event(void)
+{
+    while (uart_rx_empty()) task_yield();
+    u8 c = (u8)uart_getc_nowait();
+    key_event_t ev = { KEY_NONE, 0, 1 };
+
+    /* ANSI escape sequence: ESC [ A/B/C/D → arrow keys */
+    if (c == 0x1B) {
+        int t = 5000;
+        while (uart_rx_empty() && --t) ;
+        if (!uart_rx_empty()) {
+            u8 c2 = (u8)uart_getc_nowait();
+            if (c2 == '[') {
+                t = 5000;
+                while (uart_rx_empty() && --t) ;
+                if (!uart_rx_empty()) {
+                    u8 seq = (u8)uart_getc_nowait();
+                    switch (seq) {
+                    case 'A': ev.keycode = KEY_UP;    break;
+                    case 'B': ev.keycode = KEY_DOWN;  break;
+                    case 'C': ev.keycode = KEY_RIGHT; break;
+                    case 'D': ev.keycode = KEY_LEFT;  break;
+                    case 'H': ev.keycode = KEY_HOME;  break;
+                    case 'F': ev.keycode = KEY_END;   break;
+                    default:  ev.keycode = KEY_ESC;   break;
+                    }
+                    return key_event_pack(ev);
+                }
+            }
+        }
+        ev.keycode = KEY_ESC;
+        return key_event_pack(ev);
+    }
+
+    /* Ctrl+C (0x03) */
+    if (c == 0x03) { ev.keycode = KEY_C; ev.modifiers = MOD_CTRL; return key_event_pack(ev); }
+    /* Enter */
+    if (c == '\r' || c == '\n') { ev.keycode = KEY_ENTER; return key_event_pack(ev); }
+    /* Backspace / DEL */
+    if (c == '\b' || c == 127)  { ev.keycode = KEY_BACKSPACE; return key_event_pack(ev); }
+    /* Tab */
+    if (c == '\t')              { ev.keycode = KEY_TAB; return key_event_pack(ev); }
+    /* Space */
+    if (c == ' ')               { ev.keycode = KEY_SPACE; return key_event_pack(ev); }
+
+    /* Lowercase letters */
+    if (c >= 'a' && c <= 'z') { ev.keycode = lc_to_kc[c-'a']; return key_event_pack(ev); }
+    /* Uppercase letters */
+    if (c >= 'A' && c <= 'Z') { ev.keycode = lc_to_kc[c-'A']; ev.modifiers = MOD_SHIFT; return key_event_pack(ev); }
+    /* Digits */
+    if (c >= '0' && c <= '9') { ev.keycode = digit_to_kc[c-'0']; return key_event_pack(ev); }
+
+    /* Punctuation — unshifted */
+    switch (c) {
+    case '-':  ev.keycode = KEY_MINUS;       break;
+    case '=':  ev.keycode = KEY_EQUALS;      break;
+    case '[':  ev.keycode = KEY_LBRACKET;    break;
+    case ']':  ev.keycode = KEY_RBRACKET;    break;
+    case '\\': ev.keycode = KEY_BACKSLASH;   break;
+    case ';':  ev.keycode = KEY_SEMICOLON;   break;
+    case '\'': ev.keycode = KEY_APOSTROPHE;  break;
+    case ',':  ev.keycode = KEY_COMMA;       break;
+    case '.':  ev.keycode = KEY_DOT;         break;
+    case '/':  ev.keycode = KEY_SLASH;       break;
+    case '`':  ev.keycode = KEY_GRAVE;       break;
+    /* Shifted punctuation */
+    case '_':  ev.keycode = KEY_MINUS;      ev.modifiers = MOD_SHIFT; break;
+    case '+':  ev.keycode = KEY_EQUALS;     ev.modifiers = MOD_SHIFT; break;
+    case '{':  ev.keycode = KEY_LBRACKET;   ev.modifiers = MOD_SHIFT; break;
+    case '}':  ev.keycode = KEY_RBRACKET;   ev.modifiers = MOD_SHIFT; break;
+    case '|':  ev.keycode = KEY_BACKSLASH;  ev.modifiers = MOD_SHIFT; break;
+    case ':':  ev.keycode = KEY_SEMICOLON;  ev.modifiers = MOD_SHIFT; break;
+    case '"':  ev.keycode = KEY_APOSTROPHE; ev.modifiers = MOD_SHIFT; break;
+    case '<':  ev.keycode = KEY_COMMA;      ev.modifiers = MOD_SHIFT; break;
+    case '>':  ev.keycode = KEY_DOT;        ev.modifiers = MOD_SHIFT; break;
+    case '?':  ev.keycode = KEY_SLASH;      ev.modifiers = MOD_SHIFT; break;
+    case '~':  ev.keycode = KEY_GRAVE;      ev.modifiers = MOD_SHIFT; break;
+    /* Shifted digits */
+    case '!': ev.keycode = KEY_1; ev.modifiers = MOD_SHIFT; break;
+    case '@': ev.keycode = KEY_2; ev.modifiers = MOD_SHIFT; break;
+    case '#': ev.keycode = KEY_3; ev.modifiers = MOD_SHIFT; break;
+    case '$': ev.keycode = KEY_4; ev.modifiers = MOD_SHIFT; break;
+    case '%': ev.keycode = KEY_5; ev.modifiers = MOD_SHIFT; break;
+    case '^': ev.keycode = KEY_6; ev.modifiers = MOD_SHIFT; break;
+    case '&': ev.keycode = KEY_7; ev.modifiers = MOD_SHIFT; break;
+    case '*': ev.keycode = KEY_8; ev.modifiers = MOD_SHIFT; break;
+    case '(': ev.keycode = KEY_9; ev.modifiers = MOD_SHIFT; break;
+    case ')': ev.keycode = KEY_0; ev.modifiers = MOD_SHIFT; break;
+    default:  break;
+    }
+    return key_event_pack(ev);
+}
+
+/* ── Input syscalls (Phase 4.5) ─────────────────────────────────────────── */
+
+static long do_sys_key_read(void)
+{
+    /* Prefer PS/2 hardware events; fall back to UART when KMI is absent */
+    if (!kbd_event_empty())
+        return (long)kbd_get_event();
+    return (long)uart_to_key_event();
+}
+
+static long do_sys_key_poll(void)
+{
+    if (!kbd_event_empty()) return (long)kbd_get_event();
+    return 0L;   /* Non-blocking: return 0 if no PS/2 event pending */
+}
+
+static long do_sys_mouse_read(void)
+{
+    while (mouse_event_empty())
+        task_yield();
+    return (long)mouse_get_event();
+}
+
+static long do_sys_mouse_poll(void)
+{
+    if (mouse_event_empty()) return 0L;
+    return (long)mouse_get_event();
+}
+
+static long do_sys_cursor_move(u64 xy)
+{
+    u32 x = (u32)(xy >> 32);
+    u32 y = (u32)(xy & 0xFFFFFFFFu);
+    cursor_move(x, y);
+    return 0;
+}
+
+static long do_sys_cursor_show(u64 visible)
+{
+    if (visible) cursor_show();
+    else         cursor_hide();
+    return 0;
+}
+
 /* ── Dispatcher ─────────────────────────────────────────────────────────── */
 
 /*
@@ -294,6 +452,13 @@ long syscall_dispatch(trap_frame_t *frame)
     case SYS_SLEEP_TICKS:
         task_sleep((u64)arg0);
         return 0;
+
+    case SYS_KEY_READ:    return do_sys_key_read();
+    case SYS_KEY_POLL:    return do_sys_key_poll();
+    case SYS_MOUSE_READ:  return do_sys_mouse_read();
+    case SYS_MOUSE_POLL:  return do_sys_mouse_poll();
+    case SYS_CURSOR_MOVE: return do_sys_cursor_move(arg0);
+    case SYS_CURSOR_SHOW: return do_sys_cursor_show(arg0);
 
     case SYS_FB_FILL:
         return do_sys_fb_fill(arg0, arg1, arg2);

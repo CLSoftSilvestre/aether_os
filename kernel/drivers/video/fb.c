@@ -34,6 +34,12 @@ void fb_fill_rect(u32 x, u32 y, u32 w, u32 h, u32 color)
     }
 }
 
+u32 fb_get_pixel(u32 x, u32 y)
+{
+    if (!fb_base || x >= fb_width || y >= fb_height) return 0;
+    return fb_base[y * (fb_stride / 4) + x];
+}
+
 void fb_blit(const u32 *src, u32 x, u32 y, u32 w, u32 h, u32 src_stride)
 {
     if (!fb_base) return;

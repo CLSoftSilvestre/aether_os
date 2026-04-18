@@ -21,6 +21,9 @@
 #include "drivers/timer/arm_timer.h"
 #include "drivers/video/ramfb.h"
 #include "drivers/video/fb_console.h"
+#include "drivers/video/cursor.h"
+#include "drivers/input/pl050_kbd.h"
+#include "drivers/input/pl050_mouse.h"
 #include "aether/types.h"
 
 extern u8 __stack_top[];
@@ -35,7 +38,7 @@ void kernel_main(void)
     uart_puts("\r\n");
     uart_puts("╔══════════════════════════════════════╗\r\n");
     uart_puts("║         AetherOS v0.0.5              ║\r\n");
-    uart_puts("║   Phase 4.0 — Framebuffer + Shell    ║\r\n");
+    uart_puts("║   Phase 4.5 — Input Subsystem        ║\r\n");
     uart_puts("╚══════════════════════════════════════╝\r\n");
     uart_puts("\r\n");
 
@@ -72,6 +75,19 @@ void kernel_main(void)
     gic_init();
     uart_enable_rx_irq();
     timer_init();
+
+    /*
+     * Input subsystem — Phase 4.5.
+     * PL050 KMI (PS/2) is present on real Pi hardware and on older QEMU.
+     * QEMU 10.x virt machine does NOT include KMI devices by default;
+     * accessing unmapped MMIO generates a Synchronous External Abort.
+     * pl050_kbd_init() / pl050_mouse_init() are called only when the
+     * device is confirmed present (Phase 5 — real hardware bring-up).
+     *
+     * For QEMU development, sys_key_read() falls back to UART → key_event
+     * translation so the shell remains fully functional.
+     */
+    cursor_init();
 
     /* ── 7. Scheduler + Pipe subsystem ─────────────────────────────── */
     pipe_init();

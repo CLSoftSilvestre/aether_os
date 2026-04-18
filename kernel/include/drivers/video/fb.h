@@ -29,6 +29,7 @@
 void fb_init(void);
 
 void fb_put_pixel(u32 x, u32 y, u32 color);
+u32  fb_get_pixel(u32 x, u32 y);
 void fb_fill_rect(u32 x, u32 y, u32 w, u32 h, u32 color);
 
 /* Copy a w×h block from src (row-major, src_stride bytes/row) to (x,y) */

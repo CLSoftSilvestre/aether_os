@@ -19,6 +19,10 @@
 #define SYS_WAITPID      4
 #define SYS_GETPID       5
 #define SYS_SLEEP_TICKS  6
+#define SYS_KEY_READ     7
+#define SYS_KEY_POLL     8
+#define SYS_MOUSE_READ   9
+#define SYS_MOUSE_POLL  10
 #define SYS_PIPE        22
 #define SYS_DUP2        24
 #define SYS_READ         63
@@ -30,6 +34,8 @@
 #define SYS_FB_CHAR     602
 #define SYS_GET_TICKS   603
 #define SYS_FB_CLAIM    604
+#define SYS_CURSOR_MOVE 605
+#define SYS_CURSOR_SHOW 606
 
 /* Standard file descriptors */
 #define STDIN_FILENO   0
@@ -177,6 +183,44 @@ static inline long sys_get_ticks(void)
 static inline void sys_fb_claim(void)
 {
     _sys0(SYS_FB_CLAIM);
+}
+
+/* ── Input syscalls (Phase 4.5) ──────────────────────────────────────────── */
+
+/* Block until a key event; returns packed key_event_t (use key_event_unpack) */
+static inline unsigned long long sys_key_read(void)
+{
+    return (unsigned long long)_sys0(SYS_KEY_READ);
+}
+
+/* Non-blocking; returns 0 if no event pending */
+static inline unsigned long long sys_key_poll(void)
+{
+    return (unsigned long long)_sys0(SYS_KEY_POLL);
+}
+
+/* Block until mouse event; returns packed mouse_event_t */
+static inline unsigned long long sys_mouse_read(void)
+{
+    return (unsigned long long)_sys0(SYS_MOUSE_READ);
+}
+
+/* Non-blocking; returns 0 if no event pending */
+static inline unsigned long long sys_mouse_poll(void)
+{
+    return (unsigned long long)_sys0(SYS_MOUSE_POLL);
+}
+
+/* Move and redraw the software cursor; kernel saves/restores background */
+static inline void sys_cursor_move(unsigned int x, unsigned int y)
+{
+    long xy = ((long)x << 32) | (long)y;
+    _sys1(SYS_CURSOR_MOVE, xy);
+}
+
+static inline void sys_cursor_show(int visible)
+{
+    _sys1(SYS_CURSOR_SHOW, (long)visible);
 }
 
 /* ── String helpers (no libc) ────────────────────────────────────── */

@@ -15,6 +15,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <sys.h>
+#include <input.h>
 
 /* ── Layout constants (must match init) ─────────────────────────────────── */
 
@@ -144,17 +145,139 @@ static void term_printf(const char *fmt, ...)
     term_puts(buf);
 }
 
+/* keycode → ASCII (unshifted / shifted) — local copy for terminal use */
+static const char kc_ascii[KEY_MAX] = {
+    [KEY_A]='a',[KEY_B]='b',[KEY_C]='c',[KEY_D]='d',[KEY_E]='e',
+    [KEY_F]='f',[KEY_G]='g',[KEY_H]='h',[KEY_I]='i',[KEY_J]='j',
+    [KEY_K]='k',[KEY_L]='l',[KEY_M]='m',[KEY_N]='n',[KEY_O]='o',
+    [KEY_P]='p',[KEY_Q]='q',[KEY_R]='r',[KEY_S]='s',[KEY_T]='t',
+    [KEY_U]='u',[KEY_V]='v',[KEY_W]='w',[KEY_X]='x',[KEY_Y]='y',
+    [KEY_Z]='z',
+    [KEY_0]='0',[KEY_1]='1',[KEY_2]='2',[KEY_3]='3',[KEY_4]='4',
+    [KEY_5]='5',[KEY_6]='6',[KEY_7]='7',[KEY_8]='8',[KEY_9]='9',
+    [KEY_ENTER]='\n',[KEY_BACKSPACE]='\b',[KEY_TAB]='\t',[KEY_SPACE]=' ',
+    [KEY_MINUS]='-',[KEY_EQUALS]='=',[KEY_LBRACKET]='[',[KEY_RBRACKET]=']',
+    [KEY_BACKSLASH]='\\',[KEY_SEMICOLON]=';',[KEY_APOSTROPHE]='\'',
+    [KEY_COMMA]=',',[KEY_DOT]='.',[KEY_SLASH]='/',[KEY_GRAVE]='`',
+};
+static const char kc_ascii_shift[KEY_MAX] = {
+    [KEY_A]='A',[KEY_B]='B',[KEY_C]='C',[KEY_D]='D',[KEY_E]='E',
+    [KEY_F]='F',[KEY_G]='G',[KEY_H]='H',[KEY_I]='I',[KEY_J]='J',
+    [KEY_K]='K',[KEY_L]='L',[KEY_M]='M',[KEY_N]='N',[KEY_O]='O',
+    [KEY_P]='P',[KEY_Q]='Q',[KEY_R]='R',[KEY_S]='S',[KEY_T]='T',
+    [KEY_U]='U',[KEY_V]='V',[KEY_W]='W',[KEY_X]='X',[KEY_Y]='Y',
+    [KEY_Z]='Z',
+    [KEY_0]=')',[KEY_1]='!',[KEY_2]='@',[KEY_3]='#',[KEY_4]='$',
+    [KEY_5]='%',[KEY_6]='^',[KEY_7]='&',[KEY_8]='*',[KEY_9]='(',
+    [KEY_ENTER]='\n',[KEY_BACKSPACE]='\b',[KEY_TAB]='\t',[KEY_SPACE]=' ',
+    [KEY_MINUS]='_',[KEY_EQUALS]='+',[KEY_LBRACKET]='{',[KEY_RBRACKET]='}',
+    [KEY_BACKSLASH]='|',[KEY_SEMICOLON]=':',[KEY_APOSTROPHE]='"',
+    [KEY_COMMA]='<',[KEY_DOT]='>',[KEY_SLASH]='?',[KEY_GRAVE]='~',
+};
+
+static char term_key_to_char(key_event_t ev)
+{
+    int shifted = (ev.modifiers & MOD_SHIFT) ||
+                  ((ev.modifiers & MOD_CAPS) &&
+                   ev.keycode >= KEY_A && ev.keycode <= KEY_Z);
+    const char *tbl = shifted ? kc_ascii_shift : kc_ascii;
+    if ((unsigned int)ev.keycode >= (unsigned int)KEY_MAX) return 0;
+    return tbl[ev.keycode];
+}
+
+/*
+ * term_readline — graphical line editor using PS/2 key events.
+ *
+ * Supports: character echo + cursor, Backspace, Left/Right cursor
+ * movement within the line, Ctrl+C (exit 130).
+ */
 static int term_readline(char *buf, int max)
 {
-    int n = 0;
+    int n   = 0;   /* total chars in buffer */
+    int pos = 0;   /* cursor position within buffer (0..n) */
+
     term_draw_cursor();
+
     while (n < max - 1) {
-        char c;
-        sys_read(STDIN_FILENO, &c, 1);
+        unsigned long long raw = sys_key_read();
+        key_event_t ev = key_event_unpack(raw);
+        if (!ev.is_press) continue;
+
+        /* Ctrl+C */
+        if ((ev.modifiers & MOD_CTRL) && ev.keycode == KEY_C) {
+            term_erase_cursor();
+            term_puts("^C\n");
+            exit(130);
+        }
+
+        /* Enter */
+        if (ev.keycode == KEY_ENTER) {
+            term_erase_cursor();
+            term_putc('\n');
+            break;
+        }
+
+        /* Backspace — delete char before cursor */
+        if (ev.keycode == KEY_BACKSPACE && pos > 0) {
+            term_erase_cursor();
+            /* Shift chars left */
+            for (int i = pos - 1; i < n - 1; i++) buf[i] = buf[i + 1];
+            n--; pos--;
+            buf[n] = '\0';
+            /* Redraw from pos to end + blank the last char */
+            for (int i = pos; i < n; i++) {
+                t_buf[t_row][t_col] = buf[i];
+                gfx_char(TERM_X + t_col * FONT_W, TERM_Y + t_row * FONT_H,
+                         buf[i], C_TEXT, C_TERM_BG);
+                t_col++;
+            }
+            /* Blank the vacated position */
+            gfx_char(TERM_X + t_col * FONT_W, TERM_Y + t_row * FONT_H,
+                     ' ', C_TEXT, C_TERM_BG);
+            t_buf[t_row][t_col] = ' ';
+            /* Move visual cursor back to pos */
+            t_col = t_col - (n - pos);
+            term_draw_cursor();
+            continue;
+        }
+
+        /* Arrow LEFT */
+        if (ev.keycode == KEY_LEFT && pos > 0) {
+            term_erase_cursor();
+            pos--;
+            t_col--;
+            term_draw_cursor();
+            continue;
+        }
+
+        /* Arrow RIGHT */
+        if (ev.keycode == KEY_RIGHT && pos < n) {
+            term_erase_cursor();
+            pos++;
+            t_col++;
+            term_draw_cursor();
+            continue;
+        }
+
+        /* Printable character — insert at cursor position */
+        char c = term_key_to_char(ev);
+        if (!c) continue;
+
         term_erase_cursor();
-        if (c == '\r' || c == '\n') { term_putc('\n'); break; }
-        if ((c == '\b' || c == 127) && n > 0) { n--; term_putc('\b'); }
-        else if ((unsigned char)c >= 32) { buf[n++] = c; term_putc(c); }
+        /* Shift chars right to make room */
+        for (int i = n; i > pos; i--) buf[i] = buf[i - 1];
+        buf[pos] = c;
+        n++; pos++;
+        buf[n] = '\0';
+        /* Redraw from insertion point to end */
+        int save_col = t_col;
+        for (int i = pos - 1; i < n; i++) {
+            t_buf[t_row][t_col] = buf[i];
+            gfx_char(TERM_X + t_col * FONT_W, TERM_Y + t_row * FONT_H,
+                     buf[i], C_TEXT, C_TERM_BG);
+            t_col++;
+        }
+        t_col = save_col + 1;   /* cursor advances one past insertion */
         term_draw_cursor();
     }
     buf[n] = '\0';
@@ -289,7 +412,7 @@ static void cmd_clear(void)
 
 static void cmd_uname(void)
 {
-    term_puts("AetherOS  aarch64  Phase 4.4  QEMU virt (Cortex-A76)\n");
+    term_puts("AetherOS  aarch64  Phase 4.5  QEMU virt (Cortex-A76)\n");
 }
 
 static void cmd_pid(void)

@@ -37,6 +37,12 @@
 #define SYS_GETPID       5    /* sys_getpid() → current PID                  */
 #define SYS_SLEEP_TICKS  6    /* sys_sleep(ticks) — sleep N 100Hz ticks      */
 
+/* Input syscalls (Phase 4.5) */
+#define SYS_KEY_READ     7    /* () → packed key_event_t — blocks until ready */
+#define SYS_KEY_POLL     8    /* () → packed key_event_t or 0 — non-blocking  */
+#define SYS_MOUSE_READ   9    /* () → packed mouse_event_t — blocks           */
+#define SYS_MOUSE_POLL  10    /* () → packed mouse_event_t or 0 — non-blocking*/
+
 /* IPC (Phase 4.3) */
 #define SYS_PIPE        22    /* sys_pipe(fds[2]) → 0 or -1                  */
 #define SYS_DUP2        24    /* sys_dup2(oldfd, newfd) → newfd or -1        */
@@ -55,6 +61,8 @@
 #define SYS_FB_CHAR     602   /* draw char:  (x<<32|y, ch<<32|fg, bg)        */
 #define SYS_GET_TICKS   603   /* → u64 100Hz tick count since boot            */
 #define SYS_FB_CLAIM    604   /* user owns FB: disable kernel fb_console      */
+#define SYS_CURSOR_MOVE 605   /* (x<<32|y) — kernel moves + redraws cursor   */
+#define SYS_CURSOR_SHOW 606   /* (visible) — show (1) or hide (0) cursor      */
 
 /* File descriptor numbers */
 #define FD_STDIN   0

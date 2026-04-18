@@ -21,6 +21,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys.h>
+#include <input.h>
 
 /* ── Layout constants ────────────────────────────────────────────────────── */
 
@@ -57,7 +58,7 @@ static void draw_top_bar(long ticks)
     gfx_text(14 + 8 * FONT_W + 8, TOPBAR_Y + 10, "v0.0.5", C_TEXT_DIM, C_PANEL);
 
     gfx_text_center(0, 1024, TOPBAR_Y + 10,
-                    "Phase 4.4  --  Lumina Desktop", C_TEXT_DIM, C_PANEL);
+                    "Phase 4.5  --  Lumina Desktop", C_TEXT_DIM, C_PANEL);
 
     char ubuf[20];
     char tbuf[16];
@@ -134,11 +135,23 @@ int main(void)
     sys_spawn("/statusbar");
     sys_spawn("/aether_term");
 
-    /* Refresh top and bottom bars every second */
+    /* Show the mouse cursor once apps are up */
+    sys_cursor_show(1);
+
+    /* Refresh bars every second; poll mouse on each tick */
     for (;;) {
         long ticks = gfx_ticks();
         refresh_top_bar(ticks);
         refresh_bot_bar();
+
+        /* Drain all pending mouse events and move cursor */
+        unsigned long long me;
+        while ((me = sys_mouse_poll()) != 0) {
+            mouse_event_t ev = mouse_event_unpack(me);
+            sys_cursor_move(ev.x, ev.y);
+            /* Future: hit-test ev.buttons against window regions */
+        }
+
         sys_sleep(100);
     }
 

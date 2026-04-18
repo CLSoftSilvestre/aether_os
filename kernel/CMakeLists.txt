@@ -43,6 +43,11 @@ set(KERNEL_SOURCES
     drivers/video/fb.c
     drivers/video/font.c
     drivers/video/fb_console.c
+    drivers/video/cursor.c
+
+    # Drivers — input (Phase 4.5)
+    drivers/input/pl050_kbd.c
+    drivers/input/pl050_mouse.c
 )
 
 set(LINKER_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/arch/arm64/boot/linker.ld)

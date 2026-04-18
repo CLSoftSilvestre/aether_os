@@ -58,6 +58,16 @@ else
     # Phase 4.0: ramfb provides a 1024×768 display window.
     # -vga none: disable default VGA device (conflicts with ramfb).
     # -device ramfb: QEMU renders fb_base[] to a graphical window.
+    #
+    # Phase 4.5: PL050/KMI keyboard and mouse devices.
+    # On QEMU -M virt, these are present by default at:
+    #   keyboard: 0x09050000, IRQ 52
+    #   mouse:    0x09060000, IRQ 53
+    # The graphical window routes host keyboard/mouse events to the KMI
+    # controllers, which fire IRQs into our PL050 drivers.
+    #
+    # Verify device presence: in QEMU monitor (Ctrl-A C) run:
+    #   info qtree | grep pl050
     QEMU_ARGS+=(
         -device ramfb
         -vga none
