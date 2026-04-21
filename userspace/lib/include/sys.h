@@ -15,6 +15,7 @@
 /* Syscall numbers */
 #define SYS_EXIT         0
 #define SYS_SPAWN        1
+#define SYS_KILL         2
 #define SYS_SCHED_YIELD  3
 #define SYS_WAITPID      4
 #define SYS_GETPID       5
@@ -23,6 +24,7 @@
 #define SYS_KEY_POLL     8
 #define SYS_MOUSE_READ   9
 #define SYS_MOUSE_POLL  10
+#define SYS_WAITPID_NB  11
 #define SYS_PIPE        22
 #define SYS_DUP2        24
 #define SYS_READ         63
@@ -123,6 +125,18 @@ static inline long sys_spawn(const char *path)
 static inline long sys_waitpid(long pid, int *status)
 {
     return _sys2(SYS_WAITPID, pid, (long)(void *)status);
+}
+
+/* Non-blocking waitpid: returns child PID if done, 0 if still running, -1 if not found */
+static inline long sys_waitpid_nb(long pid, int *status)
+{
+    return _sys2(SYS_WAITPID_NB, pid, (long)(void *)status);
+}
+
+/* Kill a child process by PID (parent permission required); returns 0 or -1 */
+static inline long sys_kill(long pid)
+{
+    return _sys1(SYS_KILL, pid);
 }
 
 static inline long sys_getpid(void)

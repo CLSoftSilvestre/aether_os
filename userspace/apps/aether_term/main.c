@@ -420,6 +420,35 @@ static void cmd_pid(void)
     term_printf("PID: %ld\n", sys_getpid());
 }
 
+/*
+ * wait_foreground — poll for child exit while checking keyboard for Ctrl+C.
+ * Returns the child's exit status, or -1 if killed via Ctrl+C.
+ */
+static int wait_foreground(long child)
+{
+    int status = 0;
+    for (;;) {
+        long r = sys_waitpid_nb(child, &status);
+        if (r != 0) break;   /* child exited (r == child PID) or not found */
+
+        unsigned long long ke = sys_key_poll();
+        if (ke) {
+            key_event_t ev = key_event_unpack(ke);
+            if (ev.is_press && (ev.modifiers & MOD_CTRL) && ev.keycode == KEY_C) {
+                sys_kill(child);
+                /* drain remaining key events */
+                while (sys_key_poll()) {}
+                term_puts("^C\n");
+                /* collect zombie so the task slot is freed */
+                sys_waitpid(child, &status);
+                return -1;
+            }
+        }
+        sys_sleep(1);
+    }
+    return status;
+}
+
 static void cmd_spawn(const char *path, int background)
 {
     if (!path || path[0] == '\0') { term_puts("usage: spawn <initrd-path>\n"); return; }
@@ -428,9 +457,9 @@ static void cmd_spawn(const char *path, int background)
     if (child < 0) { term_printf("spawn: failed to launch '%s'\n", path); return; }
     term_printf("Child PID %ld started\n", child);
     if (!background) {
-        int status = 0;
-        sys_waitpid(child, &status);
-        term_printf("Child PID %ld exited (status %d)\n", child, status);
+        int status = wait_foreground(child);
+        if (status >= 0)
+            term_printf("Child PID %ld exited (status %d)\n", child, status);
         redraw_after_child();
     }
 }
@@ -439,8 +468,7 @@ static void cmd_files(void)
 {
     long child = sys_spawn("/files");
     if (child < 0) { term_puts("files: not found in initrd\n"); return; }
-    int status = 0;
-    sys_waitpid(child, &status);
+    wait_foreground(child);
     redraw_after_child();
 }
 
@@ -448,8 +476,7 @@ static void cmd_view(void)
 {
     long child = sys_spawn("/textviewer");
     if (child < 0) { term_puts("textviewer: not found in initrd\n"); return; }
-    int status = 0;
-    sys_waitpid(child, &status);
+    wait_foreground(child);
     redraw_after_child();
 }
 
@@ -520,8 +547,7 @@ int main(void)
                 term_printf("aesh: %s: command not found\n", cmd);
             } else {
                 if (!background) {
-                    int status = 0;
-                    sys_waitpid(child, &status);
+                    wait_foreground(child);
                     redraw_after_child();
                 }
             }

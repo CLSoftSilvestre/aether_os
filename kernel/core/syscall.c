@@ -161,6 +161,16 @@ static long do_sys_waitpid(long pid, int *status)
     return (long)task_waitpid((u32)pid, status);
 }
 
+static long do_sys_waitpid_nb(long pid, int *status)
+{
+    return (long)task_waitpid_nb((u32)pid, status);
+}
+
+static long do_sys_kill(long pid)
+{
+    return (long)task_kill((u32)pid, -1);
+}
+
 static long do_sys_getpid(void)
 {
     return (long)task_current_pid();
@@ -423,8 +433,14 @@ long syscall_dispatch(trap_frame_t *frame)
     case SYS_SPAWN:
         return do_sys_spawn((const char *)arg0);
 
+    case SYS_KILL:
+        return do_sys_kill((long)arg0);
+
     case SYS_WAITPID:
         return do_sys_waitpid((long)arg0, (int *)arg1);
+
+    case SYS_WAITPID_NB:
+        return do_sys_waitpid_nb((long)arg0, (int *)arg1);
 
     case SYS_GETPID:
         return do_sys_getpid();

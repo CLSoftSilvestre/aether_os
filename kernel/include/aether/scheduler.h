@@ -140,6 +140,13 @@ void task_get_user_regs(uintptr_t *entry_out, uintptr_t *sp_out,
  */
 int task_waitpid(u32 pid, int *status);
 
+/* Non-blocking variant: returns child PID if done, 0 if still running, -1 if not found. */
+int task_waitpid_nb(u32 pid, int *status);
+
+/* Forcefully terminate a child by PID; only parent or PID 1 may call.
+ * Returns 0 on success, -1 if not found or permission denied. */
+int task_kill(u32 pid, int exit_code);
+
 /* ── fd_table helpers (for syscall.c) ──────────────────────────────── */
 
 /* Return pointer to fd slot for the current task (NULL if out of range). */

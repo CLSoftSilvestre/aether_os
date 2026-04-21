@@ -317,7 +317,6 @@ int task_waitpid(u32 pid, int *status)
 {
     task_t *cur = current_task();
 
-    /* Search for a child with matching PID */
     task_t *child = NULL;
     for (u32 i = 0; i < g_num_tasks; i++) {
         if (g_tasks[i].pid == pid && g_tasks[i].ppid == cur->pid) {
@@ -325,19 +324,86 @@ int task_waitpid(u32 pid, int *status)
             break;
         }
     }
-    if (!child) return -1;   /* no such child */
+    if (!child) return -1;
 
-    /* Block until the child becomes a zombie */
     while (child->state != TASK_ZOMBIE) {
         cur->state    = TASK_WAITING;
         cur->wait_pid = pid;
         task_yield();
     }
 
-    /* Collect exit status and reap */
     if (status) *status = child->exit_code;
     child->state = TASK_DEAD;
     return (int)pid;
+}
+
+/*
+ * task_waitpid_nb — non-blocking waitpid.
+ * Returns child PID if zombie (and reaps it), 0 if still running, -1 if not found.
+ */
+int task_waitpid_nb(u32 pid, int *status)
+{
+    task_t *cur = current_task();
+
+    task_t *child = NULL;
+    for (u32 i = 0; i < g_num_tasks; i++) {
+        if (g_tasks[i].pid == pid && g_tasks[i].ppid == cur->pid) {
+            child = &g_tasks[i];
+            break;
+        }
+    }
+    if (!child) return -1;
+    if (child->state != TASK_ZOMBIE) return 0;
+
+    if (status) *status = child->exit_code;
+    child->state = TASK_DEAD;
+    return (int)pid;
+}
+
+/*
+ * task_kill — forcefully terminate a child process from the parent.
+ * Frees the child's resources and marks it ZOMBIE so the parent can reap.
+ * Only the child's parent (or PID 1) may call this.
+ */
+int task_kill(u32 pid, int exit_code)
+{
+    task_t *cur = current_task();
+
+    task_t *t = NULL;
+    for (u32 i = 0; i < g_num_tasks; i++) {
+        if (g_tasks[i].pid == pid) { t = &g_tasks[i]; break; }
+    }
+    if (!t) return -1;
+    if (t->ppid != cur->pid && cur->pid != 1) return -1;
+    if (t->state == TASK_ZOMBIE || t->state == TASK_DEAD) return 0;
+
+    kinfo("Scheduler: task_kill pid=%lu by pid=%lu\n",
+          (unsigned long)pid, (unsigned long)cur->pid);
+
+    /* Free process page tables (safe: we're on the caller's PT, not the target's) */
+    if (t->l1_table_phys) {
+        vmm_free_process_pt(t->l1_table_phys);
+        t->l1_table_phys = 0;
+    }
+    if (t->user_code_phys) {
+        for (u32 i = 0; i < t->user_code_pages; i++)
+            pmm_free_page(t->user_code_phys + (uintptr_t)i * PMM_PAGE_SIZE);
+        t->user_code_phys = 0;
+    }
+    if (t->user_stack_phys) {
+        for (u32 i = 0; i < t->user_stack_pages; i++)
+            pmm_free_page(t->user_stack_phys + (uintptr_t)i * PMM_PAGE_SIZE);
+        t->user_stack_phys = 0;
+    }
+
+    t->exit_code = exit_code;
+    if (t->ppid) {
+        t->state = TASK_ZOMBIE;
+        wake_waiting_parent(t->pid);
+    } else {
+        t->state = TASK_DEAD;
+    }
+    return 0;
 }
 
 u32 task_current_pid(void)
