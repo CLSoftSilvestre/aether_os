@@ -13,12 +13,36 @@
 #include "aether/exceptions.h"
 #include "aether/printk.h"
 #include "aether/syscall.h"
+#include "aether/scheduler.h"
 #include "drivers/irq/gic_v2.h"
 #include "drivers/timer/arm_timer.h"
 #include "drivers/char/uart_pl011.h"
 #include "drivers/input/pl050_kbd.h"
 #include "drivers/input/pl050_mouse.h"
 #include "drivers/input/virtio_input.h"
+
+/* ── Crash diagnostics ──────────────────────────────────────────────────── */
+
+/* Ring buffer of the last 8 ELRs seen at SVC entry — helps trace crash origin */
+#define LAST_ELR_COUNT 8
+static u64 last_elr_ring[LAST_ELR_COUNT];
+static int last_elr_idx;
+
+static void record_elr(u64 elr)
+{
+    last_elr_ring[last_elr_idx % LAST_ELR_COUNT] = elr;
+    last_elr_idx++;
+}
+
+static void print_last_elrs(void)
+{
+    int count = last_elr_idx < LAST_ELR_COUNT ? last_elr_idx : LAST_ELR_COUNT;
+    kerror("─── Last %d SVC ELRs (newest last) ─────────\n", count);
+    for (int i = count - 1; i >= 0; i--) {
+        int slot = (last_elr_idx - 1 - i + LAST_ELR_COUNT) % LAST_ELR_COUNT;
+        kerror("  [%d] %p\n", count - i, (void *)last_elr_ring[slot]);
+    }
+}
 
 /* ── Vector table installation ──────────────────────────────────────────── */
 
@@ -75,7 +99,10 @@ static void print_exception_info(const trap_frame_t *frame, const char *type)
     }
 
     kerror("═══════════════════════════════════════════\n");
-    kerror("EXCEPTION: %s\n", type);
+    kerror("EXCEPTION: %s  (PID %lu, task '%s')\n",
+           type,
+           (unsigned long)task_current_pid(),
+           task_current_name());
     kerror("  ELR  (PC):  %p\n",   (void *)frame->elr);
     kerror("  SPSR:       0x%lx\n", (unsigned long)frame->spsr);
     kerror("  ESR:        0x%lx\n", (unsigned long)frame->esr);
@@ -84,7 +111,7 @@ static void print_exception_info(const trap_frame_t *frame, const char *type)
     kerror("─── Registers ─────────────────────────────\n");
 
     for (int i = 0; i < 30; i += 2) {
-        kerror("  x%-2d: %p    x%-2d: %p\n",
+        kerror("  x%d: %p    x%d: %p\n",
                i,   (void *)frame->x[i],
                i+1, (void *)frame->x[i+1]);
     }
@@ -180,9 +207,11 @@ void el1_serror_handler(trap_frame_t *frame)
 void el0_sync_handler(trap_frame_t *frame)
 {
     if (ESR_EC(frame->esr) == EC_SVC64) {
+        record_elr(frame->elr);
         frame->x[0] = (u64)syscall_dispatch(frame);
         return;
     }
+    print_last_elrs();
     print_exception_info(frame, "Synchronous (EL0 — user)");
     kpanic("Unhandled user exception — halting\n");
 }

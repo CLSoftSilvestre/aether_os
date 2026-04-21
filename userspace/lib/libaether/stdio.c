@@ -18,15 +18,19 @@ static void _emit_str(char *buf, size_t size, size_t *pos, const char *s)
 }
 
 static void _emit_u64(char *buf, size_t size, size_t *pos, unsigned long long v,
-                      int base, int upper)
+                      int base, int upper, int min_width, char pad)
 {
     static const char lo[] = "0123456789abcdef";
     static const char hi[] = "0123456789ABCDEF";
     const char *digits = upper ? hi : lo;
     char tmp[24];
     int  n = 0;
-    if (v == 0) { _emit(buf, size, pos, '0'); return; }
-    while (v) { tmp[n++] = digits[v % (unsigned)base]; v /= (unsigned)base; }
+    if (v == 0) {
+        tmp[n++] = '0';
+    } else {
+        while (v) { tmp[n++] = digits[v % (unsigned)base]; v /= (unsigned)base; }
+    }
+    while (n < min_width) tmp[n++] = pad;
     while (n--) _emit(buf, size, pos, tmp[n]);
 }
 
@@ -39,6 +43,14 @@ int vsnprintf(char *buf, size_t size, const char *fmt, va_list ap)
         p++;
         if (!*p) break;
 
+        /* Flags: zero-pad */
+        char pad = ' ';
+        if (*p == '0') { pad = '0'; p++; }
+
+        /* Width */
+        int width = 0;
+        while (*p >= '1' && *p <= '9') { width = width * 10 + (*p - '0'); p++; }
+
         /* Long prefix */
         int is_long = 0;
         if (*p == 'l') { is_long = 1; p++; }
@@ -49,31 +61,31 @@ int vsnprintf(char *buf, size_t size, const char *fmt, va_list ap)
             long long v = is_long ? (long long)va_arg(ap, long)
                                   : (long long)va_arg(ap, int);
             if (v < 0) { _emit(buf, size, &pos, '-'); v = -v; }
-            _emit_u64(buf, size, &pos, (unsigned long long)v, 10, 0);
+            _emit_u64(buf, size, &pos, (unsigned long long)v, 10, 0, width, pad);
             break;
         }
         case 'u': {
             unsigned long long v = is_long ? (unsigned long long)va_arg(ap, unsigned long)
                                            : (unsigned long long)va_arg(ap, unsigned int);
-            _emit_u64(buf, size, &pos, v, 10, 0);
+            _emit_u64(buf, size, &pos, v, 10, 0, width, pad);
             break;
         }
         case 'x': {
             unsigned long long v = is_long ? (unsigned long long)va_arg(ap, unsigned long)
                                            : (unsigned long long)va_arg(ap, unsigned int);
-            _emit_u64(buf, size, &pos, v, 16, 0);
+            _emit_u64(buf, size, &pos, v, 16, 0, width, pad);
             break;
         }
         case 'X': {
             unsigned long long v = is_long ? (unsigned long long)va_arg(ap, unsigned long)
                                            : (unsigned long long)va_arg(ap, unsigned int);
-            _emit_u64(buf, size, &pos, v, 16, 1);
+            _emit_u64(buf, size, &pos, v, 16, 1, width, pad);
             break;
         }
         case 'p': {
             unsigned long long v = (unsigned long long)(uintptr_t)va_arg(ap, void *);
             _emit(buf, size, &pos, '0'); _emit(buf, size, &pos, 'x');
-            _emit_u64(buf, size, &pos, v, 16, 0);
+            _emit_u64(buf, size, &pos, v, 16, 0, 0, ' ');
             break;
         }
         case 's':

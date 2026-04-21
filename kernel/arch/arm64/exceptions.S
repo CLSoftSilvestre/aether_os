@@ -40,8 +40,9 @@
  *   sp + 248: ELR_EL1     (interrupted PC  — "where the CPU was")
  *   sp + 256: SPSR_EL1    (interrupted state)
  *   sp + 264: ESR_EL1     (fault reason)
+ *   sp + 272: SP_EL0      (user stack pointer — must survive context switches)
  *   ──────────────────────────────────
- *   Total: 272 bytes (272 / 16 = 17 — 16-byte aligned ✓)
+ *   Total: 288 bytes (288 / 16 = 18 — 16-byte aligned ✓)
  */
 
 /* ── Context save / restore macros ─────────────────────────────────────── */
@@ -56,7 +57,7 @@
  * mrs = Move from System Register
  */
 .macro EXCEPTION_ENTRY
-    sub  sp, sp, #272
+    sub  sp, sp, #288
 
     stp  x0,  x1,  [sp, #0]
     stp  x2,  x3,  [sp, #16]
@@ -82,6 +83,10 @@
     mrs  x0, SPSR_EL1
     mrs  x1, ESR_EL1
     stp  x0, x1, [sp, #256]
+
+    /* Save SP_EL0 (user stack pointer) — corrupted by other tasks if not saved */
+    mrs  x0, SP_EL0
+    str  x0, [sp, #272]
 .endm
 
 /*
@@ -100,6 +105,10 @@
     ldp  x30, x0, [sp, #240]    /* x30=LR, x0=ELR */
     msr  ELR_EL1, x0
 
+    /* Restore SP_EL0 before clobbering x0 below */
+    ldr  x0, [sp, #272]
+    msr  SP_EL0, x0
+
     ldp  x28, x29, [sp, #224]
     ldp  x26, x27, [sp, #208]
     ldp  x24, x25, [sp, #192]
@@ -116,7 +125,7 @@
     ldp  x2,  x3,  [sp, #16]
     ldp  x0,  x1,  [sp, #0]
 
-    add  sp, sp, #272
+    add  sp, sp, #288
     eret
 .endm
 

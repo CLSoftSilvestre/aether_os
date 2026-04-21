@@ -345,6 +345,12 @@ u32 task_current_pid(void)
     return g_tasks[g_current_idx].pid;
 }
 
+const char *task_current_name(void)
+{
+    const char *n = g_tasks[g_current_idx].name;
+    return n ? n : "?";
+}
+
 fd_entry_t *task_get_fd(u32 fd)
 {
     if (fd >= PROC_MAX_FD) return NULL;

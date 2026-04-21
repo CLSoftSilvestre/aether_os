@@ -176,6 +176,9 @@ __attribute__((noreturn)) void task_exit(void);
 /* Return PID of currently running task */
 u32 task_current_pid(void);
 
+/* Return name of currently running task (never NULL) */
+const char *task_current_name(void);
+
 /* Print all task states (for debugging) */
 void scheduler_print_tasks(void);
 

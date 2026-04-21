@@ -17,6 +17,9 @@
 void pl050_mouse_init(void);
 void pl050_mouse_irq_handler(void);
 
+/* Post a pre-packed mouse_event_t value to the kernel event ring */
+void mouse_post_event(unsigned long long ev);
+
 /* Returns 1 if the mouse-event ring buffer is empty */
 int  mouse_event_empty(void);
 

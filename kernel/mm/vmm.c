@@ -160,6 +160,7 @@ void vmm_init(void)
                 | PTE_AP_EL1_RW     /* EL1 RW, EL0 no access       */
                 | PTE_SH_NONE       /* non-shareable                */
                 | PTE_AF            /* access flag                  */
+                | PTE_UXN           /* EL0 execute-never           */
                 | PTE_TYPE_BLOCK;   /* 1GB block descriptor         */
 
     l1_table[1] = (uintptr_t)l2_table_ram

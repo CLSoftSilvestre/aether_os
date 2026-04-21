@@ -27,6 +27,8 @@ SECTIONS
 
     .data : {
         *(.data*)
+        *(.got)
+        *(.got.plt)
     }
 
     .bss : ALIGN(16) {

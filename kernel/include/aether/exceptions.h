@@ -34,6 +34,7 @@ typedef struct {
     u64 elr;      /* ELR_EL1: interrupted PC          offset 248 */
     u64 spsr;     /* SPSR_EL1: interrupted CPU state  offset 256 */
     u64 esr;      /* ESR_EL1: fault syndrome          offset 264 */
+    u64 sp_el0;   /* SP_EL0:  user stack pointer      offset 272 */
 } __attribute__((packed)) trap_frame_t;
 
 /*

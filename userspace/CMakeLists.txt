@@ -6,7 +6,7 @@ set(USER_COMPILE_FLAGS
     -fno-builtin
     -nostdinc
     -fno-stack-protector
-    -fpic
+    -fno-pic
 )
 
 set(USER_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/lib/include)

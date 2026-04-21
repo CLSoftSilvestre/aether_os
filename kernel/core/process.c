@@ -169,8 +169,17 @@ int process_spawn_child(const char *path, u32 ppid, u32 *child_pid_out)
                          (u64)(ph->p_memsz - ph->p_filesz));
     }
 
-    /* Instruction-cache coherency after writing new code to RAM */
-    __asm__ volatile("dsb ish\n isb\n" ::: "memory");
+    /* Instruction-cache coherency: clean D$ then invalidate I$ per cache line */
+    {
+        uintptr_t lo = code_phys;
+        uintptr_t hi = code_phys + (uintptr_t)code_pages * PMM_PAGE_SIZE;
+        for (uintptr_t a = lo; a < hi; a += 64)
+            __asm__ volatile("dc cvau, %0" :: "r"(a) : "memory");
+        __asm__ volatile("dsb ish" ::: "memory");
+        for (uintptr_t a = lo; a < hi; a += 64)
+            __asm__ volatile("ic ivau, %0" :: "r"(a) : "memory");
+        __asm__ volatile("dsb ish\n isb\n" ::: "memory");
+    }
 
     /* 8. Create the isolated task */
     int rc = task_create_isolated(

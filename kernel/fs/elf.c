@@ -118,12 +118,33 @@ uintptr_t elf_load(const void *elf_data, u32 elf_size)
 
     /* ── 3. Instruction cache coherency ────────────────────────── */
     /*
-     * After writing new code into memory, flush the instruction cache
-     * so the CPU fetches the freshly-loaded instructions, not stale cache lines.
-     * dc civac (clean+invalidate data cache line)
-     * ic ivau  (invalidate instruction cache line by VA)
+     * For each cache line of written code: clean D-cache (dc cvau) then
+     * invalidate I-cache (ic ivau), followed by barriers.
+     * A bare "dsb ish; isb" is insufficient on real hardware because it
+     * does not push dirty D-cache lines to the PoU.
      */
-    __asm__ volatile("dsb ish\n isb\n" ::: "memory");
+    {
+        /* Flush entire loaded image — rescan segments for VA range */
+        uintptr_t flush_lo = (uintptr_t)-1, flush_hi = 0;
+        for (u16 i = 0; i < ehdr->e_phnum; i++) {
+            uintptr_t ph_off2 = (uintptr_t)ehdr->e_phoff +
+                                (uintptr_t)i * ehdr->e_phentsize;
+            const Elf64_Phdr *ph2 = (const Elf64_Phdr *)(base + ph_off2);
+            if (ph2->p_type != PT_LOAD || ph2->p_memsz == 0) continue;
+            uintptr_t lo = (uintptr_t)ph2->p_vaddr;
+            uintptr_t hi = lo + (uintptr_t)ph2->p_memsz;
+            if (lo < flush_lo) flush_lo = lo;
+            if (hi > flush_hi) flush_hi = hi;
+        }
+        for (uintptr_t a = flush_lo & ~63UL; a < flush_hi; a += 64) {
+            __asm__ volatile("dc cvau, %0" :: "r"(a) : "memory");
+        }
+        __asm__ volatile("dsb ish" ::: "memory");
+        for (uintptr_t a = flush_lo & ~63UL; a < flush_hi; a += 64) {
+            __asm__ volatile("ic ivau, %0" :: "r"(a) : "memory");
+        }
+        __asm__ volatile("dsb ish\n isb\n" ::: "memory");
+    }
 
     kinfo("ELF: loaded OK — entry %p\n", (void *)(uintptr_t)ehdr->e_entry);
     return (uintptr_t)ehdr->e_entry;
