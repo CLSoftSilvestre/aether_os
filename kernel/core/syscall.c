@@ -28,6 +28,7 @@
 #include "aether/process.h"
 #include "aether/scheduler.h"
 #include "aether/types.h"
+#include "aether/wm.h"
 #include "drivers/char/uart_pl011.h"
 #include "drivers/timer/arm_timer.h"
 #include "drivers/video/fb.h"
@@ -391,7 +392,13 @@ static long do_sys_mouse_read(void)
 static long do_sys_mouse_poll(void)
 {
     if (mouse_event_empty()) return 0L;
-    return (long)mouse_get_event();
+    unsigned long long ev = mouse_get_event();
+    static int dbg = 0;
+    if (dbg++ < 10)
+        kinfo("[mouse_poll] x=%u y=%u\n",
+              (unsigned)((ev >> 48) & 0xFFFFu),
+              (unsigned)((ev >> 32) & 0xFFFFu));
+    return (long)ev;
 }
 
 static long do_sys_cursor_move(u64 xy)
@@ -408,6 +415,71 @@ static long do_sys_cursor_show(u64 visible)
     else         cursor_hide();
     return 0;
 }
+
+/* ── Window Manager syscalls (Phase 4.6) ────────────────────────────────── */
+
+static long do_sys_wm_register(u64 xy, u64 wh, const char *title)
+{
+    int x = (int)(u32)(xy >> 32);
+    int y = (int)(u32)(xy & 0xFFFFFFFFu);
+    int w = (int)(u32)(wh >> 32);
+    int h = (int)(u32)(wh & 0xFFFFFFFFu);
+    return (long)wm_register(task_current_pid(), x, y, w, h, title);
+}
+
+/*
+ * SYS_WM_KEY_RECV — block until a key/WM event arrives in this process's
+ * per-PID ring.  Each iteration drains the hardware keyboard ring into the
+ * focused PID's FIFO (consistent with the cooperative scheduling model —
+ * whoever runs drains the hardware, routes to focused, checks own queue).
+ */
+static long do_sys_wm_key_recv(void)
+{
+    u32 pid = task_current_pid();
+
+    for (;;) {
+        /* Drain PS/2 / virtio-input hardware events → focused PID's FIFO */
+        while (!kbd_event_empty())
+            wm_deliver_key(kbd_get_event());
+
+        /* UART fallback: only when hardware ring is empty and UART has data */
+        if (kbd_event_empty() && !uart_rx_empty())
+            wm_deliver_key(uart_to_key_event());
+
+        /* Return if our FIFO has an event (may or may not be focused) */
+        u64 ev = wm_key_dequeue(pid);
+        if (ev)
+            return (long)ev;
+
+        task_yield();
+    }
+}
+
+static long do_sys_wm_unregister(long win_id)
+{
+    wm_unregister((int)win_id);
+    return 0;
+}
+
+static long do_sys_wm_focus_set(u64 pid)
+{
+    wm_focus_set((u32)pid);
+    return 0;
+}
+
+static long do_sys_wm_focus_get(void)  { return (long)wm_focus_get(); }
+
+static long do_sys_wm_move(long win_id, u64 xy)
+{
+    int x = (int)(u32)(xy >> 32);
+    int y = (int)(u32)(xy & 0xFFFFFFFFu);
+    wm_move((int)win_id, x, y);
+    return 0;
+}
+
+static long do_sys_wm_get_pos(long win_id)  { return wm_get_pos((int)win_id); }
+static long do_sys_wm_get_size(long win_id) { return wm_get_size((int)win_id); }
+static long do_sys_wm_get_pid(long win_id)  { return (long)wm_get_pid((int)win_id); }
 
 /* ── Dispatcher ─────────────────────────────────────────────────────────── */
 
@@ -491,6 +563,25 @@ long syscall_dispatch(trap_frame_t *frame)
 
     case SYS_FB_CLAIM:
         return do_sys_fb_claim();
+
+    case SYS_WM_REGISTER:
+        return do_sys_wm_register(arg0, arg1, (const char *)arg2);
+    case SYS_WM_KEY_RECV:
+        return do_sys_wm_key_recv();
+    case SYS_WM_UNREGISTER:
+        return do_sys_wm_unregister((long)arg0);
+    case SYS_WM_FOCUS_SET:
+        return do_sys_wm_focus_set(arg0);
+    case SYS_WM_FOCUS_GET:
+        return do_sys_wm_focus_get();
+    case SYS_WM_MOVE:
+        return do_sys_wm_move((long)arg0, arg1);
+    case SYS_WM_GET_POS:
+        return do_sys_wm_get_pos((long)arg0);
+    case SYS_WM_GET_SIZE:
+        return do_sys_wm_get_size((long)arg0);
+    case SYS_WM_GET_PID:
+        return do_sys_wm_get_pid((long)arg0);
 
     default:
         kwarn("[SYS] unknown syscall #%lu from PID %lu\n",

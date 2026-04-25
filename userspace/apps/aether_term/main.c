@@ -2,12 +2,12 @@
  * AetherOS — AetherTerm
  * File: userspace/apps/aether_term/main.c
  *
- * Phase 4.4: Separate terminal process spawned by init.
- * Draws a Lumina-themed terminal window, runs the aesh shell inside.
- * Assumes init already called sys_fb_claim() and drew the desktop chrome.
+ * Phase 4.6: registers with the WM, uses sys_wm_key_recv() for focus-routed
+ * keyboard input, and supports dynamic window repositioning via WM_EV_REDRAW.
  *
- * Shell commands: help, echo, ls, cat, mem, time, clear, uname, pid,
- *                 spawn, files, view, exit
+ * Window position is stored in g_win_x / g_win_y (mutable globals).
+ * All drawing uses WX / WY macros that add the current offset so the window
+ * redraws correctly after a drag.
  */
 
 #include <gfx.h>
@@ -17,7 +17,7 @@
 #include <sys.h>
 #include <input.h>
 
-/* ── Layout constants (must match init) ─────────────────────────────────── */
+/* ── Layout constants (sizes only — positions are runtime) ───────────────── */
 
 #define TOPBAR_H   36
 #define ACCENT_H    2
@@ -31,14 +31,24 @@
 #define WIN_W     (TERM_COLS * FONT_W + 16)
 #define TITLE_H    28
 #define WIN_H     (TITLE_H + 8 + TERM_ROWS * FONT_H + 8)
-#define WIN_X      8
-#define WIN_Y     (TOPBAR_H + ACCENT_H + \
-                   (BOTBAR_Y - TOPBAR_H - ACCENT_H - WIN_H) / 2)
 
-#define TERM_X    (WIN_X + 8)
-#define TERM_Y    (WIN_Y + TITLE_H + 8)
-#define TERM_W    (TERM_COLS * FONT_W)
-#define TERM_H    (TERM_ROWS * FONT_H)
+/* Initial position (computed once, may change after a drag) */
+#define WIN_X_INIT   8
+#define WIN_Y_INIT   (TOPBAR_H + ACCENT_H + \
+                      (BOTBAR_Y - TOPBAR_H - ACCENT_H - WIN_H) / 2)
+
+/* Runtime window position — updated via WM_EV_REDRAW */
+static int g_win_x = WIN_X_INIT;
+static int g_win_y = WIN_Y_INIT;
+
+/* WM window handle */
+static long g_win_id = -1;
+
+/* Position accessors used throughout (single point of offset) */
+#define WX  g_win_x
+#define WY  g_win_y
+#define TX  (g_win_x + 8)
+#define TY  (g_win_y + TITLE_H + 8)
 
 /* ── Terminal emulator state ─────────────────────────────────────────────── */
 
@@ -61,8 +71,8 @@ static void term_init(void)
 static void term_render_row(int row)
 {
     for (int c = 0; c < TERM_COLS; c++) {
-        gfx_char(TERM_X + c * FONT_W,
-                 TERM_Y + row * FONT_H,
+        gfx_char(TX + c * FONT_W,
+                 TY + row * FONT_H,
                  t_buf[row][c], C_TEXT, C_TERM_BG);
     }
 }
@@ -86,19 +96,19 @@ static void term_scroll(void)
 
 static void term_erase_cursor(void)
 {
-    gfx_char(TERM_X + t_col * FONT_W,
-             TERM_Y + t_row * FONT_H,
+    gfx_char(TX + t_col * FONT_W,
+             TY + t_row * FONT_H,
              t_buf[t_row][t_col], C_TEXT, C_TERM_BG);
 }
 
 static void term_draw_cursor(void)
 {
-    gfx_fill(TERM_X + t_col * FONT_W,
-             TERM_Y + t_row * FONT_H,
+    gfx_fill(TX + t_col * FONT_W,
+             TY + t_row * FONT_H,
              FONT_W, FONT_H, C_ACCENT);
     if (t_buf[t_row][t_col] != ' ')
-        gfx_char(TERM_X + t_col * FONT_W,
-                 TERM_Y + t_row * FONT_H,
+        gfx_char(TX + t_col * FONT_W,
+                 TY + t_row * FONT_H,
                  t_buf[t_row][t_col], C_TERM_BG, C_ACCENT);
 }
 
@@ -114,16 +124,16 @@ static void term_putc(char c)
     if ((c == '\b' || c == 127) && t_col > 0) {
         t_col--;
         t_buf[t_row][t_col] = ' ';
-        gfx_char(TERM_X + t_col * FONT_W,
-                 TERM_Y + t_row * FONT_H,
+        gfx_char(TX + t_col * FONT_W,
+                 TY + t_row * FONT_H,
                  ' ', C_TEXT, C_TERM_BG);
         return;
     }
     if ((unsigned char)c < 32) return;
 
     t_buf[t_row][t_col] = c;
-    gfx_char(TERM_X + t_col * FONT_W,
-             TERM_Y + t_row * FONT_H,
+    gfx_char(TX + t_col * FONT_W,
+             TY + t_row * FONT_H,
              c, C_TEXT, C_TERM_BG);
     t_col++;
     if (t_col >= TERM_COLS) {
@@ -145,7 +155,7 @@ static void term_printf(const char *fmt, ...)
     term_puts(buf);
 }
 
-/* keycode → ASCII (unshifted / shifted) — local copy for terminal use */
+/* keycode → ASCII (unshifted / shifted) */
 static const char kc_ascii[KEY_MAX] = {
     [KEY_A]='a',[KEY_B]='b',[KEY_C]='c',[KEY_D]='d',[KEY_E]='e',
     [KEY_F]='f',[KEY_G]='g',[KEY_H]='h',[KEY_I]='i',[KEY_J]='j',
@@ -185,21 +195,72 @@ static char term_key_to_char(key_event_t ev)
     return tbl[ev.keycode];
 }
 
+/* ── Window drawing ──────────────────────────────────────────────────────── */
+
+static void draw_window(void)
+{
+    gfx_fill(WX + 4, WY + 4, WIN_W, WIN_H, GFX_RGB(8, 8, 14));
+    gfx_fill(WX, WY, WIN_W, WIN_H, C_WIN_BG);
+    gfx_fill(WX, WY, WIN_W, TITLE_H, C_TITLEBAR);
+
+    gfx_fill(WX + 10, WY + 8, 12, 12, C_RED);
+    gfx_fill(WX + 26, WY + 8, 12, 12, C_YELLOW);
+    gfx_fill(WX + 42, WY + 8, 12, 12, C_GREEN);
+
+    gfx_text_center(WX, WIN_W, WY + 8,
+                    "AetherTerm  --  aesh", C_TEXT, C_TITLEBAR);
+
+    gfx_hline(WX, WY + TITLE_H, WIN_W, C_ACCENT);
+    gfx_fill(WX, WY + TITLE_H + 1,
+             WIN_W, WIN_H - TITLE_H - 1, C_TERM_BG);
+    gfx_rect(WX, WY, WIN_W, WIN_H, C_SEP);
+}
+
+static void redraw_after_child(void)
+{
+    draw_window();
+    term_redraw_all();
+}
+
+/* ── Time formatting ─────────────────────────────────────────────────────── */
+
+static void fmt_uptime(char *buf, long ticks)
+{
+    long s = ticks / 100, m = s / 60; s %= 60;
+    long h = m / 60;                  m %= 60;
+    snprintf(buf, 16, "%02ld:%02ld:%02ld", h, m, s);
+}
+
+/* ── Readline ────────────────────────────────────────────────────────────── */
+
 /*
- * term_readline — graphical line editor using PS/2 key events.
+ * term_readline — WM-routed line editor.
  *
- * Supports: character echo + cursor, Backspace, Left/Right cursor
- * movement within the line, Ctrl+C (exit 130).
+ * Uses sys_wm_key_recv() instead of sys_key_read() so keyboard input only
+ * arrives when this window has focus.  Handles WM_EV_REDRAW inline: updates
+ * g_win_x / g_win_y and redraws the window at the new position.
  */
 static int term_readline(char *buf, int max)
 {
-    int n   = 0;   /* total chars in buffer */
-    int pos = 0;   /* cursor position within buffer (0..n) */
+    int n   = 0;
+    int pos = 0;
 
     term_draw_cursor();
 
     while (n < max - 1) {
-        unsigned long long raw = sys_key_read();
+        unsigned long long raw = sys_wm_key_recv();
+
+        /* WM_EV_REDRAW: window was dragged — update position and repaint */
+        if (wm_event_is_redraw(raw)) {
+            g_win_x = wm_event_redraw_x(raw);
+            g_win_y = wm_event_redraw_y(raw);
+            draw_window();
+            term_redraw_all();
+            /* Restore cursor at updated position */
+            term_draw_cursor();
+            continue;
+        }
+
         key_event_t ev = key_event_unpack(raw);
         if (!ev.is_press) continue;
 
@@ -217,25 +278,21 @@ static int term_readline(char *buf, int max)
             break;
         }
 
-        /* Backspace — delete char before cursor */
+        /* Backspace */
         if (ev.keycode == KEY_BACKSPACE && pos > 0) {
             term_erase_cursor();
-            /* Shift chars left */
             for (int i = pos - 1; i < n - 1; i++) buf[i] = buf[i + 1];
             n--; pos--;
             buf[n] = '\0';
-            /* Redraw from pos to end + blank the last char */
             for (int i = pos; i < n; i++) {
                 t_buf[t_row][t_col] = buf[i];
-                gfx_char(TERM_X + t_col * FONT_W, TERM_Y + t_row * FONT_H,
+                gfx_char(TX + t_col * FONT_W, TY + t_row * FONT_H,
                          buf[i], C_TEXT, C_TERM_BG);
                 t_col++;
             }
-            /* Blank the vacated position */
-            gfx_char(TERM_X + t_col * FONT_W, TERM_Y + t_row * FONT_H,
+            gfx_char(TX + t_col * FONT_W, TY + t_row * FONT_H,
                      ' ', C_TEXT, C_TERM_BG);
             t_buf[t_row][t_col] = ' ';
-            /* Move visual cursor back to pos */
             t_col = t_col - (n - pos);
             term_draw_cursor();
             continue;
@@ -244,8 +301,7 @@ static int term_readline(char *buf, int max)
         /* Arrow LEFT */
         if (ev.keycode == KEY_LEFT && pos > 0) {
             term_erase_cursor();
-            pos--;
-            t_col--;
+            pos--; t_col--;
             term_draw_cursor();
             continue;
         }
@@ -253,71 +309,32 @@ static int term_readline(char *buf, int max)
         /* Arrow RIGHT */
         if (ev.keycode == KEY_RIGHT && pos < n) {
             term_erase_cursor();
-            pos++;
-            t_col++;
+            pos++; t_col++;
             term_draw_cursor();
             continue;
         }
 
-        /* Printable character — insert at cursor position */
+        /* Printable character */
         char c = term_key_to_char(ev);
         if (!c) continue;
 
         term_erase_cursor();
-        /* Shift chars right to make room */
         for (int i = n; i > pos; i--) buf[i] = buf[i - 1];
         buf[pos] = c;
         n++; pos++;
         buf[n] = '\0';
-        /* Redraw from insertion point to end */
         int save_col = t_col;
         for (int i = pos - 1; i < n; i++) {
             t_buf[t_row][t_col] = buf[i];
-            gfx_char(TERM_X + t_col * FONT_W, TERM_Y + t_row * FONT_H,
+            gfx_char(TX + t_col * FONT_W, TY + t_row * FONT_H,
                      buf[i], C_TEXT, C_TERM_BG);
             t_col++;
         }
-        t_col = save_col + 1;   /* cursor advances one past insertion */
+        t_col = save_col + 1;
         term_draw_cursor();
     }
     buf[n] = '\0';
     return n;
-}
-
-/* ── Window drawing ──────────────────────────────────────────────────────── */
-
-static void draw_window(void)
-{
-    gfx_fill(WIN_X + 4, WIN_Y + 4, WIN_W, WIN_H, GFX_RGB(8, 8, 14));
-    gfx_fill(WIN_X, WIN_Y, WIN_W, WIN_H, C_WIN_BG);
-    gfx_fill(WIN_X, WIN_Y, WIN_W, TITLE_H, C_TITLEBAR);
-
-    gfx_fill(WIN_X + 10, WIN_Y + 8, 12, 12, C_RED);
-    gfx_fill(WIN_X + 26, WIN_Y + 8, 12, 12, C_YELLOW);
-    gfx_fill(WIN_X + 42, WIN_Y + 8, 12, 12, C_GREEN);
-
-    gfx_text_center(WIN_X, WIN_W, WIN_Y + 8,
-                    "AetherTerm  --  aesh", C_TEXT, C_TITLEBAR);
-
-    gfx_hline(WIN_X, WIN_Y + TITLE_H, WIN_W, C_ACCENT);
-    gfx_fill(WIN_X, WIN_Y + TITLE_H + 1,
-             WIN_W, WIN_H - TITLE_H - 1, C_TERM_BG);
-    gfx_rect(WIN_X, WIN_Y, WIN_W, WIN_H, C_SEP);
-}
-
-static void redraw_after_child(void)
-{
-    draw_window();
-    term_redraw_all();
-}
-
-/* ── Time formatting ─────────────────────────────────────────────────────── */
-
-static void fmt_uptime(char *buf, long ticks)
-{
-    long s = ticks / 100, m = s / 60; s %= 60;
-    long h = m / 60;                  m %= 60;
-    snprintf(buf, 16, "%02ld:%02ld:%02ld", h, m, s);
 }
 
 /* ── Shell built-ins ─────────────────────────────────────────────────────── */
@@ -403,7 +420,7 @@ static void cmd_time(long ticks)
 
 static void cmd_clear(void)
 {
-    gfx_fill(WIN_X + 1, WIN_Y + TITLE_H + 1,
+    gfx_fill(WX + 1, WY + TITLE_H + 1,
              WIN_W - 2, WIN_H - TITLE_H - 2, C_TERM_BG);
     for (int r = 0; r < TERM_ROWS; r++) term_clear_row(r);
     t_col = 0;
@@ -412,7 +429,7 @@ static void cmd_clear(void)
 
 static void cmd_uname(void)
 {
-    term_puts("AetherOS  aarch64  Phase 4.5  QEMU virt (Cortex-A76)\n");
+    term_puts("AetherOS  aarch64  Phase 4.6  QEMU virt (Cortex-A76)\n");
 }
 
 static void cmd_pid(void)
@@ -421,31 +438,34 @@ static void cmd_pid(void)
 }
 
 /*
- * wait_foreground — poll for child exit while checking keyboard for Ctrl+C.
- * Returns the child's exit status, or -1 if killed via Ctrl+C.
+ * wait_foreground — poll for child exit while watching for Ctrl+C.
+ * Reclaims WM focus when the child exits or is killed.
  */
 static int wait_foreground(long child)
 {
     int status = 0;
     for (;;) {
         long r = sys_waitpid_nb(child, &status);
-        if (r != 0) break;   /* child exited (r == child PID) or not found */
+        if (r != 0) break;
 
+        /* Check hardware ring directly (not WM FIFO) — safe because we are
+         * not in sys_wm_key_recv() here, so hardware events stay in the ring */
         unsigned long long ke = sys_key_poll();
         if (ke) {
             key_event_t ev = key_event_unpack(ke);
             if (ev.is_press && (ev.modifiers & MOD_CTRL) && ev.keycode == KEY_C) {
                 sys_kill(child);
-                /* drain remaining key events */
                 while (sys_key_poll()) {}
                 term_puts("^C\n");
-                /* collect zombie so the task slot is freed */
                 sys_waitpid(child, &status);
-                return -1;
+                status = -1;
+                break;
             }
         }
         sys_sleep(1);
     }
+    /* Reclaim keyboard focus now that the child is done */
+    sys_wm_focus_set(sys_getpid());
     return status;
 }
 
@@ -488,6 +508,10 @@ int main(void)
     draw_window();
     term_init();
 
+    /* Register with the WM; take focus immediately */
+    g_win_id = sys_wm_register(WX, WY, WIN_W, WIN_H, "AetherTerm");
+    sys_wm_focus_set(sys_getpid());
+
     {
         char motd[2048];
         long n = sys_initrd_read("motd.txt", motd, (long)sizeof(motd) - 1);
@@ -495,7 +519,7 @@ int main(void)
             motd[n] = '\0';
             term_puts(motd);
         } else {
-            term_puts("\n  Welcome to AetherOS Phase 4.4\n");
+            term_puts("\n  Welcome to AetherOS Phase 4.6\n");
             term_puts("  AetherTerm  --  type 'help' for commands\n\n");
         }
     }
@@ -537,9 +561,9 @@ int main(void)
         else if (strcmp(cmd, "exit")  == 0) {
             int code = (argc > 1) ? atoi(argv[1]) : 0;
             term_puts("Goodbye!\n");
+            if (g_win_id >= 0) sys_wm_unregister(g_win_id);
             exit(code);
         } else {
-            /* Try to spawn as an initrd path */
             char path[64];
             snprintf(path, sizeof(path), "/%s", cmd);
             long child = sys_spawn(path);

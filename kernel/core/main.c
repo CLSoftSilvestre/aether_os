@@ -16,6 +16,7 @@
 #include "aether/vmm.h"
 #include "aether/initrd.h"
 #include "aether/process.h"
+#include "aether/wm.h"
 #include "drivers/char/uart_pl011.h"
 #include "drivers/irq/gic_v2.h"
 #include "drivers/timer/arm_timer.h"
@@ -25,6 +26,7 @@
 #include "drivers/input/pl050_kbd.h"
 #include "drivers/input/pl050_mouse.h"
 #include "drivers/input/virtio_input.h"
+#include "drivers/usb/ohci.h"
 #include "aether/types.h"
 
 extern u8 __stack_top[];
@@ -89,10 +91,12 @@ void kernel_main(void)
      * translation so the shell remains fully functional.
      */
     cursor_init();
-    virtio_input_init();
+    virtio_input_init();   /* kept for pl050/PS2 fallback; USB replaces it */
+    usb_hid_init();
 
-    /* ── 7. Scheduler + Pipe subsystem ─────────────────────────────── */
+    /* ── 7. Scheduler + Pipe + WM subsystem ────────────────────────── */
     pipe_init();
+    wm_init();
     scheduler_init();
     scheduler_add_idle();
 

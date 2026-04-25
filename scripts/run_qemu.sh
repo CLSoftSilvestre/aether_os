@@ -5,9 +5,15 @@
 #          no firmware blobs required. Perfect for early kernel development.
 #
 # Usage:
-#   ./scripts/run_qemu.sh              — graphical window + UART on stdio
+#   ./scripts/run_qemu.sh              — VNC display + UART on stdio
+#                                        Connect: Finder → Go → Connect to Server…
+#                                        URL: vnc://localhost:5900
 #   ./scripts/run_qemu.sh --headless   — UART only, no graphical window
-#   ./scripts/run_qemu.sh --debug      — graphical + GDB stub on port 1234
+#   ./scripts/run_qemu.sh --debug      — VNC + GDB stub on port 1234
+#
+# NOTE: QEMU 11.0.0 on macOS Sequoia (15) does NOT route keyboard/mouse
+#       events to virtual devices when using the Cocoa display backend.
+#       VNC routes input correctly through QEMU's input mux.
 
 set -e
 
@@ -33,10 +39,20 @@ done
 
 echo "[QEMU] Starting AetherOS..."
 echo "[QEMU] Kernel: ${KERNEL_IMG}"
+echo "[QEMU] QEMU version: $(qemu-system-aarch64 --version | head -1)"
 if [ "$HEADLESS" = "1" ]; then
     echo "[QEMU] Mode: headless (UART only)"
 else
-    echo "[QEMU] Mode: graphical (1024×768 ramfb + UART on stdio)"
+    echo "[QEMU] Mode: VNC display"
+    echo "[QEMU] ┌─────────────────────────────────────────────────────────────┐"
+    echo "[QEMU] │  To see the screen and use keyboard/mouse:                  │"
+    echo "[QEMU] │                                                              │"
+    echo "[QEMU] │  macOS: Finder → Go → Connect to Server…                    │"
+    echo "[QEMU] │         Type:  vnc://localhost:5900   → click Connect        │"
+    echo "[QEMU] │                                                              │"
+    echo "[QEMU] │  The AetherOS framebuffer will appear in the Screen Sharing  │"
+    echo "[QEMU] │  window. Click inside it — keyboard and mouse work normally. │"
+    echo "[QEMU] └─────────────────────────────────────────────────────────────┘"
 fi
 echo "[QEMU] Press Ctrl-A X to exit QEMU"
 echo ""
@@ -55,26 +71,17 @@ QEMU_ARGS=(
 if [ "$HEADLESS" = "1" ]; then
     QEMU_ARGS+=(-nographic)
 else
-    # Phase 4.0: ramfb provides a 1024×768 display window.
-    # -vga none: disable default VGA device (conflicts with ramfb).
-    # -device ramfb: QEMU renders fb_base[] to a graphical window.
-    #
-    # Phase 4.5: PL050/KMI keyboard and mouse devices.
-    # On QEMU -M virt, these are present by default at:
-    #   keyboard: 0x09050000, IRQ 52
-    #   mouse:    0x09060000, IRQ 53
-    # The graphical window routes host keyboard/mouse events to the KMI
-    # controllers, which fire IRQs into our PL050 drivers.
-    #
-    # Verify device presence: in QEMU monitor (Ctrl-A C) run:
-    #   info qtree | grep pl050
-    # virtio-tablet-device: absolute-position tablet on the VirtIO MMIO bus.
-    # The kernel's virtio_input driver scans transports 0..31 for Device ID 18
-    # and maps tablet coords (0..32767) to screen pixels → mouse event ring.
+    # VNC display: routes keyboard/mouse through QEMU's input mux correctly.
+    # QEMU 11.0.0 Cocoa on macOS Sequoia does NOT forward events to virtual
+    # input devices; VNC does.  The kernel virtio_input driver receives all
+    # keyboard and mouse events from the VNC client via virtio-keyboard-pci
+    # and virtio-tablet-pci.
     QEMU_ARGS+=(
         -device ramfb
         -vga none
-        -device virtio-tablet-device
+        -display vnc=127.0.0.1:0
+        -device virtio-tablet-pci
+        -device virtio-keyboard-pci
     )
 fi
 

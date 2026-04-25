@@ -53,6 +53,36 @@ typedef struct {
     unsigned int buttons;   /* bit0=left, bit1=middle, bit2=right */
 } mouse_event_t;
 
+/* ── WM event constants ──────────────────────────────────────────────────── */
+
+/*
+ * WM_EV_REDRAW — synthetic WM event delivered to a window's PID when init
+ * drags the window to a new position (via SYS_WM_MOVE).
+ *
+ * The event is packed as a u64 with:
+ *   [63:32] = WM_EV_REDRAW (0xFE)
+ *   [31:16] = new x coordinate
+ *   [15:0]  = new y coordinate
+ *
+ * Check with wm_event_is_redraw() before calling key_event_unpack().
+ */
+#define WM_EV_REDRAW  0xFEu
+
+static inline int wm_event_is_redraw(unsigned long long v)
+{
+    return ((unsigned int)(v >> 32)) == WM_EV_REDRAW;
+}
+
+static inline int wm_event_redraw_x(unsigned long long v)
+{
+    return (int)((v >> 16) & 0xFFFFu);
+}
+
+static inline int wm_event_redraw_y(unsigned long long v)
+{
+    return (int)(v & 0xFFFFu);
+}
+
 /* ── Unpack helpers ─────────────────────────────────────────────────────── */
 
 static inline key_event_t key_event_unpack(unsigned long long v)

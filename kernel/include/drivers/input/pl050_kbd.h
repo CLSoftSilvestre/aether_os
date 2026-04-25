@@ -17,6 +17,9 @@
 void pl050_kbd_init(void);
 void pl050_kbd_irq_handler(void);
 
+/* Push a key event (press or release) into the shared ring; updates modifiers. */
+void kbd_push_key(keycode_t kc, int is_press);
+
 /* Returns 1 if the key-event ring buffer is empty */
 int  kbd_event_empty(void);
 

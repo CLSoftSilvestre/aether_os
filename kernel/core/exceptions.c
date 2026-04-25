@@ -174,11 +174,7 @@ void el1_irq_handler(trap_frame_t *frame)
         break;
 
     default:
-        /* VirtIO MMIO IRQs: INTID 48..79 (SPI 16..47), assigned dynamically */
-        if (virtio_input_irq() >= 0 && irq == (u32)virtio_input_irq())
-            virtio_input_irq_handler();
-        else
-            kwarn("IRQ: unhandled interrupt ID %lu\n", (unsigned long)irq);
+        kwarn("IRQ: unhandled ID %lu\n", (unsigned long)irq);
         break;
     }
 

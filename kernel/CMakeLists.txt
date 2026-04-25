@@ -18,6 +18,7 @@ set(KERNEL_SOURCES
     core/syscall.c
     core/process.c
     core/pipe.c
+    core/wm.c
 
     # Memory management
     mm/pmm.c
@@ -45,10 +46,16 @@ set(KERNEL_SOURCES
     drivers/video/fb_console.c
     drivers/video/cursor.c
 
+    # Drivers — PCI (ECAM config-space access + BAR assignment)
+    drivers/pci/pci_ecam.c
+
     # Drivers — input (Phase 4.5)
     drivers/input/pl050_kbd.c
     drivers/input/pl050_mouse.c
     drivers/input/virtio_input.c
+
+    # Drivers — USB OHCI + HID (Phase 4.6)
+    drivers/usb/ohci.c
 )
 
 set(LINKER_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/arch/arm64/boot/linker.ld)

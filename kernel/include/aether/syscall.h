@@ -45,6 +45,17 @@
 #define SYS_MOUSE_READ   9    /* () → packed mouse_event_t — blocks           */
 #define SYS_MOUSE_POLL  10    /* () → packed mouse_event_t or 0 — non-blocking*/
 
+/* Window Manager (Phase 4.6) */
+#define SYS_WM_REGISTER   12  /* (x<<32|y, w<<32|h, title_ptr) → win_id      */
+#define SYS_WM_KEY_RECV   13  /* () → packed event — blocks until focused     */
+#define SYS_WM_UNREGISTER 14  /* (win_id) → 0                                 */
+#define SYS_WM_FOCUS_SET  15  /* (pid) → 0                                    */
+#define SYS_WM_FOCUS_GET  16  /* () → focused pid                             */
+#define SYS_WM_MOVE       17  /* (win_id, x<<32|y) → 0; queues WM_EV_REDRAW  */
+#define SYS_WM_GET_POS    18  /* (win_id) → x<<32|y, or -1                   */
+#define SYS_WM_GET_SIZE   19  /* (win_id) → w<<32|h, or 0                    */
+#define SYS_WM_GET_PID    20  /* (win_id) → owner pid, or 0                  */
+
 /* IPC (Phase 4.3) */
 #define SYS_PIPE        22    /* sys_pipe(fds[2]) → 0 or -1                  */
 #define SYS_DUP2        24    /* sys_dup2(oldfd, newfd) → newfd or -1        */

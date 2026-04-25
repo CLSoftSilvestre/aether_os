@@ -39,6 +39,17 @@
 #define SYS_CURSOR_MOVE 605
 #define SYS_CURSOR_SHOW 606
 
+/* Window Manager syscalls (Phase 4.6) */
+#define SYS_WM_REGISTER   12
+#define SYS_WM_KEY_RECV   13
+#define SYS_WM_UNREGISTER 14
+#define SYS_WM_FOCUS_SET  15
+#define SYS_WM_FOCUS_GET  16
+#define SYS_WM_MOVE       17
+#define SYS_WM_GET_POS    18
+#define SYS_WM_GET_SIZE   19
+#define SYS_WM_GET_PID    20
+
 /* Standard file descriptors */
 #define STDIN_FILENO   0
 #define STDOUT_FILENO  1
@@ -235,6 +246,69 @@ static inline void sys_cursor_move(unsigned int x, unsigned int y)
 static inline void sys_cursor_show(int visible)
 {
     _sys1(SYS_CURSOR_SHOW, (long)visible);
+}
+
+/* ── Window Manager syscall wrappers (Phase 4.6) ───────────────────────── */
+
+/*
+ * Register a window for this process; returns win_id (0-15) or -1.
+ * Geometry: (x, y) = top-left corner, (w, h) = size.
+ */
+static inline long sys_wm_register(int x, int y, int w, int h,
+                                    const char *title)
+{
+    long xy = ((long)x << 32) | (long)(unsigned int)y;
+    long wh = ((long)w << 32) | (long)(unsigned int)h;
+    return _sys3(SYS_WM_REGISTER, xy, wh, (long)(const void *)title);
+}
+
+/* Block until a key or WM event is ready for this process (focus-routed) */
+static inline unsigned long long sys_wm_key_recv(void)
+{
+    return (unsigned long long)_sys0(SYS_WM_KEY_RECV);
+}
+
+/* Unregister a window (call on process exit) */
+static inline void sys_wm_unregister(long win_id)
+{
+    _sys1(SYS_WM_UNREGISTER, win_id);
+}
+
+/* Set the focused PID (called by init on click) */
+static inline void sys_wm_focus_set(long pid)
+{
+    _sys1(SYS_WM_FOCUS_SET, pid);
+}
+
+/* Query the currently focused PID */
+static inline long sys_wm_focus_get(void)
+{
+    return _sys0(SYS_WM_FOCUS_GET);
+}
+
+/* Move a window and notify its owner (init calls this at drag end) */
+static inline void sys_wm_move(long win_id, int x, int y)
+{
+    long xy = ((long)x << 32) | (long)(unsigned int)y;
+    _sys2(SYS_WM_MOVE, win_id, xy);
+}
+
+/* Query window position: returns x<<32|y, or -1 if win_id invalid */
+static inline long sys_wm_get_pos(long win_id)
+{
+    return _sys1(SYS_WM_GET_POS, win_id);
+}
+
+/* Query window size: returns w<<32|h, or 0 if win_id invalid */
+static inline long sys_wm_get_size(long win_id)
+{
+    return _sys1(SYS_WM_GET_SIZE, win_id);
+}
+
+/* Query window owner PID, or 0 if invalid */
+static inline long sys_wm_get_pid(long win_id)
+{
+    return _sys1(SYS_WM_GET_PID, win_id);
 }
 
 /* ── String helpers (no libc) ────────────────────────────────────── */

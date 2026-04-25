@@ -132,6 +132,13 @@ static void kbd_ring_push(unsigned long long ev)
 
 int kbd_event_empty(void) { return kbd_head == kbd_tail; }
 
+void kbd_push_key(keycode_t kc, int is_press)
+{
+    update_modifiers(kc, is_press);
+    key_event_t ev = { kc, kbd_modifiers, is_press };
+    kbd_ring_push(key_event_pack(ev));
+}
+
 unsigned long long kbd_get_event(void)
 {
     unsigned long long v = kbd_ring[kbd_tail];

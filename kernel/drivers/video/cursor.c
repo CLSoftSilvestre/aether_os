@@ -13,6 +13,7 @@
 
 #include "drivers/video/cursor.h"
 #include "drivers/video/fb.h"
+#include "aether/printk.h"
 #include "aether/types.h"
 
 #define CURSOR_W  16
@@ -103,6 +104,10 @@ void cursor_hide(void)
 
 void cursor_move(unsigned int x, unsigned int y)
 {
+    static int dbg = 0;
+    if (dbg++ < 10)
+        kinfo("[cursor_move] x=%u y=%u vis=%d\n", x, y, cur_visible);
+
     /* Clamp to screen */
     if (x + CURSOR_W > 1024) x = 1024 - CURSOR_W;
     if (y + CURSOR_H >  768) y =  768 - CURSOR_H;
