@@ -38,8 +38,65 @@
 #include "drivers/input/pl050_kbd.h"
 #include "drivers/input/pl050_mouse.h"
 #include "drivers/input/keycodes.h"
+#include "aether/net.h"
+#include "aether/ip.h"
+#include "aether/dns.h"
+#include "aether/socket.h"
 
 /* ── Individual syscall implementations ─────────────────────────────────── */
+
+/* Network status struct (written into user buffer at arg0) */
+typedef struct {
+    u32 ip, mask, gateway, dns;
+    u8  mac[6];
+    u8  _pad[2];
+} net_status_t;
+
+static long do_sys_net_status(long buf_ptr) {
+    net_status_t *st = (net_status_t *)buf_ptr;
+    if (!st) return -1;
+    st->ip      = g_our_ip;
+    st->mask    = g_subnet_mask;
+    st->gateway = g_gateway_ip;
+    st->dns     = g_dns_ip;
+    for (int i = 0; i < 6; i++) st->mac[i] = g_our_mac[i];
+    st->_pad[0] = st->_pad[1] = 0;
+    return 0;
+}
+
+static long do_sys_net_ping(long ip_u32) {
+    u32 rtt = icmp_ping((u32)ip_u32);
+    return (long)(s32)rtt;   /* (u32)-1 cast to s32 = -1 for error */
+}
+
+static long do_sys_net_dns(long hostname_ptr) {
+    const char *h = (const char *)hostname_ptr;
+    if (!h) return 0;
+    return (long)dns_resolve(h);
+}
+
+static long do_sys_socket(long type) {
+    return (long)sock_create((int)type);
+}
+
+static long do_sys_connect(long fd, long ip_u32, long port) {
+    return (long)sock_connect((int)fd, (u32)ip_u32, (u16)port);
+}
+
+static long do_sys_net_send(long fd, long buf_ptr, long len) {
+    if (!buf_ptr || len <= 0) return -1;
+    if (len > 1460) len = 1460;
+    return (long)sock_send((int)fd, (const u8 *)buf_ptr, (u16)len);
+}
+
+static long do_sys_net_recv(long fd, long buf_ptr, long len) {
+    if (!buf_ptr || len <= 0) return -1;
+    return (long)sock_recv((int)fd, (u8 *)buf_ptr, (u16)len, 5000u);
+}
+
+static long do_sys_net_close(long fd) {
+    return (long)sock_close((int)fd);
+}
 
 /*
  * sys_exit — terminate the calling process.
@@ -582,6 +639,16 @@ long syscall_dispatch(trap_frame_t *frame)
         return do_sys_wm_get_size((long)arg0);
     case SYS_WM_GET_PID:
         return do_sys_wm_get_pid((long)arg0);
+
+    /* Networking (Phase 5.1) */
+    case SYS_NET_STATUS: return do_sys_net_status(arg0);
+    case SYS_NET_PING:   return do_sys_net_ping(arg0);
+    case SYS_NET_DNS:    return do_sys_net_dns(arg0);
+    case SYS_SOCKET:     return do_sys_socket(arg0);
+    case SYS_CONNECT:    return do_sys_connect(arg0, arg1, arg2);
+    case SYS_NET_SEND:   return do_sys_net_send(arg0, arg1, arg2);
+    case SYS_NET_RECV:   return do_sys_net_recv(arg0, arg1, arg2);
+    case SYS_NET_CLOSE:  return do_sys_net_close(arg0);
 
     default:
         kwarn("[SYS] unknown syscall #%lu from PID %lu\n",

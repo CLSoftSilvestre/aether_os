@@ -24,6 +24,7 @@
 #include "drivers/irq/gic_v2.h"
 #include "drivers/input/virtio_input.h"
 #include "drivers/usb/ohci.h"
+#include "aether/net.h"
 #include "aether/printk.h"
 
 /* Tick counter — incremented by timer_irq_handler() on every timer interrupt */
@@ -116,6 +117,7 @@ void timer_irq_handler(void)
     write_cntp_tval(g_interval);
     virtio_input_poll();
     usb_hid_poll();
+    net_rx_poll();
 }
 
 u64 timer_get_ticks(void)

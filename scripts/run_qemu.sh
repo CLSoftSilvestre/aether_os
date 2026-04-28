@@ -8,12 +8,19 @@
 #   ./scripts/run_qemu.sh              — VNC display + UART on stdio
 #                                        Connect: Finder → Go → Connect to Server…
 #                                        URL: vnc://localhost:5900
+#                                        Stop: kill the terminal (Ctrl-C)
+#                                        QEMU monitor socket: /tmp/aether-qemu-monitor.sock
 #   ./scripts/run_qemu.sh --headless   — UART only, no graphical window
+#                                        Stop: Ctrl-A X in the terminal
 #   ./scripts/run_qemu.sh --debug      — VNC + GDB stub on port 1234
 #
 # NOTE: QEMU 11.0.0 on macOS Sequoia (15) does NOT route keyboard/mouse
 #       events to virtual devices when using the Cocoa display backend.
 #       VNC routes input correctly through QEMU's input mux.
+#
+# NOTE: In VNC mode the QEMU monitor is on a Unix socket (not stdio) to avoid
+#       VS Code's PTY cooked-mode bug that stalls VNC framebuffer refreshes.
+#       Access the monitor with: socat - /tmp/aether-qemu-monitor.sock
 
 set -e
 
@@ -53,8 +60,12 @@ else
     echo "[QEMU] │  The AetherOS framebuffer will appear in the Screen Sharing  │"
     echo "[QEMU] │  window. Click inside it — keyboard and mouse work normally. │"
     echo "[QEMU] └─────────────────────────────────────────────────────────────┘"
+    echo "[QEMU] Stop: Ctrl-C in this terminal (Ctrl-A X is not available in VNC mode)"
+    echo "[QEMU] Monitor: socat - /tmp/aether-qemu-monitor.sock"
 fi
-echo "[QEMU] Press Ctrl-A X to exit QEMU"
+if [ "$HEADLESS" = "1" ]; then
+    echo "[QEMU] Press Ctrl-A X to exit QEMU"
+fi
 echo ""
 
 # Base QEMU arguments
@@ -64,19 +75,38 @@ QEMU_ARGS=(
     -smp 1                  # Single core for now
     -m 1G                   # 1GB RAM
     -kernel "${KERNEL_IMG}" # Load kernel image
-    -serial mon:stdio       # UART0 + QEMU monitor → your terminal
     -no-reboot              # Don't restart on crash
+
+    # Network (Phase 5.1): user-mode NAT networking via virtio-net-pci
+    # QEMU provides: DHCP lease 10.0.2.15/24, gateway 10.0.2.2, DNS 10.0.2.3
+    -netdev user,id=n0
+    -device virtio-net-pci,netdev=n0
 )
 
 if [ "$HEADLESS" = "1" ]; then
-    QEMU_ARGS+=(-nographic)
+    # In headless mode: mon:stdio is fine — the external terminal handles raw
+    # mode correctly and Ctrl-A X works as expected.
+    QEMU_ARGS+=(
+        -serial mon:stdio
+        -nographic
+    )
 else
     # VNC display: routes keyboard/mouse through QEMU's input mux correctly.
     # QEMU 11.0.0 Cocoa on macOS Sequoia does NOT forward events to virtual
     # input devices; VNC does.  The kernel virtio_input driver receives all
     # keyboard and mouse events from the VNC client via virtio-keyboard-pci
     # and virtio-tablet-pci.
+    #
+    # IMPORTANT: do NOT use -serial mon:stdio here.  VS Code's integrated
+    # terminal PTY ignores tcsetattr(TCSANOW) raw-mode requests, so stdin
+    # stays in cooked (line-buffered) mode.  QEMU's GLib main loop then only
+    # wakes up for stdin after Enter is pressed, which stalls VNC framebuffer
+    # refreshes until that happens.  Splitting the monitor onto its own socket
+    # keeps stdio line-buffered for UART output while the event loop can wake
+    # freely on VNC socket activity.
     QEMU_ARGS+=(
+        -serial stdio
+        -monitor unix:/tmp/aether-qemu-monitor.sock,server,nowait
         -device ramfb
         -vga none
         -display vnc=127.0.0.1:0

@@ -56,6 +56,19 @@ set(KERNEL_SOURCES
 
     # Drivers — USB OHCI + HID (Phase 4.6)
     drivers/usb/ohci.c
+
+    # Drivers — VirtIO net (Phase 5.1)
+    drivers/net/virtio_net.c
+
+    # Network stack (Phase 5.1)
+    net/net.c
+    net/ethernet.c
+    net/ip.c
+    net/udp.c
+    net/tcp.c
+    net/dhcp.c
+    net/dns.c
+    net/socket.c
 )
 
 set(LINKER_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/arch/arm64/boot/linker.ld)

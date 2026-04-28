@@ -311,6 +311,86 @@ static inline long sys_wm_get_pid(long win_id)
     return _sys1(SYS_WM_GET_PID, win_id);
 }
 
+/* ── Networking syscalls (Phase 5.1) ─────────────────────────────────── */
+
+#define SYS_NET_STATUS  700
+#define SYS_NET_PING    701
+#define SYS_NET_DNS     702
+#define SYS_SOCKET      703
+#define SYS_CONNECT     704
+#define SYS_NET_SEND    705
+#define SYS_NET_RECV    706
+#define SYS_NET_CLOSE   707
+
+#define SOCK_TCP  0
+#define SOCK_UDP  1
+
+static inline long _sys4(long nr, long a0, long a1, long a2, long a3)
+{
+    register long x0 asm("x0") = a0;
+    register long x1 asm("x1") = a1;
+    register long x2 asm("x2") = a2;
+    register long x3 asm("x3") = a3;
+    register long x8 asm("x8") = nr;
+    __asm__ volatile("svc #0" : "+r"(x0) : "r"(x1), "r"(x2), "r"(x3), "r"(x8)
+                     : "memory", "cc");
+    return x0;
+}
+
+typedef struct {
+    unsigned int ip, mask, gateway, dns;
+    unsigned char mac[6];
+    unsigned char _pad[2];
+} net_status_t;
+
+/* Fill *st with current IP/MAC/gateway/DNS; returns 0 or -1 */
+static inline long sys_net_status(net_status_t *st)
+{
+    return _sys1(SYS_NET_STATUS, (long)(void *)st);
+}
+
+/* ICMP echo to ip (host byte order); returns RTT ms or -1 on timeout */
+static inline long sys_net_ping(unsigned int ip)
+{
+    return _sys1(SYS_NET_PING, (long)(unsigned long)ip);
+}
+
+/* DNS A-record lookup; returns host-order IP or 0 on failure */
+static inline unsigned int sys_net_dns(const char *hostname)
+{
+    return (unsigned int)_sys1(SYS_NET_DNS, (long)(const void *)hostname);
+}
+
+/* Create a socket; type = SOCK_TCP or SOCK_UDP; returns fd >= 100 or -1 */
+static inline long sys_socket(int type)
+{
+    return _sys1(SYS_SOCKET, (long)type);
+}
+
+/* Connect TCP socket to ip:port (both host byte order); returns 0 or -1 */
+static inline long sys_connect(long fd, unsigned int ip, unsigned short port)
+{
+    return _sys3(SYS_CONNECT, fd, (long)(unsigned long)ip, (long)port);
+}
+
+/* Send data on socket; returns bytes sent or -1 */
+static inline long sys_net_send(long fd, const void *buf, long len)
+{
+    return _sys3(SYS_NET_SEND, fd, (long)buf, len);
+}
+
+/* Receive data from socket (5 s timeout); returns bytes or -1 */
+static inline long sys_net_recv(long fd, void *buf, long len)
+{
+    return _sys3(SYS_NET_RECV, fd, (long)buf, len);
+}
+
+/* Close socket */
+static inline long sys_net_close(long fd)
+{
+    return _sys1(SYS_NET_CLOSE, fd);
+}
+
 /* ── String helpers (no libc) ────────────────────────────────────── */
 
 static inline long sys_puts(const char *s)

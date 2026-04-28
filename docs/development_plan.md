@@ -1,8 +1,8 @@
 # AetherOS — Living Development Plan
 
-> **Last updated:** 2026-04-21  
-> **Current Phase:** Phase 4 — Graphics  
-> **Overall Status:** Phase 3 complete ✓  Phase 4.0 complete ✓  Phase 4.1 complete ✓  Phase 4.2 complete ✓  Phase 4.3 complete ✓  Phase 4.4 complete ✓  Phase 4.5 complete ✓  Phase 4.6 complete ✓
+> **Last updated:** 2026-04-28  
+> **Current Phase:** Phase 5 — Advanced Systems  
+> **Overall Status:** Phase 3 complete ✓  Phase 4.0 complete ✓  Phase 4.1 complete ✓  Phase 4.2 complete ✓  Phase 4.3 complete ✓  Phase 4.4 complete ✓  Phase 4.5 complete ✓  Phase 4.6 complete ✓  Phase 5.1 in progress 🔧
 
 ---
 
@@ -845,19 +845,52 @@ window; title-bar drag repositions windows; visual focus border updates on focus
 
 ### Milestone 5.1 — Networking Stack
 
-**Status:** Not started
+**Status:** In Progress 🔧 (2026-04-28)
 
-#### Tasks
+**Architecture note:** GENET (Pi 4 hardware) replaced by VirtIO net PCI (QEMU `-M virt`),
+following the same pattern as `virtio_input.c`. DHCP runs as a busy-poll before IRQs are
+enabled so `g_our_ip` is valid by the time userspace starts. The timer IRQ path calls
+`net_rx_poll()` at 100 Hz for ongoing delivery.
 
-- [ ] **5.1.1** Write `kernel/drivers/net/genet.c` — GENET Ethernet (Pi 4)
-- [ ] **5.1.2** Write `kernel/net/ethernet.c` — Layer 2 (ARP)
-- [ ] **5.1.3** Write `kernel/net/ip.c` — IP layer (IPv4 first, IPv6 later)
-- [ ] **5.1.4** Write `kernel/net/tcp.c` — TCP (NewReno congestion control)
-- [ ] **5.1.5** Write `kernel/net/udp.c` — UDP
-- [ ] **5.1.6** Write `kernel/net/socket.c` — Berkeley socket API
-- [ ] **5.1.7** Write `kernel/net/dns.c` — DNS resolver (stub resolver)
-- [ ] **5.1.8** Port or write DHCP client
-- [ ] **5.1.9** Test: `ping` command works, TCP connections established
+#### QEMU networking: `-netdev user,id=n0 -device virtio-net-pci,netdev=n0`
+QEMU user-mode NAT: IP 10.0.2.15/24, gateway 10.0.2.2, DNS 10.0.2.3.
+
+#### What was built
+
+- [x] **5.1.1** `kernel/drivers/net/virtio_net.c` + `virtio_net.h` — VirtIO net PCI modern driver
+  - PCI scan for 0x1AF4:0x1041; COMMON_CFG/NOTIFY_CFG/DEVICE_CFG caps via BAR walk
+  - RX queue (0): 16 × 1524-byte descriptors, pre-loaded in avail ring
+  - TX queue (1): synchronous single-packet TX with busy-wait used-ring completion
+  - `virtio_net_rx_poll()`: drains used ring → `net_deliver_frame()` → re-arms descriptors
+  - `pci_scan_virtio_net()` added to `pci_ecam.c`
+- [x] **5.1.2** `kernel/net/ethernet.c` — Ethernet II + ARP
+  - 8-entry ARP table (FIFO replacement); gratuitous ARP on boot
+  - `arp_resolve()`: sends ARP request, busy-polls RX for 300ms × 3 attempts
+  - Routes to gateway MAC when destination is off-subnet
+- [x] **5.1.3** `kernel/net/ip.c` — IPv4 + ICMP
+  - 20-byte IP header, ones-complement checksum
+  - `icmp_ping()`: sends echo request, busy-polls for reply up to 1s
+  - `ip_rx()`: filters by dst IP, dispatches to ICMP/UDP/TCP
+- [x] **5.1.4** `kernel/net/udp.c` — UDP
+  - 8-slot port-handler table; blocking `udp_recv_blocking()` busy-polls RX
+- [x] **5.1.5** `kernel/net/dhcp.c` — DHCP client
+  - DISCOVER → OFFER → REQUEST → ACK; XID seeded from `CNTPCT_EL0`; 3 retries per phase
+  - Populates `g_our_ip`, `g_gateway_ip`, `g_subnet_mask`, `g_dns_ip`
+- [x] **5.1.6** `kernel/net/dns.c` — DNS stub resolver
+  - Single A-record UDP query to `g_dns_ip:53`; DNS wire-format encode/parse
+- [x] **5.1.7** `kernel/net/tcp.c` — TCP client (single connection)
+  - CLOSED → SYN_SENT → ESTABLISHED → FIN_WAIT → TIME_WAIT → CLOSED state machine
+  - 8KB RX ring buffer; no retransmit timers; RST → immediate CLOSED
+- [x] **5.1.8** `kernel/net/socket.c` — socket API (FD 100–107)
+  - `SOCK_TCP=0`, `SOCK_UDP=1`; wraps TCP or UDP; 8-slot table
+- [x] **5.1.9** `kernel/net/net.c` — global state + glue
+  - `g_our_ip`, `g_gateway_ip`, `g_subnet_mask`, `g_dns_ip`, `g_our_mac`, `g_net_ready`
+  - `net_init()`: virtio_net_init → dhcp_init → arp_announce
+  - `net_rx_poll()` hooked into `timer_irq_handler()` at 100 Hz
+- [x] **5.1.10** Kernel syscalls (SYS_NET_STATUS 700 … SYS_NET_CLOSE 707)
+- [x] **5.1.11** Userspace: `net_status_t`, `_sys4()`, 8 typed wrappers in `sys.h`
+- [x] **5.1.12** `aether_term`: `net`, `ping`, `nslookup`, `wget` shell commands
+- [ ] **5.1.13** Integration test: boot → DHCP lease → `ping 10.0.2.2` → `wget 10.0.2.2:80/`
 
 ---
 
@@ -990,4 +1023,5 @@ Toolchain → Boot → UART → MMU → Exceptions → PMM → Scheduler
 | 2026-04-21 | Phase 4.5 complete: SYS_KILL (2) + SYS_WAITPID_NB (11); wait_foreground() poll loop; Ctrl+C kills foreground child from aether_term; SP_EL0 trap frame fix |
 | 2026-04-21 | Phase 4.6 added: kernel window registry, SYS_WM_REGISTER/KEY_RECV/UNREGISTER/FOCUS_SET/FOCUS_GET/MOVE (12–17), click dispatch, title-bar drag, visual focus border |
 | 2026-04-21 | Phase 4.6 complete: kernel/core/wm.c (registry + per-PID key FIFOs + WM_EV_REDRAW), syscalls 12–20, aether_term/files dynamic position + sys_wm_key_recv, init WM loop (hit-test, focus borders, ghost drag) |
+| 2026-04-28 | Phase 5.1 started: VirtIO net PCI driver, Ethernet+ARP, IPv4+ICMP, UDP, TCP, DHCP, DNS, socket API, 8 net syscalls (700–707), userspace sys.h wrappers, aether_term net/ping/nslookup/wget commands |
 

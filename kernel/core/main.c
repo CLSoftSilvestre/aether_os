@@ -27,6 +27,7 @@
 #include "drivers/input/pl050_mouse.h"
 #include "drivers/input/virtio_input.h"
 #include "drivers/usb/ohci.h"
+#include "aether/net.h"
 #include "aether/types.h"
 
 extern u8 __stack_top[];
@@ -93,6 +94,15 @@ void kernel_main(void)
     cursor_init();
     virtio_input_init();   /* kept for pl050/PS2 fallback; USB replaces it */
     usb_hid_init();
+
+    /* ── 6b. Network (after framebuffer, before scheduler) ─────────── */
+    /*
+     * net_init() runs VirtIO net setup + DHCP (busy-poll, no IRQs needed).
+     * DHCP must complete before IRQs are enabled so g_our_ip is valid by
+     * the time userspace runs.  The timer IRQ path calls net_rx_poll() at
+     * 100 Hz for ongoing packet delivery after DHCP.
+     */
+    net_init();
 
     /* ── 7. Scheduler + Pipe + WM subsystem ────────────────────────── */
     pipe_init();

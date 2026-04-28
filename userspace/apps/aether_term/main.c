@@ -2,8 +2,8 @@
  * AetherOS — AetherTerm
  * File: userspace/apps/aether_term/main.c
  *
- * Phase 4.6: registers with the WM, uses sys_wm_key_recv() for focus-routed
- * keyboard input, and supports dynamic window repositioning via WM_EV_REDRAW.
+ * Phase 5.1: adds net/ping/nslookup/wget commands on top of the Phase 4.6
+ * WM integration (sys_wm_key_recv, WM_EV_REDRAW repositioning).
  *
  * Window position is stored in g_win_x / g_win_y (mutable globals).
  * All drawing uses WX / WY macros that add the current offset so the window
@@ -369,6 +369,11 @@ static void cmd_help(void)
     term_puts("  spawn <path>      launch an ELF from initrd (wait)\n");
     term_puts("  spawn <path> &    launch in background (no wait)\n");
     term_puts("  exit [code]       exit the terminal\n");
+    term_puts("Networking:\n");
+    term_puts("  net               show IP/MAC/gateway/DNS\n");
+    term_puts("  ping <ip>         ICMP echo to IP address\n");
+    term_puts("  nslookup <host>   DNS A-record lookup\n");
+    term_puts("  wget <ip>:<port><path>  HTTP GET (first 512 bytes)\n");
 }
 
 static void cmd_echo(int argc, char **argv)
@@ -429,7 +434,7 @@ static void cmd_clear(void)
 
 static void cmd_uname(void)
 {
-    term_puts("AetherOS  aarch64  Phase 4.6  QEMU virt (Cortex-A76)\n");
+    term_puts("AetherOS  aarch64  Phase 5.1  QEMU virt (Cortex-A76)\n");
 }
 
 static void cmd_pid(void)
@@ -500,6 +505,138 @@ static void cmd_view(void)
     redraw_after_child();
 }
 
+/* ── Networking commands (Phase 5.1) ─────────────────────────────────────── */
+
+static void fmt_ip(char *buf, unsigned int ip)
+{
+    snprintf(buf, 16, "%u.%u.%u.%u",
+             (ip >> 24) & 0xFF, (ip >> 16) & 0xFF,
+             (ip >> 8)  & 0xFF,  ip        & 0xFF);
+}
+
+static unsigned int parse_ip(const char *s)
+{
+    unsigned int octs[4];
+    int n = 0;
+    while (n < 4) {
+        if (*s < '0' || *s > '9') return 0;
+        unsigned int v = 0;
+        while (*s >= '0' && *s <= '9') v = v * 10 + (unsigned int)(*s++ - '0');
+        if (v > 255) return 0;
+        octs[n++] = v;
+        if (n < 4) { if (*s != '.') return 0; s++; }
+    }
+    if (*s != '\0') return 0;
+    return (octs[0] << 24) | (octs[1] << 16) | (octs[2] << 8) | octs[3];
+}
+
+static void cmd_net(void)
+{
+    net_status_t st;
+    if (sys_net_status(&st) < 0) { term_puts("net: network not available\n"); return; }
+    char buf[16];
+    fmt_ip(buf, st.ip);      term_printf("  IP:      %s\n", buf);
+    fmt_ip(buf, st.mask);    term_printf("  Mask:    %s\n", buf);
+    fmt_ip(buf, st.gateway); term_printf("  Gateway: %s\n", buf);
+    fmt_ip(buf, st.dns);     term_printf("  DNS:     %s\n", buf);
+    term_printf("  MAC:     %02x:%02x:%02x:%02x:%02x:%02x\n",
+                st.mac[0], st.mac[1], st.mac[2],
+                st.mac[3], st.mac[4], st.mac[5]);
+}
+
+static void cmd_ping(const char *ip_str)
+{
+    if (!ip_str || ip_str[0] == '\0') { term_puts("usage: ping <ip>\n"); return; }
+    unsigned int ip = parse_ip(ip_str);
+    if (!ip) { term_printf("ping: invalid address: %s\n", ip_str); return; }
+    term_printf("PING %s ...\n", ip_str);
+    long rtt = sys_net_ping(ip);
+    if (rtt < 0)
+        term_printf("ping: %s: request timed out\n", ip_str);
+    else
+        term_printf("reply from %s: time=%ld ms\n", ip_str, rtt);
+}
+
+static void cmd_nslookup(const char *hostname)
+{
+    if (!hostname || hostname[0] == '\0') { term_puts("usage: nslookup <hostname>\n"); return; }
+    term_printf("Resolving %s ...\n", hostname);
+    unsigned int ip = sys_net_dns(hostname);
+    if (!ip) { term_printf("nslookup: %s: not found\n", hostname); return; }
+    char buf[16];
+    fmt_ip(buf, ip);
+    term_printf("%s -> %s\n", hostname, buf);
+}
+
+static void cmd_wget(const char *addr)
+{
+    if (!addr || addr[0] == '\0') {
+        term_puts("usage: wget <ip>:<port><path>\n");
+        term_puts("  e.g.: wget 10.0.2.2:80/\n");
+        return;
+    }
+
+    char ipbuf[64];
+    unsigned short port = 80;
+    const char *path = "/";
+
+    const char *colon = addr;
+    while (*colon && *colon != ':') colon++;
+
+    if (*colon == ':') {
+        int iplen = (int)(colon - addr);
+        if (iplen >= (int)sizeof(ipbuf)) iplen = (int)sizeof(ipbuf) - 1;
+        for (int i = 0; i < iplen; i++) ipbuf[i] = addr[i];
+        ipbuf[iplen] = '\0';
+        const char *portstr = colon + 1;
+        port = (unsigned short)atoi(portstr);
+        while (*portstr && *portstr != '/') portstr++;
+        if (*portstr == '/') path = portstr;
+    } else {
+        int iplen = 0;
+        while (addr[iplen] && iplen < 63) { ipbuf[iplen] = addr[iplen]; iplen++; }
+        ipbuf[iplen] = '\0';
+    }
+
+    unsigned int ip = parse_ip(ipbuf);
+    if (!ip) {
+        ip = sys_net_dns(ipbuf);
+        if (!ip) { term_printf("wget: cannot resolve %s\n", ipbuf); return; }
+    }
+
+    char ipfmt[16];
+    fmt_ip(ipfmt, ip);
+    term_printf("Connecting to %s (%s) port %u...\n", ipbuf, ipfmt, (unsigned)port);
+
+    long fd = sys_socket(SOCK_TCP);
+    if (fd < 0) { term_puts("wget: socket failed\n"); return; }
+
+    if (sys_connect(fd, ip, port) < 0) {
+        term_printf("wget: connect to %s:%u failed\n", ipfmt, (unsigned)port);
+        sys_net_close(fd);
+        return;
+    }
+
+    char req[256];
+    int reqlen = snprintf(req, sizeof(req),
+                          "GET %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n\r\n",
+                          path, ipbuf);
+    if (sys_net_send(fd, req, (long)reqlen) < 0) {
+        term_puts("wget: send failed\n");
+        sys_net_close(fd);
+        return;
+    }
+
+    char resp[512];
+    long n = sys_net_recv(fd, resp, (long)sizeof(resp) - 1);
+    sys_net_close(fd);
+
+    if (n < 0) { term_puts("wget: recv failed\n"); return; }
+    resp[n] = '\0';
+    term_puts(resp);
+    if (n > 0 && resp[n-1] != '\n') term_putc('\n');
+}
+
 /* ── Main ────────────────────────────────────────────────────────────────── */
 
 int main(void)
@@ -519,7 +656,7 @@ int main(void)
             motd[n] = '\0';
             term_puts(motd);
         } else {
-            term_puts("\n  Welcome to AetherOS Phase 4.6\n");
+            term_puts("\n  Welcome to AetherOS Phase 5.1\n");
             term_puts("  AetherTerm  --  type 'help' for commands\n\n");
         }
     }
@@ -546,18 +683,22 @@ int main(void)
         if (argc == 0) continue;
         const char *cmd = argv[0];
 
-        if      (strcmp(cmd, "help")  == 0) cmd_help();
-        else if (strcmp(cmd, "echo")  == 0) cmd_echo(argc, argv);
-        else if (strcmp(cmd, "ls")    == 0) cmd_ls();
-        else if (strcmp(cmd, "cat")   == 0) cmd_cat(argc > 1 ? argv[1] : NULL);
-        else if (strcmp(cmd, "mem")   == 0) cmd_mem();
-        else if (strcmp(cmd, "time")  == 0) cmd_time(sys_get_ticks());
-        else if (strcmp(cmd, "clear") == 0) cmd_clear();
-        else if (strcmp(cmd, "uname") == 0) cmd_uname();
-        else if (strcmp(cmd, "pid")   == 0) cmd_pid();
-        else if (strcmp(cmd, "files") == 0) cmd_files();
-        else if (strcmp(cmd, "view")  == 0) cmd_view();
-        else if (strcmp(cmd, "spawn") == 0) cmd_spawn(argc > 1 ? argv[1] : NULL, background);
+        if      (strcmp(cmd, "help")     == 0) cmd_help();
+        else if (strcmp(cmd, "echo")     == 0) cmd_echo(argc, argv);
+        else if (strcmp(cmd, "ls")       == 0) cmd_ls();
+        else if (strcmp(cmd, "cat")      == 0) cmd_cat(argc > 1 ? argv[1] : NULL);
+        else if (strcmp(cmd, "mem")      == 0) cmd_mem();
+        else if (strcmp(cmd, "time")     == 0) cmd_time(sys_get_ticks());
+        else if (strcmp(cmd, "clear")    == 0) cmd_clear();
+        else if (strcmp(cmd, "uname")    == 0) cmd_uname();
+        else if (strcmp(cmd, "pid")      == 0) cmd_pid();
+        else if (strcmp(cmd, "files")    == 0) cmd_files();
+        else if (strcmp(cmd, "view")     == 0) cmd_view();
+        else if (strcmp(cmd, "spawn")    == 0) cmd_spawn(argc > 1 ? argv[1] : NULL, background);
+        else if (strcmp(cmd, "net")      == 0) cmd_net();
+        else if (strcmp(cmd, "ping")     == 0) cmd_ping(argc > 1 ? argv[1] : NULL);
+        else if (strcmp(cmd, "nslookup") == 0) cmd_nslookup(argc > 1 ? argv[1] : NULL);
+        else if (strcmp(cmd, "wget")     == 0) cmd_wget(argc > 1 ? argv[1] : NULL);
         else if (strcmp(cmd, "exit")  == 0) {
             int code = (argc > 1) ? atoi(argv[1]) : 0;
             term_puts("Goodbye!\n");

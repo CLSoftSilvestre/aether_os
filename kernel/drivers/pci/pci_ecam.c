@@ -147,6 +147,33 @@ int pci_scan_virtio_input(pci_dev_t *out, int max_devs)
     return found;
 }
 
+int pci_scan_virtio_net(pci_dev_t *r)
+{
+    for (u8 d = 0; d < 32u; d++) {
+        u16 vendor = pci_read16(0, d, 0, PCI_VENDOR_ID);
+        if (vendor == 0xFFFFu) continue;
+        u16 device = pci_read16(0, d, 0, PCI_DEVICE_ID);
+        if (vendor != VIRTIO_VENDOR || device != VIRTIO_DEV_NET)
+            continue;
+
+        r->bus = 0; r->dev = d; r->fn = 0;
+
+        for (int b = 0; b < 6; ) {
+            int skip = 0;
+            r->bar[b] = assign_bar(0, d, 0, b, &skip);
+            b += skip ? 2 : 1;
+        }
+
+        u16 cmd = pci_read16(0, d, 0, PCI_COMMAND);
+        pci_write16(0, d, 0, PCI_COMMAND,
+                    (u16)(cmd | PCI_CMD_MEM | PCI_CMD_MASTER));
+
+        kinfo("PCI: VirtIO net at 00:%x.0\n", (unsigned)d);
+        return 1;
+    }
+    return 0;
+}
+
 int pci_scan_ohci(pci_dev_t *r)
 {
     for (u8 d = 0; d < 32u; d++) {

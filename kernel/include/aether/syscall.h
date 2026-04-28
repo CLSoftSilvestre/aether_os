@@ -77,6 +77,16 @@
 #define SYS_CURSOR_MOVE 605   /* (x<<32|y) — kernel moves + redraws cursor   */
 #define SYS_CURSOR_SHOW 606   /* (visible) — show (1) or hide (0) cursor      */
 
+/* Networking syscalls (Phase 5.1) */
+#define SYS_NET_STATUS   700  /* (buf_ptr) → 0; fills net_status_t in user buf  */
+#define SYS_NET_PING     701  /* (ip_u32) → RTT_ms or (u32)-1 on timeout        */
+#define SYS_NET_DNS      702  /* (hostname_ptr) → ip u32 (host order) or 0      */
+#define SYS_SOCKET       703  /* (type: 0=TCP 1=UDP) → fd (>=100) or -1         */
+#define SYS_CONNECT      704  /* (fd, ip_u32, port) → 0 or -1                   */
+#define SYS_NET_SEND     705  /* (fd, buf_ptr, len) → bytes sent or -1          */
+#define SYS_NET_RECV     706  /* (fd, buf_ptr, len) → bytes recv or -1          */
+#define SYS_NET_CLOSE    707  /* (fd) → 0 or -1                                  */
+
 /* File descriptor numbers */
 #define FD_STDIN   0
 #define FD_STDOUT  1

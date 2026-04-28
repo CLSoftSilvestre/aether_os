@@ -35,6 +35,7 @@
 /* VirtIO PCI IDs */
 #define VIRTIO_VENDOR     0x1AF4u
 #define VIRTIO_DEV_INPUT  0x1052u     /* 0x1040 + device-id 18 */
+#define VIRTIO_DEV_NET    0x1041u     /* 0x1040 + device-id  1 */
 
 /* Resolved PCI device descriptor */
 typedef struct {
@@ -57,6 +58,7 @@ int pci_scan_virtio_input(pci_dev_t *out, int max_devs);
 /* Scan bus 0 for OHCI USB host controller (class=0x0C, sub=0x03, progIF=0x10).
  * Assigns BARs, enables Memory Space + Bus Master.
  * Returns 1 if found (r->bar[0] is the OHCI MMIO base), 0 if not found. */
+int pci_scan_virtio_net(pci_dev_t *r);
 int pci_scan_ohci(pci_dev_t *r);
 
 #endif /* AETHER_PCI_ECAM_H */
