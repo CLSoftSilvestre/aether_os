@@ -174,6 +174,57 @@ int pci_scan_virtio_net(pci_dev_t *r)
     return 0;
 }
 
+int pci_scan_virtio_blk(pci_dev_t *r)
+{
+    for (u8 d = 0; d < 32u; d++) {
+        u16 vendor = pci_read16(0, d, 0, PCI_VENDOR_ID);
+        if (vendor == 0xFFFFu) continue;
+        if (vendor != VIRTIO_VENDOR) continue;
+
+        u16 device = pci_read16(0, d, 0, PCI_DEVICE_ID);
+
+        /* Accept both modern (0x1042) and transitional (0x1001, subsys=2) */
+        int is_modern = (device == VIRTIO_DEV_BLK);
+        int is_trans  = (device == VIRTIO_DEV_BLK_TRANS &&
+                         pci_read16(0, d, 0, PCI_SUBSYS_ID) == VIRTIO_SUBSYS_BLK);
+        if (!is_modern && !is_trans) continue;
+
+        r->bus = 0; r->dev = d; r->fn = 0;
+
+        for (int b = 0; b < 6; ) {
+            int skip = 0;
+            r->bar[b] = assign_bar(0, d, 0, b, &skip);
+            b += skip ? 2 : 1;
+        }
+
+        u16 cmd = pci_read16(0, d, 0, PCI_COMMAND);
+        pci_write16(0, d, 0, PCI_COMMAND,
+                    (u16)(cmd | PCI_CMD_MEM | PCI_CMD_MASTER));
+
+        kinfo("PCI: VirtIO block at 00:%02x.0 (devid=0x%04x %s)\n",
+              (unsigned)d, (unsigned)device,
+              is_modern ? "modern" : "transitional");
+        return 1;
+    }
+    return 0;
+}
+
+void pci_list_devices(void)
+{
+    kinfo("PCI: bus 0 device scan:\n");
+    for (u8 d = 0; d < 32u; d++) {
+        u16 vendor = pci_read16(0, d, 0, PCI_VENDOR_ID);
+        if (vendor == 0xFFFFu) continue;
+        u16 device  = pci_read16(0, d, 0, PCI_DEVICE_ID);
+        u16 subsys  = pci_read16(0, d, 0, PCI_SUBSYS_ID);
+        u8  class   = pci_read8 (0, d, 0, 0x0Bu);
+        u8  subclass = pci_read8(0, d, 0, 0x0Au);
+        kinfo("  00:%02x.0  %04x:%04x  subsys=%04x  class=%02x%02x\n",
+              (unsigned)d, (unsigned)vendor, (unsigned)device,
+              (unsigned)subsys, (unsigned)class, (unsigned)subclass);
+    }
+}
+
 int pci_scan_ohci(pci_dev_t *r)
 {
     for (u8 d = 0; d < 32u; d++) {

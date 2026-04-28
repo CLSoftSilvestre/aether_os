@@ -25,9 +25,14 @@ set(KERNEL_SOURCES
     mm/kmalloc.c
     mm/vmm.c
 
-    # Filesystem (initrd + ELF loader)
+    # Filesystem (initrd + ELF loader + FAT32 + VFS)
     fs/initrd.c
     fs/elf.c
+    fs/fat32.c
+    fs/vfs.c
+
+    # Drivers — block storage (Phase 5.2)
+    drivers/block/virtio_blk.c
 
     # Drivers — character
     drivers/char/uart_pl011.c

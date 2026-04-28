@@ -391,6 +391,39 @@ static inline long sys_net_close(long fd)
     return _sys1(SYS_NET_CLOSE, fd);
 }
 
+/* ── Filesystem syscalls (Phase 5.2) ─────────────────────────────── */
+
+#define SYS_FS_OPEN      800
+#define SYS_FS_READ      801
+#define SYS_FS_CLOSE     802
+#define SYS_FS_READDIR   803
+
+#define VFS_FD_BASE      200   /* VFS fds are in range 200-215 */
+
+/* Open a file by path; returns vfd (>=200) or -1 */
+static inline long sys_fs_open(const char *path)
+{
+    return _sys1(SYS_FS_OPEN, (long)(const void *)path);
+}
+
+/* Read up to len bytes from vfd into buf; returns bytes read, 0=EOF, -1=error */
+static inline long sys_fs_read(long vfd, void *buf, long len)
+{
+    return _sys3(SYS_FS_READ, vfd, (long)buf, len);
+}
+
+/* Close a VFS file descriptor */
+static inline void sys_fs_close(long vfd)
+{
+    _sys1(SYS_FS_CLOSE, vfd);
+}
+
+/* List a directory path into buf; returns bytes written or -1 */
+static inline long sys_fs_readdir(const char *path, char *buf, long len)
+{
+    return _sys3(SYS_FS_READDIR, (long)(const void *)path, (long)buf, len);
+}
+
 /* ── String helpers (no libc) ────────────────────────────────────── */
 
 static inline long sys_puts(const char *s)

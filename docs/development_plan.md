@@ -2,7 +2,7 @@
 
 > **Last updated:** 2026-04-28  
 > **Current Phase:** Phase 5 — Advanced Systems  
-> **Overall Status:** Phase 3 complete ✓  Phase 4.0 complete ✓  Phase 4.1 complete ✓  Phase 4.2 complete ✓  Phase 4.3 complete ✓  Phase 4.4 complete ✓  Phase 4.5 complete ✓  Phase 4.6 complete ✓  Phase 5.1 in progress 🔧
+> **Overall Status:** Phase 3 complete ✓  Phase 4.0 complete ✓  Phase 4.1 complete ✓  Phase 4.2 complete ✓  Phase 4.3 complete ✓  Phase 4.4 complete ✓  Phase 4.5 complete ✓  Phase 4.6 complete ✓  Phase 5.1 in progress 🔧  Phase 5.2 in progress 🔧
 
 ---
 
@@ -896,22 +896,60 @@ QEMU user-mode NAT: IP 10.0.2.15/24, gateway 10.0.2.2, DNS 10.0.2.3.
 
 ### Milestone 5.2 — Filesystem & Storage
 
-**Status:** Not started
+**Status:** In Progress 🔧 (2026-04-28)
 
-#### Tasks
+#### What was built (5.2 phase 1 — block I/O + FAT32 + VFS)
 
-- [ ] **5.2.1** Write `kernel/fs/aetherfs.c` — AetherFS (native filesystem)
+- [x] **5.2.1** `kernel/drivers/block/virtio_blk.c` + `virtio_blk.h` — VirtIO block PCI driver
+  - PCI scan for 0x1AF4:0x1042; COMMON_CFG/NOTIFY_CFG/DEVICE_CFG caps via BAR walk
+  - Single request queue; 3-descriptor chain (header|data|status) per request
+  - Synchronous `virtio_blk_read_sectors()` + `virtio_blk_write_sectors()` with busy-wait
+  - `pci_scan_virtio_blk()` added to `pci_ecam.c`; `VIRTIO_DEV_BLK 0x1042` in header
+- [x] **5.2.2** `kernel/fs/fat32.c` + `fat32.h` — FAT32 read-only parser
+  - BPB parsing: bytes_per_sector, sectors_per_cluster, FAT size, root cluster, data LBA
+  - Cluster chain traversal via FAT table (on-demand per-sector reads)
+  - Directory iteration with full LFN (Long File Name) support — UCS-2 → ASCII
+  - Short 8.3 names with NTRes lowercase flags (byte 12 bits 3/4)
+  - Multi-component path walk (`/docs/readme.txt` → root → docs → readme.txt)
+  - `fat32_open / fat32_read / fat32_close / fat32_readdir` (8 simultaneous files)
+- [x] **5.2.3** `kernel/fs/vfs.c` + `vfs.h` — Virtual Filesystem Switch
+  - Two mount points: `/initrd` (CPIO initrd) and `/` (FAT32, when disk present)
+  - VFS file descriptors: range 200-215, separate from pipe/socket fds
+  - `vfs_open / vfs_read / vfs_close / vfs_readdir`
+- [x] **5.2.4** Kernel syscalls: `SYS_FS_OPEN (800)`, `SYS_FS_READ (801)`, `SYS_FS_CLOSE (802)`, `SYS_FS_READDIR (803)`
+- [x] **5.2.5** Userspace `sys.h` wrappers: `sys_fs_open / sys_fs_read / sys_fs_close / sys_fs_readdir`
+- [x] **5.2.6** `aether_term` updated:
+  - `ls [path]` — VFS directory listing (default `/`; `/initrd` for initrd)
+  - `cat <path>` — VFS read-first, initrd fallback (both `/docs/file.txt` and bare `filename` work)
+  - `mount` — show mounted filesystems
+  - `disk` — show disk status
+- [x] **5.2.7** `scripts/make_disk.sh` — creates 32MB FAT32 disk image using mtools
+  - Populates `/readme.txt`, `/version.txt`, `/docs/readme.txt`, `/docs/changelog.txt`, `/docs/testfile.txt`
+- [x] **5.2.8** `scripts/run_qemu.sh` — auto-attaches `build/disk.img` if present (`-device virtio-blk-pci,drive=hd0`)
+- [x] **5.2.9** `kernel/core/main.c` — `virtio_blk_init()` + `fat32_mount()` + `vfs_init()` in init sequence
+
+#### Remaining (5.2 phase 2 — AetherFS native filesystem)
+
+- [ ] **5.2.10** Write `kernel/fs/aetherfs.c` — AetherFS (native filesystem)
   - Copy-on-write B-tree structure
   - Snapshot support
   - Zstd transparent compression
   - Checksums (xxHash or BLAKE3)
-- [ ] **5.2.2** Add ext4 read support (port e2fsprogs logic)
-- [ ] **5.2.3** Add exFAT support (for USB drives, SD cards)
-- [ ] **5.2.4** Write `kernel/drivers/usb/xhci.c` — USB 3.0 host controller
-  - xHCI spec implementation
-  - USB hub support
-  - USB mass storage (BOT protocol)
-- [ ] **5.2.5** Test: mount USB drive, read/write files on AetherFS
+- [ ] **5.2.11** Add ext4 read support
+- [ ] **5.2.12** Add xHCI USB 3.0 host controller + USB mass storage
+- [ ] **5.2.13** Integration test: boot → `mount` → `ls /` → `cat /readme.txt` → `ls /initrd` → `cat /initrd/motd.txt`
+
+**To test Phase 5.2:**
+```bash
+bash scripts/make_disk.sh   # create build/disk.img (FAT32, 32MB)
+bash scripts/run_qemu.sh    # boots with disk attached automatically
+# In aether_term:
+# mount            → shows / (FAT32) and /initrd
+# ls /             → lists disk root files
+# cat /readme.txt  → reads file from disk
+# ls /initrd       → lists initrd contents
+# cat /initrd/motd.txt → reads from initrd
+```
 
 ---
 
@@ -1024,4 +1062,5 @@ Toolchain → Boot → UART → MMU → Exceptions → PMM → Scheduler
 | 2026-04-21 | Phase 4.6 added: kernel window registry, SYS_WM_REGISTER/KEY_RECV/UNREGISTER/FOCUS_SET/FOCUS_GET/MOVE (12–17), click dispatch, title-bar drag, visual focus border |
 | 2026-04-21 | Phase 4.6 complete: kernel/core/wm.c (registry + per-PID key FIFOs + WM_EV_REDRAW), syscalls 12–20, aether_term/files dynamic position + sys_wm_key_recv, init WM loop (hit-test, focus borders, ghost drag) |
 | 2026-04-28 | Phase 5.1 started: VirtIO net PCI driver, Ethernet+ARP, IPv4+ICMP, UDP, TCP, DHCP, DNS, socket API, 8 net syscalls (700–707), userspace sys.h wrappers, aether_term net/ping/nslookup/wget commands |
+| 2026-04-28 | Phase 5.2 started: virtio_blk PCI driver, FAT32 read-only parser (LFN+short names), VFS layer (/ + /initrd), 4 FS syscalls (800–803), userspace wrappers, aether_term ls/cat/mount/disk, make_disk.sh, run_qemu.sh auto-attach |
 

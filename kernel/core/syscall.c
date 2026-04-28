@@ -42,6 +42,7 @@
 #include "aether/ip.h"
 #include "aether/dns.h"
 #include "aether/socket.h"
+#include "aether/vfs.h"
 
 /* ── Individual syscall implementations ─────────────────────────────────── */
 
@@ -639,6 +640,12 @@ long syscall_dispatch(trap_frame_t *frame)
         return do_sys_wm_get_size((long)arg0);
     case SYS_WM_GET_PID:
         return do_sys_wm_get_pid((long)arg0);
+
+    /* Filesystem (Phase 5.2) */
+    case SYS_FS_OPEN:    return (long)vfs_open   ((const char *)arg0);
+    case SYS_FS_READ:    return (long)vfs_read   ((int)arg0, (u8 *)arg1, (u32)arg2);
+    case SYS_FS_CLOSE:   vfs_close((int)arg0); return 0;
+    case SYS_FS_READDIR: return (long)vfs_readdir((const char *)arg0, (char *)arg1, (u32)arg2);
 
     /* Networking (Phase 5.1) */
     case SYS_NET_STATUS: return do_sys_net_status(arg0);

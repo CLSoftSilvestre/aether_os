@@ -357,8 +357,10 @@ static void cmd_help(void)
     term_puts("Built-in commands:\n");
     term_puts("  help              show this message\n");
     term_puts("  echo [args]       print arguments\n");
-    term_puts("  ls                list files in initrd\n");
-    term_puts("  cat <file>        print a file from initrd\n");
+    term_puts("  ls [path]         list directory (default: /)\n");
+    term_puts("  cat <path>        print a file (disk or initrd)\n");
+    term_puts("  mount             show mounted filesystems\n");
+    term_puts("  disk              show disk usage\n");
     term_puts("  mem               show memory statistics\n");
     term_puts("  time              show formatted uptime\n");
     term_puts("  clear             clear terminal\n");
@@ -369,6 +371,9 @@ static void cmd_help(void)
     term_puts("  spawn <path>      launch an ELF from initrd (wait)\n");
     term_puts("  spawn <path> &    launch in background (no wait)\n");
     term_puts("  exit [code]       exit the terminal\n");
+    term_puts("Filesystem paths:\n");
+    term_puts("  /           FAT32 disk root (when disk.img attached)\n");
+    term_puts("  /initrd/    embedded CPIO initrd (always available)\n");
     term_puts("Networking:\n");
     term_puts("  net               show IP/MAC/gateway/DNS\n");
     term_puts("  ping <ip>         ICMP echo to IP address\n");
@@ -385,24 +390,80 @@ static void cmd_echo(int argc, char **argv)
     term_putc('\n');
 }
 
-static void cmd_ls(void)
+static void cmd_ls(const char *path)
 {
-    char buf[2048];
-    long n = sys_initrd_ls(buf, sizeof(buf));
-    if (n < 0) { term_puts("ls: failed\n"); return; }
+    /* Default path: "/" (disk root).  "/initrd" lists the initrd. */
+    if (!path || path[0] == '\0') path = "/";
+
+    char buf[4096];
+    long n = sys_fs_readdir(path, buf, (long)sizeof(buf) - 1);
+    if (n < 0) {
+        term_printf("ls: %s: no such directory\n", path);
+        return;
+    }
+    if (n == 0) { term_puts("(empty)\n"); return; }
+    buf[n] = '\0';
+    term_printf("[%s]\n", path);
     term_puts(buf);
     if (n > 0 && buf[n-1] != '\n') term_putc('\n');
 }
 
-static void cmd_cat(const char *name)
+static void cmd_cat(const char *path)
 {
-    if (!name || name[0] == '\0') { term_puts("usage: cat <filename>\n"); return; }
+    if (!path || path[0] == '\0') { term_puts("usage: cat <path>\n"); return; }
+
+    /* Try VFS first (handles both disk and /initrd/ paths) */
     char buf[4096];
-    long n = sys_initrd_read(name, buf, (long)sizeof(buf) - 1);
-    if (n < 0) { term_printf("cat: %s: not found\n", name); return; }
+    long vfd = sys_fs_open(path);
+    if (vfd >= 0) {
+        long total = 0;
+        long n;
+        while ((n = sys_fs_read(vfd, (void *)(buf + total),
+                                (long)sizeof(buf) - 1 - total)) > 0) {
+            total += n;
+            if (total >= (long)sizeof(buf) - 1) break;
+        }
+        sys_fs_close(vfd);
+        buf[total] = '\0';
+        term_puts(buf);
+        if (total > 0 && buf[total-1] != '\n') term_putc('\n');
+        return;
+    }
+
+    /* Fallback: try initrd directly (bare filename without /initrd/ prefix) */
+    long n = sys_initrd_read(path, buf, (long)sizeof(buf) - 1);
+    if (n < 0) { term_printf("cat: %s: not found\n", path); return; }
     buf[n] = '\0';
     term_puts(buf);
     if (n > 0 && buf[n-1] != '\n') term_putc('\n');
+}
+
+static void cmd_mount(void)
+{
+    term_puts("Mounted filesystems:\n");
+    term_puts("  /initrd    initrd (CPIO, embedded in kernel)\n");
+    /* Check if disk is available by attempting a readdir */
+    char buf[64];
+    long n = sys_fs_readdir("/", buf, sizeof(buf));
+    if (n > 0 && buf[0] != '(')
+        term_puts("  /          FAT32 (virtio-blk disk)\n");
+    else
+        term_puts("  /          (no disk — run make_disk.sh and attach disk.img)\n");
+}
+
+static void cmd_disk(void)
+{
+    char buf[32];
+    long n = sys_fs_readdir("/", buf, sizeof(buf));
+    if (n < 0 || (n > 0 && buf[0] == '(')) {
+        term_puts("disk: no FAT32 disk attached\n");
+        term_puts("      Create one with: bash scripts/make_disk.sh\n");
+        return;
+    }
+    term_puts("Disk (virtio-blk, FAT32):\n");
+    term_puts("  Size:   32 MB\n");
+    term_puts("  Mount:  /\n");
+    term_puts("  Use 'ls /' or 'cat /readme.txt' to access files.\n");
 }
 
 static void cmd_mem(void)
@@ -685,8 +746,10 @@ int main(void)
 
         if      (strcmp(cmd, "help")     == 0) cmd_help();
         else if (strcmp(cmd, "echo")     == 0) cmd_echo(argc, argv);
-        else if (strcmp(cmd, "ls")       == 0) cmd_ls();
+        else if (strcmp(cmd, "ls")       == 0) cmd_ls(argc > 1 ? argv[1] : NULL);
         else if (strcmp(cmd, "cat")      == 0) cmd_cat(argc > 1 ? argv[1] : NULL);
+        else if (strcmp(cmd, "mount")    == 0) cmd_mount();
+        else if (strcmp(cmd, "disk")     == 0) cmd_disk();
         else if (strcmp(cmd, "mem")      == 0) cmd_mem();
         else if (strcmp(cmd, "time")     == 0) cmd_time(sys_get_ticks());
         else if (strcmp(cmd, "clear")    == 0) cmd_clear();

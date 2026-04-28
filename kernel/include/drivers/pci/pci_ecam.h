@@ -33,9 +33,17 @@
 #define PCI_CAP_VNDR      0x09        /* Vendor-specific */
 
 /* VirtIO PCI IDs */
-#define VIRTIO_VENDOR     0x1AF4u
-#define VIRTIO_DEV_INPUT  0x1052u     /* 0x1040 + device-id 18 */
-#define VIRTIO_DEV_NET    0x1041u     /* 0x1040 + device-id  1 */
+#define VIRTIO_VENDOR         0x1AF4u
+#define VIRTIO_DEV_INPUT      0x1052u /* 0x1040 + device-id 18 (modern only) */
+#define VIRTIO_DEV_NET        0x1041u /* 0x1040 + device-id  1 (modern) */
+#define VIRTIO_DEV_NET_TRANS  0x1000u /* legacy/transitional net */
+#define VIRTIO_DEV_BLK        0x1042u /* 0x1040 + device-id  2 (modern) */
+#define VIRTIO_DEV_BLK_TRANS  0x1001u /* legacy/transitional block */
+
+/* PCI subsystem device IDs for transitional virtio devices */
+#define PCI_SUBSYS_ID         0x2Eu   /* PCI subsystem device ID register offset */
+#define VIRTIO_SUBSYS_BLK     0x0002u /* subsystem ID: virtio block */
+#define VIRTIO_SUBSYS_NET     0x0001u /* subsystem ID: virtio network */
 
 /* Resolved PCI device descriptor */
 typedef struct {
@@ -51,14 +59,19 @@ void pci_write32(u8 bus, u8 dev, u8 fn, u16 off, u32 val);
 void pci_write16(u8 bus, u8 dev, u8 fn, u16 off, u16 val);
 
 /* Scan bus 0 for VirtIO input devices (vendor 0x1AF4, device 0x1052).
- * Enables Memory Space + Bus Master on each found device.
  * Returns number found (at most max_devs). */
 int pci_scan_virtio_input(pci_dev_t *out, int max_devs);
 
-/* Scan bus 0 for OHCI USB host controller (class=0x0C, sub=0x03, progIF=0x10).
- * Assigns BARs, enables Memory Space + Bus Master.
- * Returns 1 if found (r->bar[0] is the OHCI MMIO base), 0 if not found. */
+/* Scan bus 0 for VirtIO net (0x1AF4:0x1041). Returns 1 if found. */
 int pci_scan_virtio_net(pci_dev_t *r);
+
+/* Scan bus 0 for VirtIO block (modern 0x1042 OR transitional 0x1001/subsys=2). Returns 1 if found. */
+int pci_scan_virtio_blk(pci_dev_t *r);
+
+/* Print all PCI devices found on bus 0 (for boot diagnostics). */
+void pci_list_devices(void);
+
+/* Scan bus 0 for OHCI USB host controller. Returns 1 if found. */
 int pci_scan_ohci(pci_dev_t *r);
 
 #endif /* AETHER_PCI_ECAM_H */

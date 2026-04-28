@@ -27,6 +27,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BUILD_DIR="${SCRIPT_DIR}/../build"
 KERNEL_IMG="${BUILD_DIR}/kernel8.img"
+DISK_IMG="${BUILD_DIR}/disk.img"
 
 if [ ! -f "${KERNEL_IMG}" ]; then
     echo "[ERROR] Kernel image not found: ${KERNEL_IMG}"
@@ -82,6 +83,18 @@ QEMU_ARGS=(
     -netdev user,id=n0
     -device virtio-net-pci,netdev=n0
 )
+
+# Block storage (Phase 5.2): attach disk.img if it exists
+# Create with: bash scripts/make_disk.sh
+if [ -f "${DISK_IMG}" ]; then
+    echo "[QEMU] Disk: ${DISK_IMG} (FAT32)"
+    QEMU_ARGS+=(
+        -drive file="${DISK_IMG}",format=raw,if=none,id=hd0
+        -device virtio-blk-pci,drive=hd0
+    )
+else
+    echo "[QEMU] No disk image — run scripts/make_disk.sh to create one"
+fi
 
 if [ "$HEADLESS" = "1" ]; then
     # In headless mode: mon:stdio is fine — the external terminal handles raw

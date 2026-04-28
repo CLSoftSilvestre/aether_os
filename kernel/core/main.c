@@ -28,7 +28,11 @@
 #include "drivers/input/virtio_input.h"
 #include "drivers/usb/ohci.h"
 #include "aether/net.h"
+#include "aether/vfs.h"
+#include "aether/fat32.h"
 #include "aether/types.h"
+#include "drivers/block/virtio_blk.h"
+#include "drivers/pci/pci_ecam.h"
 
 extern u8 __stack_top[];
 
@@ -41,8 +45,8 @@ void kernel_main(void)
     uart_init();
     uart_puts("\r\n");
     uart_puts("╔══════════════════════════════════════╗\r\n");
-    uart_puts("║         AetherOS v0.0.5              ║\r\n");
-    uart_puts("║   Phase 4.5 — Input Subsystem        ║\r\n");
+    uart_puts("║         AetherOS v0.0.6              ║\r\n");
+    uart_puts("║   Phase 5.2 — Filesystem & Storage   ║\r\n");
     uart_puts("╚══════════════════════════════════════╝\r\n");
     uart_puts("\r\n");
 
@@ -103,6 +107,17 @@ void kernel_main(void)
      * 100 Hz for ongoing packet delivery after DHCP.
      */
     net_init();
+
+    /* ── 6c. Block storage + VFS (Phase 5.2) ───────────────────────── */
+    /*
+     * virtio_blk_init() probes the PCI bus for a virtio-blk-pci device.
+     * Accepts both modern (0x1042) and transitional (0x1001/subsys=2) forms.
+     * pci_list_devices() is called first to log all visible PCI devices.
+     */
+    pci_list_devices();
+    virtio_blk_init();
+    fat32_mount();
+    vfs_init();
 
     /* ── 7. Scheduler + Pipe + WM subsystem ────────────────────────── */
     pipe_init();
