@@ -18,6 +18,7 @@
 #include "aether/mm.h"
 #include "aether/pipe.h"
 #include "aether/vmm.h"
+#include "aether/wm.h"
 #include "aether/printk.h"
 #include "drivers/timer/arm_timer.h"
 
@@ -288,6 +289,9 @@ void task_exit(void)
     kinfo("Scheduler: task[%lu] '%s' exited (ppid=%lu)\n",
           (unsigned long)t->pid, t->name, (unsigned long)t->ppid);
 
+    /* Remove any WM window before freeing memory so the rect is still valid */
+    wm_unregister_by_pid(t->pid);
+
     /* Switch back to global PT before freeing process-specific tables.
      * This closes the window where we'd hold TTBR0 pointing to freed pages. */
     if (t->l1_table_phys) {
@@ -402,6 +406,9 @@ int task_kill(u32 pid, int exit_code)
 
     kinfo("Scheduler: task_kill pid=%lu by pid=%lu\n",
           (unsigned long)pid, (unsigned long)cur->pid);
+
+    /* Remove any WM window before freeing memory so the rect is still valid */
+    wm_unregister_by_pid(pid);
 
     /* Free process page tables (safe: we're on the caller's PT, not the target's) */
     if (t->l1_table_phys) {

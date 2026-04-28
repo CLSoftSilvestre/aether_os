@@ -545,6 +545,29 @@ static long do_sys_wm_get_pos(long win_id)  { return wm_get_pos((int)win_id); }
 static long do_sys_wm_get_size(long win_id) { return wm_get_size((int)win_id); }
 static long do_sys_wm_get_pid(long win_id)  { return (long)wm_get_pid((int)win_id); }
 
+/* SYS_WM_CLOSE — privileged: only PID 1 (init) may call this.
+ * Hard-kills the window owner and removes it from the registry. */
+static long do_sys_wm_close(long win_id)
+{
+    if (task_current_pid() != 1) {
+        kwarn("[SYS] SYS_WM_CLOSE: caller pid=%lu is not PID 1\n",
+              (unsigned long)task_current_pid());
+        return -1;
+    }
+    u32 owner = wm_get_pid((int)win_id);
+    if (!owner) return -1;
+
+    /* task_kill frees resources, marks ZOMBIE, and triggers wm_unregister_by_pid */
+    return (long)task_kill(owner, -1);
+}
+
+/* SYS_WM_EVENT_POLL — non-blocking dequeue from the calling process's WM ring.
+ * Used by init to drain WM_EV_WINDOW_CLOSED notifications. */
+static long do_sys_wm_event_poll(void)
+{
+    return (long)wm_key_dequeue(task_current_pid());
+}
+
 /* ── Dispatcher ─────────────────────────────────────────────────────────── */
 
 /*
@@ -649,6 +672,10 @@ long syscall_dispatch(trap_frame_t *frame)
         return do_sys_wm_get_size((long)arg0);
     case SYS_WM_GET_PID:
         return do_sys_wm_get_pid((long)arg0);
+    case SYS_WM_CLOSE:
+        return do_sys_wm_close((long)arg0);
+    case SYS_WM_EVENT_POLL:
+        return do_sys_wm_event_poll();
 
     /* Filesystem (Phase 5.2) */
     case SYS_FS_OPEN:    return (long)vfs_open   ((const char *)arg0);

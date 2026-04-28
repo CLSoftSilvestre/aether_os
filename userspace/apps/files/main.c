@@ -88,7 +88,7 @@ static void draw_frame(void)
     gfx_fill(WX + 4, WY + 4, WIN_W, WIN_H, GFX_RGB(8, 8, 14));
     gfx_fill(WX, WY, WIN_W, WIN_H, C_WIN_BG);
     gfx_fill(WX, WY, WIN_W, TITLE_H, C_TITLEBAR);
-    gfx_fill(WX + 10, WY + 8, 12, 12, C_RED);
+    gfx_draw_close_button(WX + 10, WY + 8, 0);
     gfx_fill(WX + 26, WY + 8, 12, 12, C_YELLOW);
     gfx_fill(WX + 42, WY + 8, 12, 12, C_GREEN);
     gfx_text_center(WX, WIN_W, WY + 8,

@@ -89,10 +89,30 @@ void wm_unregister(int id)
 
     kinfo("[WM] unregister win=%d pid=%u\n", id, g_wins[id].pid);
 
+    /* Snapshot rect before clearing — init needs it to repaint the desktop */
+    int x = g_wins[id].x, y = g_wins[id].y;
+    int w = g_wins[id].w, h = g_wins[id].h;
+
     if (g_focused_pid == g_wins[id].pid)
         g_focused_pid = 0;
 
     g_wins[id].active = 0;
+
+    /* Notify init (PID 1) so it can repaint the vacated region */
+    wm_deliver_to_pid(1, wm_pack_window_closed(x, y, w, h));
+}
+
+void wm_unregister_by_pid(u32 pid)
+{
+    if (!pid)
+        return;
+
+    for (int i = 0; i < WM_MAX_WINDOWS; i++) {
+        if (g_wins[i].active && g_wins[i].pid == pid) {
+            wm_unregister(i);
+            return;   /* one window per PID in current design */
+        }
+    }
 }
 
 /* ── Focus management ────────────────────────────────────────────────────── */

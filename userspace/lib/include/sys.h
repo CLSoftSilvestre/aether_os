@@ -51,6 +51,14 @@
 #define SYS_WM_GET_SIZE   19
 #define SYS_WM_GET_PID    20
 
+/* Window Manager syscalls (Phase 4.7) */
+#define SYS_WM_CLOSE       23
+#define SYS_WM_EVENT_POLL  25
+
+/* WM event types (match kernel wm.h) */
+#define WM_EV_REDRAW         0xFEu
+#define WM_EV_WINDOW_CLOSED  0xFFu
+
 /* Standard file descriptors */
 #define STDIN_FILENO   0
 #define STDOUT_FILENO  1
@@ -325,6 +333,36 @@ static inline long sys_wm_get_size(long win_id)
 static inline long sys_wm_get_pid(long win_id)
 {
     return _sys1(SYS_WM_GET_PID, win_id);
+}
+
+/* Hard-kill a window's owner process (PID-1-only); returns 0 or -1 */
+static inline long sys_wm_close(long win_id)
+{
+    return _sys1(SYS_WM_CLOSE, win_id);
+}
+
+/* Non-blocking dequeue from this process's WM event ring; returns 0 if empty */
+static inline unsigned long long sys_wm_event_poll(void)
+{
+    return (unsigned long long)_sys0(SYS_WM_EVENT_POLL);
+}
+
+/* ── WM event helpers (Phase 4.7) ──────────────────────────────────────── */
+
+/* Check whether a raw WM event is a WM_EV_WINDOW_CLOSED notification */
+static inline int wm_is_window_closed(unsigned long long ev)
+{
+    return (int)((ev >> 56) == WM_EV_WINDOW_CLOSED);
+}
+
+/* Decode WM_EV_WINDOW_CLOSED geometry — call only when wm_is_window_closed() */
+static inline void wm_decode_closed(unsigned long long ev,
+                                     int *x, int *y, int *w, int *h)
+{
+    *x = (int)((ev >> 44) & 0xFFFu);
+    *y = (int)((ev >> 32) & 0xFFFu);
+    *w = (int)((ev >> 16) & 0xFFFFu);
+    *h = (int)(ev & 0xFFFFu);
 }
 
 /* ── Networking syscalls (Phase 5.1) ─────────────────────────────────── */

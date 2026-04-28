@@ -203,7 +203,7 @@ static void draw_window(void)
     gfx_fill(WX, WY, WIN_W, WIN_H, C_WIN_BG);
     gfx_fill(WX, WY, WIN_W, TITLE_H, C_TITLEBAR);
 
-    gfx_fill(WX + 10, WY + 8, 12, 12, C_RED);
+    gfx_draw_close_button(WX + 10, WY + 8, 0);
     gfx_fill(WX + 26, WY + 8, 12, 12, C_YELLOW);
     gfx_fill(WX + 42, WY + 8, 12, 12, C_GREEN);
 

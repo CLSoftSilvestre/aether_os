@@ -56,4 +56,11 @@ void gfx_text_center(unsigned cx, unsigned cw, unsigned y,
 void gfx_printf(unsigned x, unsigned y, unsigned fg, unsigned bg,
                 const char *fmt, ...);
 
+/*
+ * Draw the traffic-light close button (12×12) at pixel (x, y).
+ * hovered=1 draws a brighter red for hover feedback.
+ * Corners are clipped with C_TITLEBAR to approximate a circle.
+ */
+void gfx_draw_close_button(unsigned x, unsigned y, int hovered);
+
 #endif /* _GFX_H */

@@ -57,6 +57,10 @@
 #define SYS_WM_GET_SIZE   19  /* (win_id) → w<<32|h, or 0                    */
 #define SYS_WM_GET_PID    20  /* (win_id) → owner pid, or 0                  */
 
+/* Window Manager (Phase 4.7) */
+#define SYS_WM_CLOSE       23  /* (win_id) → 0/-1; PID-1-only hard-kill      */
+#define SYS_WM_EVENT_POLL  25  /* () → packed WM event or 0 — non-blocking   */
+
 /* IPC (Phase 4.3) */
 #define SYS_PIPE        22    /* sys_pipe(fds[2]) → 0 or -1                  */
 #define SYS_DUP2        24    /* sys_dup2(oldfd, newfd) → newfd or -1        */

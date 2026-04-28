@@ -2,7 +2,7 @@
  * AetherOS — Desktop Manager (PID 1)
  * File: userspace/apps/init/main.c
  *
- * Phase 4.6: init acts as the window manager.
+ * Phase 4.7: window lifecycle — close button hard-kills owner.
  *
  * WM responsibilities added in this phase:
  *   - Mouse click hit-test against the WM window registry
@@ -60,9 +60,9 @@ static void draw_top_bar(long ticks)
 {
     gfx_fill(0, TOPBAR_Y, 1024, TOPBAR_H, C_PANEL);
     gfx_text(14, TOPBAR_Y + 10, "AetherOS", C_TEXT, C_PANEL);
-    gfx_text(14 + 8 * FONT_W + 8, TOPBAR_Y + 10, "v0.0.6", C_TEXT_DIM, C_PANEL);
+    gfx_text(14 + 8 * FONT_W + 8, TOPBAR_Y + 10, "v0.0.7", C_TEXT_DIM, C_PANEL);
     gfx_text_center(0, 1024, TOPBAR_Y + 10,
-                    "Phase 4.6  --  Lumina Desktop", C_TEXT_DIM, C_PANEL);
+                    "Phase 4.7  --  Lumina Desktop", C_TEXT_DIM, C_PANEL);
     char ubuf[20], tbuf[16];
     fmt_uptime(tbuf, ticks);
     snprintf(ubuf, sizeof(ubuf), "up %s", tbuf);
@@ -77,7 +77,7 @@ static void draw_bot_bar(void)
     gfx_fill(0, BOTBAR_Y, 1024, BOTBAR_H, C_PANEL);
     gfx_hline(0, BOTBAR_Y, 1024, C_SEP);
     gfx_text(14, BOTBAR_Y + 6,
-             "AetherOS 0.0.6  |  QEMU virt  |  Cortex-A76  |  1024x768",
+             "AetherOS 0.0.7  |  QEMU virt  |  Cortex-A76  |  1024x768",
              C_TEXT_DIM, C_PANEL);
     long v = sys_pmm_stats();
     unsigned long free_pages = (unsigned long)((unsigned long long)v >> 32);
@@ -144,6 +144,47 @@ static long find_win_for_pid(long pid)
         if (sys_wm_get_pid(i) == pid) return i;
     }
     return -1;
+}
+
+/* ── WM helper: close button hit-test ───────────────────────────────────── */
+
+/*
+ * Returns non-zero if (mx, my) falls inside the red close button for a window
+ * whose top-left corner is (wx, wy).  Buttons are 12×12 at (wx+10, wy+8) —
+ * matching the gfx_draw_close_button placement in aether_term and files.
+ */
+static int hit_close_button(int wx, int wy, int mx, int my)
+{
+    return mx >= wx + 10 && mx < wx + 22 &&
+           my >= wy +  8 && my < wy + 20;
+}
+
+/* ── WM helper: repaint desktop after a window closes ───────────────────── */
+
+static void on_window_closed(unsigned long long ev)
+{
+    int cx, cy, cw, ch;
+    wm_decode_closed(ev, &cx, &cy, &cw, &ch);
+    sys_fb_fill((unsigned)cx, (unsigned)cy, (unsigned)cw, (unsigned)ch, C_DESKTOP);
+
+    /* If the closed window was focused, assign focus to the first remaining window */
+    if (sys_wm_focus_get() == 0) {
+        for (int i = 0; i < WM_WIN_MAX; i++) {
+            long pid = sys_wm_get_pid(i);
+            if (pid) {
+                sys_wm_focus_set(pid);
+                draw_focus_border(i, 1);
+                break;
+            }
+        }
+    }
+
+    /* Redraw focus borders for all surviving windows */
+    long focused_pid = sys_wm_focus_get();
+    for (int i = 0; i < WM_WIN_MAX; i++) {
+        long pid = sys_wm_get_pid(i);
+        if (pid) draw_focus_border(i, (pid == focused_pid));
+    }
 }
 
 /* ── WM helper: hit-test click (x, y) against registered windows ─────────── */
@@ -227,6 +268,13 @@ int main(void)
             refresh_bot_bar();
         }
 
+        /* ── Drain WM events (window-closed notifications from kernel) ── */
+        unsigned long long wev;
+        while ((wev = sys_wm_event_poll()) != 0) {
+            if (wm_is_window_closed(wev))
+                on_window_closed(wev);
+        }
+
         /* ── Process all pending mouse events ────────────────────────── */
         unsigned long long me;
         while ((me = sys_mouse_poll()) != 0) {
@@ -260,7 +308,7 @@ int main(void)
                         sys_wm_focus_set(new_pid);
                     }
 
-                    /* Start drag if click is in title bar */
+                    /* Check title bar (close button or drag) */
                     long pos  = sys_wm_get_pos(win_id);
                     long size = sys_wm_get_size(win_id);
                     if (pos != -1 && size != 0) {
@@ -269,14 +317,20 @@ int main(void)
                         int ww = (int)((unsigned long long)size >> 32);
 
                         if (my >= wy && my < wy + APP_TITLE_H) {
-                            g_drag_active  = 1;
-                            g_drag_win_id  = win_id;
-                            g_drag_off_x   = mx - wx;
-                            g_drag_off_y   = my - wy;
-                            g_drag_ghost_x = wx;
-                            g_drag_ghost_y = wy;
-                            g_drag_ghost_w = ww;
-                            draw_drag_ghost(wx, wy, ww);
+                            if (hit_close_button(wx, wy, mx, my)) {
+                                /* Hard-kill the window owner */
+                                sys_wm_close(win_id);
+                            } else {
+                                /* Start drag */
+                                g_drag_active  = 1;
+                                g_drag_win_id  = win_id;
+                                g_drag_off_x   = mx - wx;
+                                g_drag_off_y   = my - wy;
+                                g_drag_ghost_x = wx;
+                                g_drag_ghost_y = wy;
+                                g_drag_ghost_w = ww;
+                                draw_drag_ghost(wx, wy, ww);
+                            }
                         }
                     }
                 }

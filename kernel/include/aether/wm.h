@@ -35,6 +35,19 @@
  */
 #define WM_EV_REDRAW  0xFEu
 
+/*
+ * WM_EV_WINDOW_CLOSED — delivered to PID 1 (init) whenever a window is
+ * unregistered (close button, natural exit, or SYS_WM_CLOSE).
+ *
+ * Packing (wm_pack_window_closed):
+ *   bits [63:56] = WM_EV_WINDOW_CLOSED (0xFF)
+ *   bits [55:44] = x  (12-bit, 0–4095)
+ *   bits [43:32] = y  (12-bit)
+ *   bits [31:16] = w  (16-bit)
+ *   bits [15: 0] = h  (16-bit)
+ */
+#define WM_EV_WINDOW_CLOSED  0xFFu
+
 /* ── Window registry entry ───────────────────────────────────────────────── */
 
 typedef struct {
@@ -91,5 +104,24 @@ static inline u64 wm_pack_redraw(int x, int y)
            ((u64)((unsigned int)x & 0xFFFFu) << 16) |
            ((u64)((unsigned int)y & 0xFFFFu));
 }
+
+/* Build a WM_EV_WINDOW_CLOSED event carrying the dead window's rect */
+static inline u64 wm_pack_window_closed(int x, int y, int w, int h)
+{
+    return ((u64)WM_EV_WINDOW_CLOSED << 56) |
+           ((u64)((unsigned int)x & 0xFFFu) << 44) |
+           ((u64)((unsigned int)y & 0xFFFu) << 32) |
+           ((u64)((unsigned int)w & 0xFFFFu) << 16) |
+           ((u64)((unsigned int)h & 0xFFFFu));
+}
+
+/* ── Lifecycle helpers ──────────────────────────────────────────────────── */
+
+/*
+ * Unregister all windows owned by pid.  Called from task_exit/task_kill so
+ * windows always disappear when their process dies.  Posts WM_EV_WINDOW_CLOSED
+ * to PID 1's event FIFO with the dead window's rect.
+ */
+void wm_unregister_by_pid(u32 pid);
 
 #endif /* AETHER_WM_H */

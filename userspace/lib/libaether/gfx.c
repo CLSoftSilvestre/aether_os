@@ -83,3 +83,15 @@ void gfx_printf(unsigned x, unsigned y, unsigned fg, unsigned bg,
     va_end(ap);
     gfx_text(x, y, buf, fg, bg);
 }
+
+void gfx_draw_close_button(unsigned x, unsigned y, int hovered)
+{
+    unsigned color = hovered ? GFX_RGB(255, 110, 110) : C_RED;
+    /* 12×12 filled base */
+    gfx_fill(x, y, 12, 12, color);
+    /* Clip 2×2 corners over C_TITLEBAR to approximate a circle */
+    gfx_fill(x,      y,      2, 2, C_TITLEBAR);
+    gfx_fill(x + 10, y,      2, 2, C_TITLEBAR);
+    gfx_fill(x,      y + 10, 2, 2, C_TITLEBAR);
+    gfx_fill(x + 10, y + 10, 2, 2, C_TITLEBAR);
+}

@@ -2,7 +2,7 @@
 
 > **Last updated:** 2026-04-28  
 > **Current Phase:** Phase 5 — Advanced Systems  
-> **Overall Status:** Phase 3 complete ✓  Phase 4.0 complete ✓  Phase 4.1 complete ✓  Phase 4.2 complete ✓  Phase 4.3 complete ✓  Phase 4.4 complete ✓  Phase 4.5 complete ✓  Phase 4.6 complete ✓  Phase 5.1 in progress 🔧  Phase 5.2 in progress 🔧
+> **Overall Status:** Phase 3 complete ✓  Phase 4.0 complete ✓  Phase 4.1 complete ✓  Phase 4.2 complete ✓  Phase 4.3 complete ✓  Phase 4.4 complete ✓  Phase 4.5 complete ✓  Phase 4.6 complete ✓  Phase 4.7 complete ✓  Phase 5.1 in progress 🔧  Phase 5.2 in progress 🔧  Phase 5.3 planned 📋  Phase 5.4 planned 📋  Phase 5.5 planned 📋
 
 ---
 
@@ -841,6 +841,71 @@ window; title-bar drag repositions windows; visual focus border updates on focus
 
 ---
 
+---
+
+### Milestone 4.7 — Window Lifecycle & Close Button
+
+**Status:** Complete ✓ (2026-04-28)
+
+**Goal:** Clicking the red traffic-light button in any window's title bar kills that application
+and removes its window from the screen — completing the most fundamental window management
+interaction. Yellow (minimise) and Green (maximise) buttons are **deferred** to Phase 5.3
+(Widget Library) when the full desktop interaction model is in place.
+
+#### How close detection works
+
+`init`'s existing mouse-hit-test loop (Phase 4.6) already detects which title bar was clicked.
+Close button is the first 16×16 pixel circle in the title bar (typically at title_bar_x+8,
+title_bar_y+8). On left-click inside that circle, the WM sends a close event.
+
+**Close strategy — hard kill:** The WM calls `SYS_KILL(pid)` on the window owner immediately.
+The cooperative close path (app receives a `WM_EV_CLOSE` event and cleans up gracefully) is
+deferred — for an embedded OS at this stage, hard kill is safer and sufficient.
+
+When a process exits (whether via close button or natural exit):
+1. `task_exit()` calls `wm_unregister_by_pid(pid)` before marking ZOMBIE.
+2. `init`'s event loop receives `WM_EV_WINDOW_CLOSED` (new kernel event) and repaints the
+   desktop region that was covered by the dead window.
+3. Focus falls back to the next registered window (or desktop).
+
+#### New kernel syscall (Phase 4.7)
+
+| # | Name | Signature | Purpose |
+|---|------|-----------|---------|
+| 21 | `SYS_WM_CLOSE` | `(win_id) → 0 / -1` | WM forcefully kills window owner + triggers cleanup |
+
+`SYS_WM_CLOSE` is privileged — only the WM process (init, PID 1) can call it. Calls
+`task_kill(owner_pid)`, which triggers the chain above.
+
+#### Tasks
+
+- [x] **4.7.1** `kernel/core/wm.c` — `wm_unregister_by_pid(pid)`
+  - Called automatically from `task_exit()` so windows always disappear when their process dies
+  - `wm_unregister()` now posts `WM_EV_WINDOW_CLOSED` into init's event queue with the dead window's rect
+- [x] **4.7.2** `kernel/core/syscall.c` — dispatch `SYS_WM_CLOSE (23)` + `SYS_WM_EVENT_POLL (25)`
+  - Validates caller is PID 1; calls `task_kill(owner)` (which triggers `wm_unregister_by_pid`)
+  - Note: SYS_WM_CLOSE uses 23 (not 21 which is already SYS_PS)
+- [x] **4.7.3** `kernel/include/aether/syscall.h` + `userspace/lib/include/sys.h`
+  - `#define SYS_WM_CLOSE 23`, `#define SYS_WM_EVENT_POLL 25`
+  - `sys_wm_close(win_id)`, `sys_wm_event_poll()`, `wm_is_window_closed()`, `wm_decode_closed()` wrappers
+- [x] **4.7.4** `userspace/apps/init/main.c` — close button hit-test in WM loop
+  - `hit_close_button(wx, wy, mx, my)`: 12×12 at (wx+10, wy+8) matching actual gfx position
+  - Close button checked before drag start; calls `sys_wm_close(win_id)` on hit
+  - `on_window_closed()`: fills dead rect with C_DESKTOP, re-focuses next window, redraws borders
+  - `sys_wm_event_poll()` drain at top of main loop; version bumped to v0.0.7 / Phase 4.7
+- [x] **4.7.5** `userspace/lib/libaether/gfx.c` — `gfx_draw_close_button(x, y, hovered)`
+  - 12×12 filled circle approximation (rect + corner clipping over C_TITLEBAR); brighter red on hover
+  - `aether_term` and `files` updated to call it
+- [x] **4.7.6** Integration test
+  - Open `files` from `aether_term` → click red button on `files` → window erased, `files`
+    process gone from scheduler, desktop repaints correctly
+  - Kill `aether_term` itself → desktop clears its region; init still alive
+
+**Phase 4.7 Success Criteria:** Clicking the red button on any window kills the app and
+repaints the desktop; the dead process no longer appears in scheduler or window registry.
+
+---
+
 ## Phase 5 — Advanced Systems (Weeks 21–28)
 
 ### Milestone 5.1 — Networking Stack
@@ -953,6 +1018,350 @@ bash scripts/run_qemu.sh    # boots with disk attached automatically
 
 ---
 
+### Milestone 5.3 — Widget Library (libwidget)
+
+**Status:** Not started 📋
+
+**Goal:** A reusable UI toolkit that lets any AetherOS application build interactive windows
+with buttons, text inputs, labels, list views, and scroll bars — without each app reimplementing
+hit-testing and focus management from scratch. This is the foundation the App Editor (5.5)
+and future applications rely on.
+
+**Design principle:** Immediate-mode inspired but with a retained widget tree. Apps describe
+their UI once (setup phase), then call `widget_run()` which drives the event loop.
+The library reads key and mouse events from the WM and dispatches them through the tree.
+
+#### Widget tree architecture
+
+```
+widget_t (root panel)
+  ├── widget_t (button "Run")      — type=WIDGET_BUTTON
+  ├── widget_t (label "Status:")   — type=WIDGET_LABEL
+  ├── widget_t (text area)         — type=WIDGET_TEXTAREA
+  └── widget_t (list view)         — type=WIDGET_LISTVIEW
+        ├── list_item_t ...
+        └── list_item_t ...
+```
+
+Each `widget_t`:
+- `rect_t bounds` — position and size relative to parent
+- `widget_type_t type`
+- `widget_state_t state` — NORMAL / HOVERED / FOCUSED / PRESSED / DISABLED
+- `draw_fn` / `event_fn` function pointers
+- `void *userdata` — app payload
+
+#### Event model
+
+```
+sys_wm_key_recv() / sys_mouse_poll()
+        │
+  widget_dispatch_event(root, &ev)
+        │
+  hit_test → target widget → event_fn(widget, event)
+        │
+  widget marks dirty → widget_draw(dirty_subtree)
+```
+
+Mouse events route by spatial hit-test (deepest child wins). Keyboard events route to
+the widget that holds `focus` within the current window. Tab key cycles focus.
+
+#### New library: `userspace/lib/libwidget/`
+
+| File | Contents |
+|------|----------|
+| `widget.h` | `widget_t`, `widget_type_t`, `widget_event_t`, `rect_t` definitions |
+| `widget.c` | `widget_run()`, `widget_dispatch_event()`, `widget_draw()`, `widget_focus_next()` |
+| `button.c` | Draw + event for WIDGET_BUTTON (hover, press, release callbacks) |
+| `label.c` | Static text label with word-wrap option |
+| `textinput.c` | Single-line text field: cursor, selection, backspace, clipboard paste |
+| `textarea.c` | Multi-line editable text: line buffer, vertical scroll, caret |
+| `listview.c` | Scrollable item list: j/k and click selection, `on_select` callback |
+| `scrollbar.c` | Vertical/horizontal scrollbar for list and textarea |
+| `panel.c` | Container: draws background, clips children |
+| `checkbox.c` | Boolean toggle with visual tick |
+
+#### Keyboard interaction contract (Win32/macOS parity)
+
+| Key | Behaviour |
+|-----|-----------|
+| Tab | Move focus to next widget (wraps around) |
+| Shift+Tab | Move focus backward |
+| Enter | Activate focused button / confirm text input |
+| Escape | Cancel/dismiss modal, or unfocus text input |
+| Arrow keys | Navigate list view / scroll text area |
+| Ctrl+A | Select all in text input/area |
+| Ctrl+C / Ctrl+V | Copy / paste (via kernel clipboard buffer — new syscall) |
+
+#### New kernel syscalls (Phase 5.3)
+
+| # | Name | Signature | Purpose |
+|---|------|-----------|---------|
+| 22 | `SYS_CLIPBOARD_WRITE` | `(buf, len)` | Store text in kernel clipboard (up to 4KB) |
+| 23 | `SYS_CLIPBOARD_READ` | `(buf, max_len) → actual_len` | Read current clipboard text |
+
+#### Tasks
+
+- [ ] **5.3.1** `userspace/lib/libwidget/widget.h` — core types and API
+  - `widget_t`, `widget_event_t` (MOUSE_DOWN/UP/MOVE, KEY_DOWN/UP, FOCUS_IN/OUT, SCROLL)
+  - `widget_create / widget_add_child / widget_free`
+  - `widget_run(root_widget)` — main event loop (replaces app's manual loop)
+  - `widget_invalidate(w)` — mark widget subtree for redraw
+- [ ] **5.3.2** `widget.c` — dispatch and draw engine
+  - `widget_dispatch_event()`: hit-test for mouse; focus-chain for keyboard
+  - `widget_draw_all()`: recursive pre-order draw, skips non-dirty subtrees
+  - `widget_focus_next() / widget_focus_prev()`
+- [ ] **5.3.3** `button.c` — WIDGET_BUTTON
+  - Three visual states: normal (filled rect), hovered (lighter), pressed (darker + offset)
+  - `on_click` callback; Enter key also activates when focused
+- [ ] **5.3.4** `label.c` — WIDGET_LABEL
+  - Wraps text with word-break; `align` (LEFT/CENTER/RIGHT)
+- [ ] **5.3.5** `textinput.c` — WIDGET_TEXTINPUT (single line)
+  - Caret blink (every 30 ticks); left/right arrows; Home/End; Backspace/Delete
+  - `on_change(text)` callback; `on_submit` on Enter
+- [ ] **5.3.6** `textarea.c` — WIDGET_TEXTAREA (multi-line, used by App Editor)
+  - Dynamic line buffer (up to 4096 lines of 256 chars each)
+  - Vertical scroll: arrow keys, Page Up/Down, mouse wheel (delta from mouse event)
+  - Horizontal scroll when line exceeds widget width
+  - `get_text(buf, max)` / `set_text(buf)` for App Editor integration
+- [ ] **5.3.7** `listview.c` — WIDGET_LISTVIEW
+  - `listview_add_item(w, label, userdata)`, `listview_clear(w)`
+  - Keyboard j/k and mouse click selection; `on_select(index, userdata)` callback
+  - Scrollbar auto-shown when items exceed height
+- [ ] **5.3.8** `scrollbar.c`, `panel.c`, `checkbox.c` — remaining primitive widgets
+- [ ] **5.3.9** `kernel/core/syscall.c` — `SYS_CLIPBOARD_WRITE (22)`, `SYS_CLIPBOARD_READ (23)`
+  - 4KB static kernel clipboard buffer; protected by a spinlock
+- [ ] **5.3.10** Demo app `userspace/apps/widget_demo/main.c`
+  - Window with a label, text input, button (echoes input into label), list view, checkbox
+  - Validates the full event dispatch + draw cycle before App Editor builds on top
+
+**Phase 5.3 Success Criteria:** widget_demo app launches from aether_term; button click works;
+text input accepts keyboard; list view navigates with keyboard and mouse; Tab cycles focus.
+
+---
+
+### Milestone 5.4 — Desktop Icons & App Launcher
+
+**Status:** Not started 📋
+
+**Goal:** The Lumina desktop background shows clickable application icons. Double-clicking an
+icon launches the corresponding application — like the traditional desktop metaphor on Windows
+and macOS. This turns the desktop from a passive wallpaper into a real app launcher.
+
+**Dependency:** Phase 5.2 (filesystem) must be complete so icon metadata can be stored on
+the FAT32 disk. Initrd-only bootstrap is available as a fallback for development.
+
+#### App manifest format
+
+Each launchable application is described by a simple text manifest stored on the FAT32 disk
+under `/apps/<name>.app`:
+
+```
+name=AetherTerm
+icon=icon_term
+exec=/bin/aether_term
+description=Terminal emulator
+```
+
+`icon=icon_term` refers to a built-in icon drawn with primitives (no bitmap loading needed
+initially). A later iteration can add 48×48 raw XRGB bitmap files.
+
+#### Desktop icon layout
+
+Icons are arranged in a grid anchored to the top-left of the desktop area
+(below the top bar, excluding the sidebar). Each cell is 80×80 px:
+- 48×48 icon graphic centered in the upper portion
+- App name label (centered, 2 lines max) below the graphic
+- Selection highlight: semi-transparent `C_ACCENT` overlay on single-click
+- Launch: double-click within 500ms (≈ 50 ticks at 100 Hz)
+
+#### Double-click detection
+
+```c
+typedef struct { uint32_t last_click_tick; uint8_t count; } click_tracker_t;
+// In init mouse handler:
+uint32_t now = sys_get_ticks();
+if (now - tracker.last_click_tick < 50) tracker.count++;
+else tracker.count = 1;
+tracker.last_click_tick = now;
+if (tracker.count == 2) launch_app(icon);
+```
+
+#### New kernel syscalls (Phase 5.4)
+
+None required — `sys_spawn()` and `SYS_FS_OPEN/READ` are already available.
+
+New userspace helper: `app_manifest_load(path, manifest_t*)` in libaether.
+
+#### Tasks
+
+- [ ] **5.4.1** `userspace/lib/libaether/manifest.c` + `manifest.h`
+  - `manifest_load(path, m)` — reads `/apps/*.app` via `sys_fs_open/read`
+  - Key=value parser (no dynamic alloc; fixed field structs)
+  - `manifest_scan_dir(cb)` — iterates `/apps/` directory via `sys_fs_readdir`, calls callback per manifest
+- [ ] **5.4.2** `userspace/lib/libaether/gfx.c` — icon drawing primitives
+  - `gfx_icon_term(x, y)`, `gfx_icon_files(x, y)`, `gfx_icon_editor(x, y)` — built-in vector icons
+  - `gfx_icon_generic(x, y, label)` — fallback for unknown app icons
+  - 48×48 canvas for each; uses `gfx_fill`, `gfx_rect`, `gfx_char` primitives
+- [ ] **5.4.3** `userspace/apps/init/main.c` — desktop icon subsystem
+  - `desktop_icon_t` array (max 16 icons): `rect`, `manifest`, `selected`, `click_tracker`
+  - `desktop_icons_load()` — scans `/apps/` at startup; falls back to hardcoded initrd list
+  - `desktop_icons_draw()` — renders full icon grid on desktop background repaint
+  - `desktop_icons_hit_test(mx, my)` — returns icon index or -1
+  - Mouse handler: single-click → select + highlight; double-click → `sys_spawn(exec)`;
+    click elsewhere → deselect all
+- [ ] **5.4.4** Desktop repaint on window close (from Phase 4.7)
+  - When a window closes, `init` repaints only the affected desktop rect, which includes
+    re-rendering any icons that were underneath the closed window
+- [ ] **5.4.5** `scripts/make_disk.sh` — add `/apps/` directory with `.app` manifests
+  - `aether_term.app`, `files.app`, `aether_editor.app` (editor added in Phase 5.5)
+- [ ] **5.4.6** Integration test
+  - Desktop shows 3 icons on boot; single-click highlights; double-click launches app;
+    two launched apps share the desktop with the icon grid still visible beneath them
+
+**Phase 5.4 Success Criteria:** Desktop displays application icons; double-click launches the
+correct ELF; keyboard focus goes to the newly opened window automatically.
+
+---
+
+### Milestone 5.5 — AetherScript App Development Environment
+
+**Status:** Not started 📋
+
+**Goal:** A self-hosted development environment running directly inside AetherOS. The user
+can write, save, and run scripts without leaving the OS — similar to early home computer
+BASIC environments (Commodore 64, BBC Micro) but with a modern editor UI.
+
+**Language choice — AetherScript (Lua-dialect):** Lua is the canonical choice for embedded
+interpreters: 280KB VM, clean C API, no OS dependencies, widely understood. The Lua 5.4 VM
+is ported to AetherOS by replacing its `luaconf.h` I/O hooks with syscall wrappers.
+A custom tiny interpreter ("AetherLang") is the fallback if the Lua port proves too costly.
+
+**Why interpreted vs compiled:** An interpreter requires no cross-compiler inside the OS.
+The user types code → presses Run → sees output immediately. A compiled path would require
+hosting an AArch64 C compiler (enormous), so interpreted is the correct first choice.
+A compile path (e.g., hosting a Lua → C transpiler + a tiny C backend) can come much later.
+
+#### System architecture
+
+```
+AetherEditor (libwidget app)
+  ├── Textarea widget  ← script source
+  ├── Button "Run"     → write script to /tmp/script.as via SYS_FS_WRITE_TMP
+  │                       spawn aether_interp process
+  ├── Button "Save"    → write to /scripts/<name>.as on FAT32
+  ├── Button "Open"    → file picker list view → load from FAT32
+  └── Output panel     ← stdout of interpreter process (via pipe)
+         │
+         └── aether_interp (separate ELF)
+               reads /tmp/script.as → runs Lua VM → print → pipe → editor output panel
+```
+
+#### Prerequisite: writable filesystem & process arguments
+
+Phase 5.2 added read-only FAT32. Two additions needed:
+
+1. **FAT32 write support** — `fat32_write_file()` for creating/updating files.
+   Only cluster allocation and directory entry write are needed (no journaling).
+2. **Process arguments** — `sys_spawn_args(path, argv[], argc)` passes a null-terminated
+   string array to the new process. Kernel copies argv strings into the child's user stack
+   before `launch_el0`. Child's `crt0.S` receives argc/argv in x0/x1 (Linux AArch64 ABI).
+
+#### AetherScript (Lua 5.4 port) — porting plan
+
+| Lua subsystem | AetherOS equivalent |
+|---------------|---------------------|
+| `malloc/free` | `kmalloc` / kernel heap |
+| `fopen/fread/fwrite` | `sys_fs_open/read/close` wrappers in a shim header |
+| `printf / stdout` | libaether `printf` → framebuffer/UART |
+| `time()` | `sys_get_ticks() / 100` (seconds) |
+| `stdin` | Disabled in interpreter mode (script only) |
+| `os.execute()` | Maps to `sys_spawn()` — allows scripts to launch apps |
+| `io.write()` | Routes to stdout pipe → editor output panel |
+
+Compile with `aarch64-none-elf-gcc -nostdlib` using the ported Lua sources.
+Link as a static ELF in initrd alongside aether_term and files.
+
+#### AetherEditor window layout (libwidget)
+
+```
+┌─────────────────────────────────────────────────────┐
+│  ●  AetherEditor — script.as          [Open][Save]  │
+├─────────────────────────────────────────────────────┤
+│  1  -- Hello from AetherScript                      │
+│  2  print("AetherOS " .. os.version)                │
+│  3  for i = 1, 10 do                                │
+│  4    print(i)                                      │
+│  5  end                                             │
+│                              [textarea / libwidget] │
+├─────────────────────────────────────────────────────┤
+│  [Run ▶]   [Clear output]                           │
+├─────────────────────────────────────────────────────┤
+│  > AetherOS 0.5.5                                   │
+│  > 1 2 3 4 5 6 7 8 9 10                             │
+│                              [output panel]         │
+└─────────────────────────────────────────────────────┘
+```
+
+#### New kernel syscalls (Phase 5.5)
+
+| # | Name | Signature | Purpose |
+|---|------|-----------|---------|
+| 804 | `SYS_FS_WRITE` | `(fd, buf, len) → written` | Write bytes to an open VFS file (FAT32 write) |
+| 805 | `SYS_FS_CREATE` | `(path_ptr) → fd` | Create or truncate a file on FAT32 |
+| 1 (ext) | `SYS_SPAWN_ARGS` | `(path, argv_ptr, argc) → pid` | Spawn with argument array |
+
+`SYS_SPAWN_ARGS` extends `SYS_SPAWN (1)` — kernel copies up to 16 argv strings (each ≤ 256
+bytes) onto the child's initial stack before `launch_el0`. `crt0.S` picks them up in x0/x1.
+
+#### Tasks
+
+**5.5.1 — FAT32 write support**
+- [ ] **5.5.1** `kernel/fs/fat32.c` — `fat32_write_file(path, buf, len)`
+  - Allocate cluster chain for new file; write data sectors; update directory entry
+  - `fat32_create_file(path)` — create empty file and directory entry
+  - Flush: `virtio_blk_write_sectors()` for each dirty cluster and FAT sector
+  - `vfs_write` + `vfs_create` in `vfs.c`; syscalls `SYS_FS_WRITE (804)` + `SYS_FS_CREATE (805)`
+
+**5.5.2 — Process arguments (argc/argv)**
+- [ ] **5.5.2** `kernel/core/process.c` — `process_spawn_child_args(path, argv, argc)`
+  - After ELF load, copy argv strings onto user stack (below stack pointer)
+  - Push argv pointer array, then set x0=argc, x1=argv_ptr before eret
+- [ ] **5.5.3** `userspace/lib/crt0.S` — accept x0/x1 as argc/argv, pass to `main(argc, argv)`
+- [ ] **5.5.4** `kernel/core/syscall.c` + `sys.h` — `SYS_SPAWN_ARGS (1 extended)` / `sys_spawn_args()`
+
+**5.5.3 — Lua 5.4 port (`aether_interp`)**
+- [ ] **5.5.5** Download Lua 5.4 source; add to `userspace/vendor/lua54/`
+- [ ] **5.5.6** `userspace/vendor/lua54/luaconf_aether.h` — platform shim
+  - Replace `FILE*` I/O with syscall wrappers; disable dynamic library loading; cap memory at 2MB
+- [ ] **5.5.7** `userspace/apps/aether_interp/main.c`
+  - `main(argc, argv)`: opens `argv[1]` via `sys_fs_open`, reads into buffer, calls `luaL_dostring`
+  - Stdout hook: `lua_print` → `sys_write(1, ...)` → stdout pipe → editor output panel
+  - `os.version` global set to AetherOS version string
+  - `os.spawn(path)` binding → `sys_spawn(path)` for scripts that launch other apps
+- [ ] **5.5.8** CMakeLists: build `aether_interp` ELF; add to initrd CPIO
+
+**5.5.4 — AetherEditor app**
+- [ ] **5.5.9** `userspace/apps/aether_editor/main.c` — libwidget-based editor
+  - `widget_run()` loop with textarea (editor), output panel (label / scrolling text), toolbar buttons
+  - "Run": writes textarea content to `/tmp/script.as` via `SYS_FS_CREATE + SYS_FS_WRITE`,
+    creates a pipe pair, spawns `aether_interp /tmp/script.as` with stdout → pipe write end,
+    reads pipe read end into output panel asynchronously
+  - "Save": prompts for filename (text input dialog), writes to `/scripts/<name>.as`
+  - "Open": shows file picker list view over `/scripts/` directory
+  - Line numbers column (30px) drawn beside textarea; monospace font
+- [ ] **5.5.10** CMakeLists + initrd + `/apps/aether_editor.app` manifest
+
+**5.5.5 — Integration test**
+- [ ] **5.5.11** Boot → double-click AetherEditor icon → editor opens
+- [ ] **5.5.12** Type `print("hello world")` → Run → "hello world" appears in output panel
+- [ ] **5.5.13** Save → `/scripts/hello.as` on FAT32 → reboot → Open → script loads
+- [ ] **5.5.14** Script calls `os.spawn("/bin/files")` → Files app opens in a new window
+
+**Phase 5.5 Success Criteria:** User writes a Lua script in AetherEditor, clicks Run, and sees
+output — entirely within AetherOS with no external tools. Saved scripts survive a reboot.
+
+---
+
 ## Phase 6 — Hardware Acceleration & Optimization (Weeks 29–36)
 
 ### Milestone 6.1 — GPU Integration
@@ -999,6 +1408,10 @@ bash scripts/run_qemu.sh    # boots with disk attached automatically
 | 2026-04-17 | PMM/VMM/scheduler deferred to Phase 2 | Exception infra was the real 1.2 blocker; memory mgmt is its own milestone |
 | 2026-04-17 | Software compositor first, GPU-accelerated in Phase 6 | Ship working desktop before GPU complexity |
 | 2026-04-17 | Pi 5 is primary target (BCM2712, not BCM2711) | User owns Pi 5; RP1 bridge changes all peripheral MMIO addresses |
+| 2026-04-28 | Hard-kill close button (Phase 4.7) rather than cooperative close | Cooperative close requires app-side event handling and message loops not yet in place; hard kill is safe at this stage |
+| 2026-04-28 | Lua 5.4 as AetherScript interpreter (Phase 5.5) | ~280KB VM, no OS dependencies, clean C embedding API, well-known syntax; far smaller than hosting a C compiler |
+| 2026-04-28 | Widget library as retained tree + immediate-mode dispatch (Phase 5.3) | Retains enough state for keyboard focus and animation without full OOP class hierarchy; avoids the complexity of a full MVC framework |
+| 2026-04-28 | FAT32 write support before custom AetherFS (Phase 5.5) | Scripts need a writable FS; FAT32 write is incremental; AetherFS (CoW B-tree) is a Phase 5.2 stretch goal |
 
 ---
 
@@ -1063,4 +1476,8 @@ Toolchain → Boot → UART → MMU → Exceptions → PMM → Scheduler
 | 2026-04-21 | Phase 4.6 complete: kernel/core/wm.c (registry + per-PID key FIFOs + WM_EV_REDRAW), syscalls 12–20, aether_term/files dynamic position + sys_wm_key_recv, init WM loop (hit-test, focus borders, ghost drag) |
 | 2026-04-28 | Phase 5.1 started: VirtIO net PCI driver, Ethernet+ARP, IPv4+ICMP, UDP, TCP, DHCP, DNS, socket API, 8 net syscalls (700–707), userspace sys.h wrappers, aether_term net/ping/nslookup/wget commands |
 | 2026-04-28 | Phase 5.2 started: virtio_blk PCI driver, FAT32 read-only parser (LFN+short names), VFS layer (/ + /initrd), 4 FS syscalls (800–803), userspace wrappers, aether_term ls/cat/mount/disk, make_disk.sh, run_qemu.sh auto-attach |
+| 2026-04-28 | Phase 4.7 added: window lifecycle — red button hard-kills window owner, wm_unregister_by_pid in task_exit, desktop repaint on close, SYS_WM_CLOSE (21) |
+| 2026-04-28 | Phase 5.3 added: libwidget retained-tree UI toolkit — button, label, textinput, textarea, listview, scrollbar, panel, checkbox; Tab/Shift+Tab focus cycling; clipboard syscalls 22–23 |
+| 2026-04-28 | Phase 5.4 added: desktop icons and app launcher — /apps/*.app manifests on FAT32, 48×48 icon grid, double-click to spawn, gfx_icon primitives |
+| 2026-04-28 | Phase 5.5 added: AetherScript/Lua 5.4 interpreter (aether_interp ELF), AetherEditor libwidget app (textarea+output panel+toolbar), FAT32 write support (SYS_FS_WRITE 804 / SYS_FS_CREATE 805), process argv (SYS_SPAWN_ARGS) |
 
