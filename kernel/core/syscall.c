@@ -562,10 +562,24 @@ static long do_sys_wm_close(long win_id)
 }
 
 /* SYS_WM_EVENT_POLL — non-blocking dequeue from the calling process's WM ring.
- * Used by init to drain WM_EV_WINDOW_CLOSED notifications. */
+ * Also drains the hardware keyboard buffer so that widget apps that never call
+ * the blocking SYS_WM_KEY_RECV still get key events routed to the focused PID. */
 static long do_sys_wm_event_poll(void)
 {
+    while (!kbd_event_empty())
+        wm_deliver_key(kbd_get_event());
+    if (kbd_event_empty() && !uart_rx_empty())
+        wm_deliver_key(uart_to_key_event());
     return (long)wm_key_dequeue(task_current_pid());
+}
+
+/* SYS_WM_PUSH_EVENT — inject a packed event into any PID's WM ring.
+ * Used by init to forward mouse events to the focused/hit window so that
+ * widget apps receive mouse input via their sys_wm_event_poll() loop. */
+static long do_sys_wm_push_event(u64 pid, u64 event)
+{
+    wm_deliver_to_pid((u32)pid, event);
+    return 0;
 }
 
 /* ── Clipboard (Phase 5.3) ───────────────────────────────────────────────── */
@@ -706,6 +720,8 @@ long syscall_dispatch(trap_frame_t *frame)
         return do_sys_wm_close((long)arg0);
     case SYS_WM_EVENT_POLL:
         return do_sys_wm_event_poll();
+    case SYS_WM_PUSH_EVENT:
+        return do_sys_wm_push_event(arg0, arg1);
 
     /* Clipboard (Phase 5.3) */
     case SYS_CLIPBOARD_WRITE: return do_sys_clipboard_write(arg0, arg1);

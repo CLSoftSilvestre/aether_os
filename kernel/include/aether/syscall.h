@@ -61,6 +61,9 @@
 #define SYS_WM_CLOSE       23  /* (win_id) → 0/-1; PID-1-only hard-kill      */
 #define SYS_WM_EVENT_POLL  25  /* () → packed WM event or 0 — non-blocking   */
 
+/* Window Manager (Phase 5.3) */
+#define SYS_WM_PUSH_EVENT  28  /* (pid, event_u64) → 0; injects into PID's ring */
+
 /* Clipboard (Phase 5.3) */
 #define SYS_CLIPBOARD_WRITE 26 /* (buf_ptr, len) → 0; stores up to 4KB       */
 #define SYS_CLIPBOARD_READ  27 /* (buf_ptr, max_len) → actual bytes copied    */

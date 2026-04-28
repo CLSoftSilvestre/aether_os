@@ -300,6 +300,16 @@ void widget_run(widget_t *root, widget_ctx_t *ctx)
                 continue;
             }
 
+            /* Mouse events forwarded by init via SYS_WM_PUSH_EVENT */
+            if (wm_event_is_mouse(raw)) {
+                mouse_event_t mev = wm_event_mouse_unpack(raw);
+                dispatch_mouse(root, cx, cy,
+                               (int)mev.x, (int)mev.y,
+                               mev.buttons, g_last_mouse_buttons);
+                g_last_mouse_buttons = mev.buttons;
+                continue;
+            }
+
             key_event_t kev = key_event_unpack(raw);
             if (!kev.is_press) continue;
 
@@ -309,17 +319,6 @@ void widget_run(widget_t *root, widget_ctx_t *ctx)
             ev.keycode   = kev.keycode;
             ev.modifiers = kev.modifiers;
             dispatch_key(root, &ev);
-        }
-
-        /* ── Poll mouse ────────────────────────────────────────────────── */
-        unsigned long long mraw = sys_mouse_poll();
-        if (mraw) {
-            had_event = 1;
-            mouse_event_t mev = mouse_event_unpack(mraw);
-            dispatch_mouse(root, cx, cy,
-                           (int)mev.x, (int)mev.y,
-                           mev.buttons, g_last_mouse_buttons);
-            g_last_mouse_buttons = mev.buttons;
         }
 
         /* ── Periodic tick (blink, etc.) ───────────────────────────────── */

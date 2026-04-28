@@ -55,6 +55,9 @@
 #define SYS_WM_CLOSE       23
 #define SYS_WM_EVENT_POLL  25
 
+/* Window Manager syscalls (Phase 5.3) */
+#define SYS_WM_PUSH_EVENT  28
+
 /* WM event types (match kernel wm.h) */
 #define WM_EV_REDRAW         0xFEu
 #define WM_EV_WINDOW_CLOSED  0xFFu
@@ -345,6 +348,13 @@ static inline long sys_wm_close(long win_id)
 static inline unsigned long long sys_wm_event_poll(void)
 {
     return (unsigned long long)_sys0(SYS_WM_EVENT_POLL);
+}
+
+/* Inject a packed WM event into any process's event ring (Phase 5.3).
+ * Called by init to forward mouse events to the window under the cursor. */
+static inline void sys_wm_push_event(long pid, unsigned long long event)
+{
+    _sys2(SYS_WM_PUSH_EVENT, pid, (long)event);
 }
 
 /* ── WM event helpers (Phase 4.7) ──────────────────────────────────────── */

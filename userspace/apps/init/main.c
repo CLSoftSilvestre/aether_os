@@ -373,6 +373,21 @@ int main(void)
                 g_drag_active = 0;
                 g_drag_win_id = -1;
             }
+
+            /* ── Forward mouse event to the window under the cursor ────── */
+            /* Widget apps receive mouse events via sys_wm_event_poll(),    */
+            /* not sys_mouse_poll(), because init owns the global ring.     */
+            if (!g_drag_active) {
+                long fw_id  = hit_test(mx, my);
+                if (fw_id >= 0) {
+                    long fw_pid = sys_wm_get_pid(fw_id);
+                    if (fw_pid > 1)
+                        sys_wm_push_event(fw_pid,
+                                          wm_pack_mouse((unsigned)mx,
+                                                        (unsigned)my,
+                                                        ev.buttons));
+                }
+            }
         }
 
         sys_sleep(1);

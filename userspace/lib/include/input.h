@@ -68,9 +68,45 @@ typedef struct {
  */
 #define WM_EV_REDRAW  0xFEu
 
+/*
+ * WM_EV_MOUSE — mouse event forwarded by init to the window under the cursor
+ * via SYS_WM_PUSH_EVENT (Phase 5.3).  Received via sys_wm_event_poll().
+ *
+ * Packing (wm_pack_mouse):
+ *   [63:56] = WM_EV_MOUSE (0xFD)
+ *   [55:48] = buttons  (bit0=left, bit1=middle, bit2=right)
+ *   [47:32] = y        (16-bit screen coordinate)
+ *   [31:16] = x        (16-bit screen coordinate)
+ *   [15: 0] = reserved (0)
+ */
+#define WM_EV_MOUSE  0xFDu
+
 static inline int wm_event_is_redraw(unsigned long long v)
 {
     return ((unsigned int)(v >> 32)) == WM_EV_REDRAW;
+}
+
+static inline int wm_event_is_mouse(unsigned long long v)
+{
+    return (int)((v >> 56) == WM_EV_MOUSE);
+}
+
+static inline unsigned long long wm_pack_mouse(unsigned int x, unsigned int y,
+                                                unsigned int buttons)
+{
+    return ((unsigned long long)WM_EV_MOUSE       << 56) |
+           ((unsigned long long)(buttons & 0x7u)  << 48) |
+           ((unsigned long long)(y & 0xFFFFu)     << 32) |
+           ((unsigned long long)(x & 0xFFFFu)     << 16);
+}
+
+static inline mouse_event_t wm_event_mouse_unpack(unsigned long long v)
+{
+    mouse_event_t e;
+    e.x       = (unsigned int)((v >> 16) & 0xFFFFu);
+    e.y       = (unsigned int)((v >> 32) & 0xFFFFu);
+    e.buttons = (unsigned int)((v >> 48) & 0x7u);
+    return e;
 }
 
 static inline int wm_event_redraw_x(unsigned long long v)
