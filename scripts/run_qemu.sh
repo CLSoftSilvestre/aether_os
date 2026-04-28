@@ -12,6 +12,9 @@
 #                                        QEMU monitor socket: /tmp/aether-qemu-monitor.sock
 #   ./scripts/run_qemu.sh --headless   — UART only, no graphical window
 #                                        Stop: Ctrl-A X in the terminal
+#   ./scripts/run_qemu.sh --direct     — Native QEMU Cocoa window (no VNC)
+#                                        Keyboard and mouse work via virtio devices
+#                                        Stop: QEMU menu or Ctrl-A X
 #   ./scripts/run_qemu.sh --debug      — VNC + GDB stub on port 1234
 #
 # NOTE: QEMU 11.0.0 on macOS Sequoia (15) does NOT route keyboard/mouse
@@ -37,10 +40,12 @@ fi
 
 # Parse flags
 HEADLESS=0
+DIRECT=0
 DEBUG=0
 for arg in "$@"; do
     case "$arg" in
         --headless) HEADLESS=1 ;;
+        --direct)   DIRECT=1   ;;
         --debug)    DEBUG=1    ;;
     esac
 done
@@ -50,6 +55,10 @@ echo "[QEMU] Kernel: ${KERNEL_IMG}"
 echo "[QEMU] QEMU version: $(qemu-system-aarch64 --version | head -1)"
 if [ "$HEADLESS" = "1" ]; then
     echo "[QEMU] Mode: headless (UART only)"
+    echo "[QEMU] Press Ctrl-A X to exit QEMU"
+elif [ "$DIRECT" = "1" ]; then
+    echo "[QEMU] Mode: direct Cocoa window (keyboard and mouse active)"
+    echo "[QEMU] Press Ctrl-A X or close the QEMU window to exit"
 else
     echo "[QEMU] Mode: VNC display"
     echo "[QEMU] ┌─────────────────────────────────────────────────────────────┐"
@@ -63,9 +72,6 @@ else
     echo "[QEMU] └─────────────────────────────────────────────────────────────┘"
     echo "[QEMU] Stop: Ctrl-C in this terminal (Ctrl-A X is not available in VNC mode)"
     echo "[QEMU] Monitor: socat - /tmp/aether-qemu-monitor.sock"
-fi
-if [ "$HEADLESS" = "1" ]; then
-    echo "[QEMU] Press Ctrl-A X to exit QEMU"
 fi
 echo ""
 
@@ -102,6 +108,17 @@ if [ "$HEADLESS" = "1" ]; then
     QEMU_ARGS+=(
         -serial mon:stdio
         -nographic
+    )
+elif [ "$DIRECT" = "1" ]; then
+    # Direct Cocoa window: opens a native QEMU window without VNC.
+    # Keyboard and mouse route correctly to virtio-keyboard-pci / virtio-tablet-pci.
+    QEMU_ARGS+=(
+        -serial mon:stdio
+        -device ramfb
+        -vga none
+        -display cocoa
+        -device virtio-tablet-pci
+        -device virtio-keyboard-pci
     )
 else
     # VNC display: routes keyboard/mouse through QEMU's input mux correctly.
