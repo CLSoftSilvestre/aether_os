@@ -235,6 +235,12 @@ static long do_sys_getpid(void)
     return (long)task_current_pid();
 }
 
+static long do_sys_ps(ps_entry_t *entries, long max)
+{
+    if (!entries || max <= 0) return -1;
+    return (long)task_ps(entries, (int)max);
+}
+
 /* ── IPC syscalls (Phase 4.3) ────────────────────────────────────────────── */
 
 static long do_sys_pipe(int *fds)
@@ -574,6 +580,9 @@ long syscall_dispatch(trap_frame_t *frame)
 
     case SYS_GETPID:
         return do_sys_getpid();
+
+    case SYS_PS:
+        return do_sys_ps((ps_entry_t *)arg0, (long)arg1);
 
     case SYS_PIPE:
         return do_sys_pipe((int *)arg0);

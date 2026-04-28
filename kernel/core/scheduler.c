@@ -85,8 +85,10 @@ void scheduler_add_idle(void)
     task_t *idle = &g_tasks[0];
     idle->pid   = 0;
     idle->state = TASK_RUNNING;
-    idle->name  = "idle";
     idle->stack_phys = 0;   /* uses boot stack — not PMM-managed */
+    { const char *s = "idle"; int i = 0;
+      while (i < PROC_NAME_MAX - 1 && s[i]) { idle->name[i] = s[i]; i++; }
+      idle->name[i] = '\0'; }
     /* ctx is zeroed; it will be filled on the first call to task_yield() */
 
     g_num_tasks   = 1;
@@ -124,8 +126,10 @@ static task_t *alloc_task(void (*entry_fn)(void), const char *name)
     t->exit_code        = 0;
     t->wait_pid         = 0;
     t->wake_tick        = 0;
-    t->name             = name;
     t->stack_phys       = stack_phys;
+    { int i = 0;
+      if (name) while (i < PROC_NAME_MAX - 1 && name[i]) { t->name[i] = name[i]; i++; }
+      t->name[i] = '\0'; }
     t->el0_entry        = 0;
     t->el0_sp           = 0;
     t->l1_table_phys    = 0;
@@ -365,17 +369,36 @@ int task_waitpid_nb(u32 pid, int *status)
  * Frees the child's resources and marks it ZOMBIE so the parent can reap.
  * Only the child's parent (or PID 1) may call this.
  */
+int task_ps(ps_entry_t *entries, int max_entries)
+{
+    int n = 0;
+    for (u32 i = 0; i < g_num_tasks && n < max_entries; i++) {
+        task_t *t = &g_tasks[i];
+        if (t->state == TASK_UNUSED || t->state == TASK_DEAD) continue;
+        entries[n].pid   = t->pid;
+        entries[n].ppid  = t->ppid;
+        entries[n].state = t->state;
+        int j = 0;
+        while (j < PROC_NAME_MAX - 1 && t->name[j]) { entries[n].name[j] = t->name[j]; j++; }
+        entries[n].name[j] = '\0';
+        n++;
+    }
+    return n;
+}
+
 int task_kill(u32 pid, int exit_code)
 {
     task_t *cur = current_task();
+
+    if (pid == 0)        return -1;   /* idle task — not killable */
+    if (pid == cur->pid) return -1;   /* cannot kill yourself */
 
     task_t *t = NULL;
     for (u32 i = 0; i < g_num_tasks; i++) {
         if (g_tasks[i].pid == pid) { t = &g_tasks[i]; break; }
     }
     if (!t) return -1;
-    if (t->ppid != cur->pid && cur->pid != 1) return -1;
-    if (t->state == TASK_ZOMBIE || t->state == TASK_DEAD) return 0;
+    if (t->state == TASK_ZOMBIE || t->state == TASK_DEAD || t->state == TASK_UNUSED) return 0;
 
     kinfo("Scheduler: task_kill pid=%lu by pid=%lu\n",
           (unsigned long)pid, (unsigned long)cur->pid);
@@ -413,8 +436,7 @@ u32 task_current_pid(void)
 
 const char *task_current_name(void)
 {
-    const char *n = g_tasks[g_current_idx].name;
-    return n ? n : "?";
+    return g_tasks[g_current_idx].name;
 }
 
 fd_entry_t *task_get_fd(u32 fd)

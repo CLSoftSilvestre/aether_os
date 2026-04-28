@@ -25,6 +25,7 @@
 #define SYS_MOUSE_READ   9
 #define SYS_MOUSE_POLL  10
 #define SYS_WAITPID_NB  11
+#define SYS_PS          21
 #define SYS_PIPE        22
 #define SYS_DUP2        24
 #define SYS_READ         63
@@ -144,10 +145,25 @@ static inline long sys_waitpid_nb(long pid, int *status)
     return _sys2(SYS_WAITPID_NB, pid, (long)(void *)status);
 }
 
-/* Kill a child process by PID (parent permission required); returns 0 or -1 */
+/* Kill a process by PID; returns 0 or -1 */
 static inline long sys_kill(long pid)
 {
     return _sys1(SYS_KILL, pid);
+}
+
+/* Process snapshot entry (mirrors ps_entry_t in kernel scheduler.h) */
+#define PROC_NAME_MAX 16
+typedef struct {
+    unsigned int pid;
+    unsigned int ppid;
+    int          state;
+    char         name[PROC_NAME_MAX];
+} ps_entry_t;
+
+/* Fill entries[] with live processes; returns count or -1 */
+static inline long sys_ps(ps_entry_t *entries, int max)
+{
+    return _sys2(SYS_PS, (long)(void *)entries, (long)max);
 }
 
 static inline long sys_getpid(void)

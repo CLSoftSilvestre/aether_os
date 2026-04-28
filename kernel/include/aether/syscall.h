@@ -38,6 +38,7 @@
 #define SYS_GETPID       5    /* sys_getpid() → current PID                  */
 #define SYS_SLEEP_TICKS  6    /* sys_sleep(ticks) — sleep N 100Hz ticks      */
 #define SYS_WAITPID_NB  11    /* sys_waitpid_nb(pid, *status) → pid/0/-1     */
+#define SYS_PS          21    /* sys_ps(entries, max) → count of entries      */
 
 /* Input syscalls (Phase 4.5) */
 #define SYS_KEY_READ     7    /* () → packed key_event_t — blocks until ready */

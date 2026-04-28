@@ -284,16 +284,17 @@ static int term_readline(char *buf, int max)
             for (int i = pos - 1; i < n - 1; i++) buf[i] = buf[i + 1];
             n--; pos--;
             buf[n] = '\0';
+            t_col--;  /* move to the deleted character's screen position */
             for (int i = pos; i < n; i++) {
                 t_buf[t_row][t_col] = buf[i];
                 gfx_char(TX + t_col * FONT_W, TY + t_row * FONT_H,
                          buf[i], C_TEXT, C_TERM_BG);
                 t_col++;
             }
+            t_buf[t_row][t_col] = ' ';
             gfx_char(TX + t_col * FONT_W, TY + t_row * FONT_H,
                      ' ', C_TEXT, C_TERM_BG);
-            t_buf[t_row][t_col] = ' ';
-            t_col = t_col - (n - pos);
+            t_col -= (n - pos);
             term_draw_cursor();
             continue;
         }
@@ -366,6 +367,8 @@ static void cmd_help(void)
     term_puts("  clear             clear terminal\n");
     term_puts("  uname             print OS information\n");
     term_puts("  pid               print current process ID\n");
+    term_puts("  ps                list all running processes\n");
+    term_puts("  kill <pid>        terminate a process by PID\n");
     term_puts("  files             launch graphical file browser\n");
     term_puts("  view              launch text viewer\n");
     term_puts("  spawn <path>      launch an ELF from initrd (wait)\n");
@@ -501,6 +504,37 @@ static void cmd_uname(void)
 static void cmd_pid(void)
 {
     term_printf("PID: %ld\n", sys_getpid());
+}
+
+static void cmd_ps(void)
+{
+    ps_entry_t procs[32];
+    long n = sys_ps(procs, 32);
+    if (n < 0) { term_puts("ps: failed\n"); return; }
+    static const char *state_names[] = {
+        "unused", "ready", "running", "sleeping", "dead", "zombie", "waiting",
+    };
+    term_puts("  PID  PPID  STATE     NAME\n");
+    for (long i = 0; i < n; i++) {
+        int s = procs[i].state;
+        if (s < 0 || s > 6) s = 0;
+        term_printf("  %3u  %4u  %s  %s\n",
+                    procs[i].pid, procs[i].ppid,
+                    state_names[s], procs[i].name);
+    }
+}
+
+static void cmd_kill(const char *pid_str)
+{
+    if (!pid_str || pid_str[0] == '\0') { term_puts("usage: kill <pid>\n"); return; }
+    long pid = 0;
+    for (int i = 0; pid_str[i] >= '0' && pid_str[i] <= '9'; i++)
+        pid = pid * 10 + (pid_str[i] - '0');
+    if (pid <= 0) { term_puts("kill: invalid PID\n"); return; }
+    if (sys_kill(pid) < 0)
+        term_printf("kill: PID %ld: failed\n", pid);
+    else
+        term_printf("kill: PID %ld signalled\n", pid);
 }
 
 /*
@@ -755,6 +789,8 @@ int main(void)
         else if (strcmp(cmd, "clear")    == 0) cmd_clear();
         else if (strcmp(cmd, "uname")    == 0) cmd_uname();
         else if (strcmp(cmd, "pid")      == 0) cmd_pid();
+        else if (strcmp(cmd, "ps")       == 0) cmd_ps();
+        else if (strcmp(cmd, "kill")     == 0) cmd_kill(argc > 1 ? argv[1] : NULL);
         else if (strcmp(cmd, "files")    == 0) cmd_files();
         else if (strcmp(cmd, "view")     == 0) cmd_view();
         else if (strcmp(cmd, "spawn")    == 0) cmd_spawn(argc > 1 ? argv[1] : NULL, background);

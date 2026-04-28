@@ -25,6 +25,19 @@
 
 #include "aether/types.h"
 
+/* ── Process snapshot (used by SYS_PS) ──────────────────────────────── */
+#define PROC_NAME_MAX 16
+
+typedef struct {
+    unsigned int pid;
+    unsigned int ppid;
+    int          state;
+    char         name[PROC_NAME_MAX];
+} ps_entry_t;
+
+/* Fill entries[] with live (non-unused, non-dead) tasks; returns count. */
+int task_ps(ps_entry_t *entries, int max_entries);
+
 /* ── Task states ─────────────────────────────────────────────────────── */
 #define TASK_UNUSED   0
 #define TASK_READY    1    /* runnable, waiting for CPU */
@@ -84,8 +97,8 @@ typedef struct {
     int           exit_code;        /* valid when TASK_ZOMBIE */
     u32           wait_pid;         /* PID being waited on (TASK_WAITING) */
     u64           wake_tick;        /* tick when TASK_SLEEPING wakes */
-    const char   *name;
-    uintptr_t     stack_phys;       /* physical address of kernel stack */
+    char          name[PROC_NAME_MAX]; /* copied at creation — always kernel memory */
+    uintptr_t     stack_phys;          /* physical address of kernel stack */
     /* User-process fields (0 for kernel tasks) */
     uintptr_t     el0_entry;        /* EL0 entry point virtual address */
     uintptr_t     el0_sp;           /* EL0 initial stack pointer */
