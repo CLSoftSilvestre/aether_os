@@ -138,6 +138,9 @@ void kernel_main(void)
         kpanic("kernel_main: failed to spawn /init\n");
 
     /* ── 10. Enable IRQs and enter idle loop ────────────────────────── */
+    /* Seed the tick counter with the real elapsed boot time so that
+     * userspace uptime counts from QEMU launch, not from this moment. */
+    timer_seed_from_cntpct();
     kinfo("Enabling IRQs — entering idle loop\n");
     kinfo("────────────────────────────────────────────\n");
     __asm__ volatile("msr daifclr, #2" ::: "memory");

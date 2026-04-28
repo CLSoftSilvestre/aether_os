@@ -152,9 +152,13 @@ int pci_scan_virtio_net(pci_dev_t *r)
     for (u8 d = 0; d < 32u; d++) {
         u16 vendor = pci_read16(0, d, 0, PCI_VENDOR_ID);
         if (vendor == 0xFFFFu) continue;
+        if (vendor != VIRTIO_VENDOR) continue;
+
         u16 device = pci_read16(0, d, 0, PCI_DEVICE_ID);
-        if (vendor != VIRTIO_VENDOR || device != VIRTIO_DEV_NET)
-            continue;
+        int is_modern = (device == VIRTIO_DEV_NET);
+        int is_trans  = (device == VIRTIO_DEV_NET_TRANS &&
+                         pci_read16(0, d, 0, PCI_SUBSYS_ID) == VIRTIO_SUBSYS_NET);
+        if (!is_modern && !is_trans) continue;
 
         r->bus = 0; r->dev = d; r->fn = 0;
 
@@ -168,7 +172,9 @@ int pci_scan_virtio_net(pci_dev_t *r)
         pci_write16(0, d, 0, PCI_COMMAND,
                     (u16)(cmd | PCI_CMD_MEM | PCI_CMD_MASTER));
 
-        kinfo("PCI: VirtIO net at 00:%x.0\n", (unsigned)d);
+        kinfo("PCI: VirtIO net at 00:%02x.0 (devid=0x%04x %s)\n",
+              (unsigned)d, (unsigned)device,
+              is_modern ? "modern" : "transitional");
         return 1;
     }
     return 0;

@@ -37,5 +37,6 @@ void timer_init(void);
 void timer_irq_handler(void);    /* call from el1_irq_handler when IRQ==30 */
 u64  timer_get_ticks(void);      /* number of timer interrupts since boot */
 u64  timer_get_freq(void);       /* counter frequency in Hz */
+void timer_seed_from_cntpct(void); /* pre-seed ticks with real boot time */
 
 #endif /* ARM_TIMER_H */

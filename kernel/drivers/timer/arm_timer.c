@@ -129,3 +129,19 @@ u64 timer_get_freq(void)
 {
     return read_cntfrq();
 }
+
+/*
+ * timer_seed_from_cntpct — called once, just before enabling IRQs.
+ * Seeds g_ticks with the number of 100 Hz ticks elapsed since the
+ * physical counter started (i.e. since QEMU launched), so that the
+ * uptime visible to userspace counts from power-on, not from the
+ * moment IRQs were enabled (which is after all boot work finishes).
+ */
+void timer_seed_from_cntpct(void)
+{
+    u64 freq = read_cntfrq();
+    if (!freq) freq = 62500000ULL;
+    u64 cntpct;
+    __asm__ volatile("mrs %0, CNTPCT_EL0" : "=r"(cntpct));
+    g_ticks = cntpct * (u64)TIMER_HZ / freq;
+}

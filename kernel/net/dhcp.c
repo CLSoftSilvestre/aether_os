@@ -159,9 +159,9 @@ static void dhcp_rx_handler(u32 src_ip, u16 src_port,
         g_dhcp_got_offer   = 1;
     } else if (msg_type == DHCP_ACK && offered_ip) {
         g_dhcp_offered_ip  = offered_ip;
-        g_dhcp_subnet_mask = sub_mask;
-        g_dhcp_gateway     = gateway;
-        g_dhcp_dns         = dns_server;
+        if (sub_mask)    g_dhcp_subnet_mask = sub_mask;
+        if (gateway)     g_dhcp_gateway     = gateway;
+        if (dns_server)  g_dhcp_dns         = dns_server;
         g_dhcp_got_ack     = 1;
     }
 }

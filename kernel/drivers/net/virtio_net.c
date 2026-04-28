@@ -239,6 +239,10 @@ int virtio_net_init(void)
     g_nc_base = pdev.bar[nc_bar] + nc_off;
     g_dc      = pdev.bar[dc_bar] + dc_off;
 
+    kdebug("virtio-net: cc=0x%lx nc=0x%lx nc_mul=%lu dc=0x%lx\n",
+           (unsigned long)g_cc, (unsigned long)g_nc_base,
+           (unsigned long)g_nc_mul, (unsigned long)g_dc);
+
     /* Reset */
     vcfg_w8(g_cc, VCC_DEV_STATUS, 0u);
     DSB(); ISB();
@@ -284,6 +288,11 @@ int virtio_net_init(void)
         g_rx_avail->idx++;
     }
 
+    /* DSB ensures all descriptor/avail ring writes (Normal memory) are
+     * visible to QEMU before the QUEUE_ENABLE MMIO write (Device memory).
+     * Without DSB, ARM allows the Device write to be observed first, so
+     * QEMU would enable the queue before seeing any RX descriptors. */
+    DSB();
     vcfg_w16(g_cc, VCC_QUEUE_SEL, 0u);
     vcfg_w16(g_cc, VCC_QUEUE_ENABLE, 1u);
 
@@ -293,16 +302,17 @@ int virtio_net_init(void)
     g_tx_avail->idx   = 0u;
     g_tx_last_used    = 0u;
 
+    DSB();
     vcfg_w16(g_cc, VCC_QUEUE_SEL, 1u);
     vcfg_w16(g_cc, VCC_QUEUE_ENABLE, 1u);
 
     /* DRIVER_OK */
-    DMB();
+    DSB();
     vcfg_w8(g_cc, VCC_DEV_STATUS,
             VS_ACKNOWLEDGE | VS_DRIVER | VS_FEATURES_OK | VS_DRIVER_OK);
-    DMB();
+    DSB();
 
-    /* Initial RX kick */
+    /* Initial RX kick — DSB above ensures DRIVER_OK write is visible first */
     kick_queue(0u);
 
     g_net_initialized = 1;
@@ -340,13 +350,17 @@ int virtio_net_tx(const u8 *frame, u16 len)
     kick_queue(1u);
 
     /* Busy-wait for TX completion (synchronous path) */
-    u64 timeout = 100000000ULL;
+    u64 timeout = 10000000ULL;
     while (g_tx_used->idx == g_tx_last_used && timeout--) {
         __asm__ volatile("nop");
         DMB();
     }
-    if (g_tx_used->idx != g_tx_last_used)
+    if (g_tx_used->idx != g_tx_last_used) {
         g_tx_last_used = g_tx_used->idx;
+    } else {
+        kdebug("virtio-net: TX timeout (used=%u avail=%u)\n",
+             (unsigned)g_tx_used->idx, (unsigned)g_tx_avail->idx);
+    }
 
     return 0;
 }
@@ -367,6 +381,7 @@ void virtio_net_rx_poll(void)
         if (used_len > VNET_HDR_SZ) {
             u8  *buf       = rx_buf[desc_id];
             u16  frame_len = (u16)(used_len - VNET_HDR_SZ);
+            kdebug("virtio-net: RX frame len=%u\n", (unsigned)frame_len);
             /* Deliver Ethernet frame (skip virtio_net_hdr) */
             net_deliver_frame(buf + VNET_HDR_SZ, frame_len);
         }

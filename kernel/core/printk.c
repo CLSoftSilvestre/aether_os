@@ -56,12 +56,10 @@ static void print_hex(u64 value, int uppercase, int min_digits)
     int  i = 16;
     buf[i] = '\0';
 
+    if (min_digits < 1) min_digits = 1;
+
     if (value == 0) {
-        /* pad with zeros to min_digits */
-        while (min_digits-- > 0)
-            pk_putc('0');
-        if (min_digits < 0)
-            pk_putc('0');
+        for (int j = 0; j < min_digits; j++) pk_putc('0');
         return;
     }
 
@@ -70,9 +68,7 @@ static void print_hex(u64 value, int uppercase, int min_digits)
         value >>= 4;
         min_digits--;
     }
-    /* pad with leading zeros if needed */
-    while (min_digits-- > 0)
-        pk_putc('0');
+    while (min_digits > 0) { pk_putc('0'); min_digits--; }
 
     pk_puts(&buf[i]);
 }
@@ -119,6 +115,11 @@ static void vprintk(const char *fmt, va_list args)
 
         fmt++;   /* skip '%' */
 
+        /* Parse optional zero-flag and width (e.g. %02x, %04x) */
+        int width = 0;
+        if (*fmt == '0') fmt++;          /* consume leading zero */
+        while (*fmt >= '1' && *fmt <= '9') { width = width * 10 + (*fmt++ - '0'); }
+
         /* Check for 'l' length modifier */
         int is_long = 0;
         if (*fmt == 'l') {
@@ -154,16 +155,16 @@ static void vprintk(const char *fmt, va_list args)
 
         case 'x':
             if (is_long)
-                print_hex((u64)va_arg(args, unsigned long), 0, 1);
+                print_hex((u64)va_arg(args, unsigned long), 0, width ? width : 1);
             else
-                print_hex((u64)va_arg(args, unsigned int), 0, 1);
+                print_hex((u64)va_arg(args, unsigned int), 0, width ? width : 1);
             break;
 
         case 'X':
             if (is_long)
-                print_hex((u64)va_arg(args, unsigned long), 1, 1);
+                print_hex((u64)va_arg(args, unsigned long), 1, width ? width : 1);
             else
-                print_hex((u64)va_arg(args, unsigned int), 1, 1);
+                print_hex((u64)va_arg(args, unsigned int), 1, width ? width : 1);
             break;
 
         case 'p': {

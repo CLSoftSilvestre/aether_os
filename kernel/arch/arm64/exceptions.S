@@ -225,8 +225,24 @@ _el1_serror:
 /* ── Lower EL (AArch64) — user-space exceptions ── */
 _el0_sync:
     EXCEPTION_ENTRY
+    /*
+     * Re-enable IRQs during syscall handling so the timer fires and
+     * task_sleep() / cooperative scheduling work correctly.
+     *
+     * Why we must re-mask before EXCEPTION_EXIT:
+     * EXCEPTION_EXIT writes SPSR_EL1 (EL0 mode) then ELR_EL1, then eret.
+     * If an IRQ fires between the msr SPSR_EL1 and eret, the hardware
+     * overwrites SPSR_EL1 with EL1 mode for the nested exception. When
+     * the nested IRQ returns it restores EL1 mode, and the original eret
+     * then jumps to the user PC while staying at EL1 — instant permission
+     * fault. Masking IRQs here closes that window.
+     * eret atomically restores PSTATE from SPSR (which has DAIF.I=0 from
+     * user space), so IRQs are re-enabled as we return to EL0.
+     */
+    msr  daifclr, #2            /* unmask IRQs for the C handler */
     mov  x0, sp
-    bl   el0_sync_handler      /* Phase 3: SVC #0 = syscall dispatch */
+    bl   el0_sync_handler
+    msr  daifset, #2            /* re-mask before EXCEPTION_EXIT modifies SPSR/ELR */
     EXCEPTION_EXIT
 
 _el0_irq:

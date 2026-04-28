@@ -224,9 +224,9 @@ int virtio_blk_init(void)
     u32 cap_hi    = vcfg_r32(g_dc, 4u);
     g_num_sectors = ((u64)cap_hi << 32) | (u64)cap_lo;
 
-    kinfo("virtio-blk: %llu sectors (%llu MB)\n",
-          (unsigned long long)g_num_sectors,
-          (unsigned long long)(g_num_sectors / 2048));
+    kinfo("virtio-blk: %lu sectors (%lu MB)\n",
+          (unsigned long)g_num_sectors,
+          (unsigned long)(g_num_sectors / 2048));
 
     /* Set up request queue (index 0) */
     g_desc  = (virtq_desc_t  *)q_mem;
@@ -324,16 +324,16 @@ static int submit_request(u32 type, u64 lba, u32 num_sectors, u8 *data_buf)
     }
 
     if (g_used->idx == g_last_used) {
-        kwarn("virtio-blk: request timeout (lba=%llu type=%u)\n",
-              (unsigned long long)lba, (unsigned)type);
+        kwarn("virtio-blk: request timeout (lba=%lu type=%u)\n",
+              (unsigned long)lba, (unsigned)type);
         return -1;
     }
 
     g_last_used = g_used->idx;
 
     if (g_req_status != VIRTIO_BLK_S_OK) {
-        kwarn("virtio-blk: device error status=%u lba=%llu\n",
-              (unsigned)g_req_status, (unsigned long long)lba);
+        kwarn("virtio-blk: device error status=%u lba=%lu\n",
+              (unsigned)g_req_status, (unsigned long)lba);
         return -1;
     }
 

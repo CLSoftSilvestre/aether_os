@@ -98,7 +98,10 @@ int ip_tx(u32 dst_ip, u8 proto, const u8 *payload, u16 payload_len)
 
     /* Resolve destination MAC */
     u8 dst_mac[6];
-    if (!arp_resolve(dst_ip, dst_mac)) {
+    if (dst_ip == 0xFFFFFFFFu) {
+        /* Limited broadcast: use Ethernet broadcast directly, no ARP */
+        for (int i = 0; i < 6; i++) dst_mac[i] = 0xFFu;
+    } else if (!arp_resolve(dst_ip, dst_mac)) {
         char s[16]; net_ip_str(dst_ip, s);
         kwarn("ip_tx: ARP failed for %s\n", s);
         return -1;
@@ -205,8 +208,10 @@ void ip_rx(const u8 *pkt, u16 len)
     if ((hdr->ver_ihl >> 4) != 4u) return;
 
     u32 dst_ip = ip_from_bytes(hdr->dst);
-    /* Accept unicast for us or broadcast */
-    if (dst_ip != g_our_ip && dst_ip != 0xFFFFFFFFu &&
+    /* Before we have an IP (DHCP phase), accept everything.
+     * After DHCP: accept unicast for us or any broadcast. */
+    if (g_our_ip != 0 &&
+        dst_ip != g_our_ip && dst_ip != 0xFFFFFFFFu &&
         (dst_ip & ~g_subnet_mask) != ~g_subnet_mask)
         return;
 
