@@ -445,6 +445,23 @@ static inline long sys_net_close(long fd)
     return _sys1(SYS_NET_CLOSE, fd);
 }
 
+/* ── Clipboard syscalls (Phase 5.3) ──────────────────────────────── */
+
+#define SYS_CLIPBOARD_WRITE 26
+#define SYS_CLIPBOARD_READ  27
+
+/* Write up to 4KB of text into the kernel clipboard; returns 0 or -1 */
+static inline long sys_clipboard_write(const char *buf, long len)
+{
+    return _sys2(SYS_CLIPBOARD_WRITE, (long)(const void *)buf, len);
+}
+
+/* Read clipboard into buf (max_len includes NUL); returns bytes copied or -1 */
+static inline long sys_clipboard_read(char *buf, long max_len)
+{
+    return _sys2(SYS_CLIPBOARD_READ, (long)(void *)buf, max_len);
+}
+
 /* ── Filesystem syscalls (Phase 5.2) ─────────────────────────────── */
 
 #define SYS_FS_OPEN      800

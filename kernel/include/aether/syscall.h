@@ -61,6 +61,10 @@
 #define SYS_WM_CLOSE       23  /* (win_id) → 0/-1; PID-1-only hard-kill      */
 #define SYS_WM_EVENT_POLL  25  /* () → packed WM event or 0 — non-blocking   */
 
+/* Clipboard (Phase 5.3) */
+#define SYS_CLIPBOARD_WRITE 26 /* (buf_ptr, len) → 0; stores up to 4KB       */
+#define SYS_CLIPBOARD_READ  27 /* (buf_ptr, max_len) → actual bytes copied    */
+
 /* IPC (Phase 4.3) */
 #define SYS_PIPE        22    /* sys_pipe(fds[2]) → 0 or -1                  */
 #define SYS_DUP2        24    /* sys_dup2(oldfd, newfd) → newfd or -1        */

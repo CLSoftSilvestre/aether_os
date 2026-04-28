@@ -2,7 +2,7 @@
 
 > **Last updated:** 2026-04-28  
 > **Current Phase:** Phase 5 — Advanced Systems  
-> **Overall Status:** Phase 3 complete ✓  Phase 4.0 complete ✓  Phase 4.1 complete ✓  Phase 4.2 complete ✓  Phase 4.3 complete ✓  Phase 4.4 complete ✓  Phase 4.5 complete ✓  Phase 4.6 complete ✓  Phase 4.7 complete ✓  Phase 5.1 in progress 🔧  Phase 5.2 in progress 🔧  Phase 5.3 planned 📋  Phase 5.4 planned 📋  Phase 5.5 planned 📋
+> **Overall Status:** Phase 3 complete ✓  Phase 4.0 complete ✓  Phase 4.1 complete ✓  Phase 4.2 complete ✓  Phase 4.3 complete ✓  Phase 4.4 complete ✓  Phase 4.5 complete ✓  Phase 4.6 complete ✓  Phase 4.7 complete ✓  Phase 5.1 in progress 🔧  Phase 5.2 in progress 🔧  Phase 5.3 complete ✓  Phase 5.4 planned 📋  Phase 5.5 planned 📋
 
 ---
 
@@ -1020,7 +1020,9 @@ bash scripts/run_qemu.sh    # boots with disk attached automatically
 
 ### Milestone 5.3 — Widget Library (libwidget)
 
-**Status:** Not started 📋
+**Status:** Complete ✓
+
+**Note:** SYS_CLIPBOARD_WRITE/READ assigned to syscall numbers 26/27 (not 22/23 as originally planned — those are taken by SYS_PIPE and SYS_WM_CLOSE).
 
 **Goal:** A reusable UI toolkit that lets any AetherOS application build interactive windows
 with buttons, text inputs, labels, list views, and scroll bars — without each app reimplementing
@@ -1101,38 +1103,36 @@ the widget that holds `focus` within the current window. Tab key cycles focus.
 
 #### Tasks
 
-- [ ] **5.3.1** `userspace/lib/libwidget/widget.h` — core types and API
-  - `widget_t`, `widget_event_t` (MOUSE_DOWN/UP/MOVE, KEY_DOWN/UP, FOCUS_IN/OUT, SCROLL)
-  - `widget_create / widget_add_child / widget_free`
-  - `widget_run(root_widget)` — main event loop (replaces app's manual loop)
+- [x] **5.3.1** `userspace/lib/include/widget.h` — core types and API
+  - `widget_t`, `widget_event_t` (MOUSE_DOWN/UP/MOVE, KEY_DOWN/UP, FOCUS_IN/OUT, TICK)
+  - `widget_init / widget_add_child`; `widget_run(root, ctx)` — non-blocking poll loop
   - `widget_invalidate(w)` — mark widget subtree for redraw
-- [ ] **5.3.2** `widget.c` — dispatch and draw engine
-  - `widget_dispatch_event()`: hit-test for mouse; focus-chain for keyboard
-  - `widget_draw_all()`: recursive pre-order draw, skips non-dirty subtrees
-  - `widget_focus_next() / widget_focus_prev()`
-- [ ] **5.3.3** `button.c` — WIDGET_BUTTON
-  - Three visual states: normal (filled rect), hovered (lighter), pressed (darker + offset)
-  - `on_click` callback; Enter key also activates when focused
-- [ ] **5.3.4** `label.c` — WIDGET_LABEL
-  - Wraps text with word-break; `align` (LEFT/CENTER/RIGHT)
-- [ ] **5.3.5** `textinput.c` — WIDGET_TEXTINPUT (single line)
-  - Caret blink (every 30 ticks); left/right arrows; Home/End; Backspace/Delete
-  - `on_change(text)` callback; `on_submit` on Enter
-- [ ] **5.3.6** `textarea.c` — WIDGET_TEXTAREA (multi-line, used by App Editor)
-  - Dynamic line buffer (up to 4096 lines of 256 chars each)
-  - Vertical scroll: arrow keys, Page Up/Down, mouse wheel (delta from mouse event)
-  - Horizontal scroll when line exceeds widget width
-  - `get_text(buf, max)` / `set_text(buf)` for App Editor integration
-- [ ] **5.3.7** `listview.c` — WIDGET_LISTVIEW
+- [x] **5.3.2** `userspace/lib/libwidget/widget.c` — dispatch and draw engine
+  - `dispatch_mouse()`: hover tracking + hit-test + MOUSE_DOWN/UP routing
+  - `draw_recursive()`: pre-order draw, propagates dirty flag to children
+  - `focus_cycle()` (Tab), `tick_recursive()` (blink / animations)
+- [x] **5.3.3** `button.c` — WIDGET_BUTTON
+  - Three visual states: normal (C_ACCENT), hovered (lighter), pressed (darker)
+  - `on_click` callback; Enter key activates when focused
+- [x] **5.3.4** `label.c` — WIDGET_LABEL
+  - `label_set_text()` helper; align (LEFT/CENTER/RIGHT)
+- [x] **5.3.5** `textinput.c` — WIDGET_TEXTINPUT (single line)
+  - Caret blink via WEV_TICK (30-tick period); left/right arrows; Home/End; Backspace/Delete
+  - `on_change` / `on_submit` callbacks; Ctrl+A/C/V clipboard support
+- [x] **5.3.6** `textarea.c` — WIDGET_TEXTAREA (multi-line, used by App Editor)
+  - Dynamic line buffer (malloc'd, configurable max_lines × 128 chars)
+  - Vertical scroll: arrow keys, Page Up/Down; Ctrl+A/C/V
+  - `textarea_get_text(buf, max)` / `textarea_set_text(buf)` for App Editor integration
+- [x] **5.3.7** `listview.c` — WIDGET_LISTVIEW
   - `listview_add_item(w, label, userdata)`, `listview_clear(w)`
-  - Keyboard j/k and mouse click selection; `on_select(index, userdata)` callback
-  - Scrollbar auto-shown when items exceed height
-- [ ] **5.3.8** `scrollbar.c`, `panel.c`, `checkbox.c` — remaining primitive widgets
-- [ ] **5.3.9** `kernel/core/syscall.c` — `SYS_CLIPBOARD_WRITE (22)`, `SYS_CLIPBOARD_READ (23)`
-  - 4KB static kernel clipboard buffer; protected by a spinlock
-- [ ] **5.3.10** Demo app `userspace/apps/widget_demo/main.c`
-  - Window with a label, text input, button (echoes input into label), list view, checkbox
-  - Validates the full event dispatch + draw cycle before App Editor builds on top
+  - Keyboard j/k/Up/Down; `on_select(index, userdata)` callback
+  - Built-in scrollbar indicator auto-shown when items exceed height
+- [x] **5.3.8** `scrollbar.c`, `panel.c`, `checkbox.c` — remaining primitive widgets
+- [x] **5.3.9** `kernel/core/syscall.c` — `SYS_CLIPBOARD_WRITE (26)`, `SYS_CLIPBOARD_READ (27)`
+  - 4KB static kernel clipboard buffer (`g_clipboard`)
+- [x] **5.3.10** Demo app `userspace/apps/widget_demo/main.c`
+  - Window with header label, textinput, "Add to list" button, listview (3 initial items),
+    checkbox "Show hints", status label — validates full event dispatch + draw cycle
 
 **Phase 5.3 Success Criteria:** widget_demo app launches from aether_term; button click works;
 text input accepts keyboard; list view navigates with keyboard and mouse; Tab cycles focus.

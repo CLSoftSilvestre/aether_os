@@ -568,6 +568,36 @@ static long do_sys_wm_event_poll(void)
     return (long)wm_key_dequeue(task_current_pid());
 }
 
+/* ── Clipboard (Phase 5.3) ───────────────────────────────────────────────── */
+
+#define CLIPBOARD_SIZE 4096
+
+static char g_clipboard[CLIPBOARD_SIZE];
+static u32  g_clipboard_len;
+
+static long do_sys_clipboard_write(long buf_ptr, long len)
+{
+    const char *src = (const char *)buf_ptr;
+    if (!src || len <= 0) return -1;
+    u32 n = (u32)len;
+    if (n >= CLIPBOARD_SIZE) n = CLIPBOARD_SIZE - 1;
+    for (u32 i = 0; i < n; i++) g_clipboard[i] = src[i];
+    g_clipboard[n] = '\0';
+    g_clipboard_len = n;
+    return 0;
+}
+
+static long do_sys_clipboard_read(long buf_ptr, long max_len)
+{
+    char *dst = (char *)buf_ptr;
+    if (!dst || max_len <= 0) return -1;
+    u32 n = g_clipboard_len;
+    if ((u32)max_len - 1 < n) n = (u32)max_len - 1;
+    for (u32 i = 0; i < n; i++) dst[i] = g_clipboard[i];
+    dst[n] = '\0';
+    return (long)n;
+}
+
 /* ── Dispatcher ─────────────────────────────────────────────────────────── */
 
 /*
@@ -676,6 +706,10 @@ long syscall_dispatch(trap_frame_t *frame)
         return do_sys_wm_close((long)arg0);
     case SYS_WM_EVENT_POLL:
         return do_sys_wm_event_poll();
+
+    /* Clipboard (Phase 5.3) */
+    case SYS_CLIPBOARD_WRITE: return do_sys_clipboard_write(arg0, arg1);
+    case SYS_CLIPBOARD_READ:  return do_sys_clipboard_read(arg0, arg1);
 
     /* Filesystem (Phase 5.2) */
     case SYS_FS_OPEN:    return (long)vfs_open   ((const char *)arg0);

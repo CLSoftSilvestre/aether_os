@@ -28,6 +28,25 @@ target_include_directories(libaether PUBLIC
 
 target_compile_options(libaether PRIVATE ${USER_COMPILE_FLAGS})
 
+# ── libwidget — retained widget toolkit (Phase 5.3) ──────────────────────────
+add_library(libwidget STATIC
+    lib/libwidget/widget.c
+    lib/libwidget/panel.c
+    lib/libwidget/button.c
+    lib/libwidget/label.c
+    lib/libwidget/textinput.c
+    lib/libwidget/textarea.c
+    lib/libwidget/listview.c
+    lib/libwidget/scrollbar.c
+    lib/libwidget/checkbox.c
+)
+
+target_include_directories(libwidget PUBLIC
+    lib/include
+)
+
+target_compile_options(libwidget PRIVATE ${USER_COMPILE_FLAGS})
+
 # ── init / aesh — first user-space process (PID 1) ───────────────────────────
 add_executable(user_init
     apps/init/main.c
@@ -119,6 +138,22 @@ set_target_properties(user_textviewer PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
 )
 
+# ── widget_demo — Phase 5.3 widget toolkit demo ───────────────────────────────
+add_executable(user_widget_demo
+    apps/widget_demo/main.c
+    lib/crt0.S
+)
+target_include_directories(user_widget_demo PRIVATE lib/include)
+target_compile_options(user_widget_demo PRIVATE ${USER_COMPILE_FLAGS})
+target_link_libraries(user_widget_demo PRIVATE libwidget libaether)
+target_link_options(user_widget_demo PRIVATE
+    -T ${USER_LINKER_SCRIPT} -nostdlib -static -Wl,--build-id=none
+)
+set_target_properties(user_widget_demo PROPERTIES
+    OUTPUT_NAME "widget_demo" SUFFIX ""
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
+)
+
 # ── initrd CPIO archive ───────────────────────────────────────────────────────
 #
 # Step 1 — package all files from initrd_staging/ into a CPIO newc archive.
@@ -147,6 +182,7 @@ add_custom_command(
                 ${INITRD_STAGING}
                 ${INITRD_CPIO}
     DEPENDS user_init user_aether_term user_statusbar user_files user_textviewer
+            user_widget_demo
             ${INITRD_STAGING}/motd.txt
     COMMENT "Packaging initrd.cpio"
 )
