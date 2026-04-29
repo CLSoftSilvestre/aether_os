@@ -138,6 +138,22 @@ set_target_properties(user_textviewer PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
 )
 
+# ── calculator — basic four-function calculator ───────────────────────────────
+add_executable(user_calculator
+    apps/calculator/main.c
+    lib/crt0.S
+)
+target_include_directories(user_calculator PRIVATE lib/include)
+target_compile_options(user_calculator PRIVATE ${USER_COMPILE_FLAGS})
+target_link_libraries(user_calculator PRIVATE libwidget libaether)
+target_link_options(user_calculator PRIVATE
+    -T ${USER_LINKER_SCRIPT} -nostdlib -static -Wl,--build-id=none
+)
+set_target_properties(user_calculator PROPERTIES
+    OUTPUT_NAME "calculator" SUFFIX ""
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
+)
+
 # ── widget_demo — Phase 5.3 widget toolkit demo ───────────────────────────────
 add_executable(user_widget_demo
     apps/widget_demo/main.c
@@ -182,7 +198,7 @@ add_custom_command(
                 ${INITRD_STAGING}
                 ${INITRD_CPIO}
     DEPENDS user_init user_aether_term user_statusbar user_files user_textviewer
-            user_widget_demo
+            user_calculator user_widget_demo
             ${INITRD_STAGING}/motd.txt
     COMMENT "Packaging initrd.cpio"
 )
