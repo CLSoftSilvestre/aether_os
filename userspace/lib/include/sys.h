@@ -505,6 +505,23 @@ static inline long sys_fs_readdir(const char *path, char *buf, long len)
     return _sys3(SYS_FS_READDIR, (long)(const void *)path, (long)buf, len);
 }
 
+/* ── AetherFS write syscalls (Phase 5.5) ────────────────────────── */
+
+#define SYS_FS_WRITE  804
+#define SYS_FS_CREATE 805
+
+/* Create (or truncate) a file by path; returns vfd (>=200) or -1 */
+static inline long sys_fs_create(const char *path)
+{
+    return _sys1(SYS_FS_CREATE, (long)(const void *)path);
+}
+
+/* Write len bytes from buf to vfd; returns bytes written or -1 */
+static inline long sys_fs_write(long vfd, const void *buf, long len)
+{
+    return _sys3(SYS_FS_WRITE, vfd, (long)buf, len);
+}
+
 /* ── String helpers (no libc) ────────────────────────────────────── */
 
 static inline long sys_puts(const char *s)

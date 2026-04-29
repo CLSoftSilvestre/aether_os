@@ -6,9 +6,10 @@
 /*
  * Simple bump allocator backed by a static heap.
  * free() is a no-op — memory is never reclaimed.
- * 64KB is more than enough for the aesh shell.
+ * 256KB covers the text editor's textarea line buffer (1024 × 128 B = 128 KB)
+ * plus future widget-heavy apps (Lua IDE, etc.).
  */
-#define HEAP_SIZE  (64 * 1024)
+#define HEAP_SIZE  (256 * 1024)
 
 static unsigned char _heap[HEAP_SIZE];
 static size_t        _heap_pos;

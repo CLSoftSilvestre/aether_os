@@ -1,7 +1,7 @@
 # AetherOS
 AetherOS is an experimental hobby operating system built from scratch, specifically designed for the Raspberry Pi 5 (AArch64) architecture. It emphasizes a modern development workflow using QEMU for emulation and testing.
 
-![Alttext](./screenshots/Aetheros.png)
+![Alttext](./screenshots/new_apps.png)
 
 ## Table of Contents
 [Why AetherOS](#why-aetheros)

@@ -122,14 +122,14 @@ set_target_properties(user_files PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
 )
 
-# ── textviewer — Phase 4.4 text file pager ───────────────────────────────────
+# ── textviewer — Phase 5.4 text editor ───────────────────────────────────────
 add_executable(user_textviewer
     apps/textviewer/main.c
     lib/crt0.S
 )
 target_include_directories(user_textviewer PRIVATE lib/include)
 target_compile_options(user_textviewer PRIVATE ${USER_COMPILE_FLAGS})
-target_link_libraries(user_textviewer PRIVATE libaether)
+target_link_libraries(user_textviewer PRIVATE libwidget libaether)
 target_link_options(user_textviewer PRIVATE
     -T ${USER_LINKER_SCRIPT} -nostdlib -static -Wl,--build-id=none
 )
