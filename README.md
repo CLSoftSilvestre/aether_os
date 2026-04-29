@@ -11,6 +11,7 @@ AetherOS is an experimental hobby operating system built from scratch, specifica
 [Getting Started](#getting-started)
 [Building the Project](#building-the-project)
 [Running AetherOS](#running-aetheros)
+[Core Applications](#core-applications)
 [Contributing](#contributing)
 [License](#license)
 
@@ -95,6 +96,36 @@ You can run the project using the provided helper script:
 ```
 
 *(Ensure that your environment is properly set up to support QEMU and the generated kernel image.)*
+
+## Core applications
+
+### Aether Terminal
+A graphical terminal for interaction with AetherOS
+![Alttext](./screenshots/terminal.png)
+
+### Files browser
+File browser to view the files in the FS. For now just the content of the initrd, however the app will be updated to be able to visualize the content of FAT32 and AetherFS mounts.
+![Alttext](./screenshots/files.png)
+
+### Text Editor
+Application with basic text editor capabilities. Will be updated in the future to support LUA scripting and be the basic IDE for developing applications inside AetherOS.
+![Alttext](./screenshots/text_editor.png)
+
+### Calculator
+Self-explanatory application, however a fundamental piece of every operative system. The calculator allow users to make basic math calculations.
+![Alttext](./screenshots/calculator.png)
+
+### Widget Demo
+Application to demonstrate the several widgets available in the libwidget library. Currently therar are available the following widgets:
+- Button
+- Checkbox
+- Label
+- Listview
+- Panel
+- Scrollbar
+- Textarea
+- Textinput
+![Alttext](./screenshots/widget_demo.png)
 
 ## Contributing
 As this is a hobby OS project, contributions are welcome! If you have ideas for improvements, bug fixes, or new features, feel free to open an issue or submit a pull request.

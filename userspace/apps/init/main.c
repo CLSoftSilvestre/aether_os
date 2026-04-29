@@ -451,7 +451,7 @@ int main(void)
     draw_bot_bar();
     draw_dock();
 
-    sys_spawn("/statusbar");
+    /*sys_spawn("/statusbar");*/
     g_dock[0].pid = sys_spawn("/aether_term");
 
     /* Pre-focus the terminal so keyboard works immediately */
