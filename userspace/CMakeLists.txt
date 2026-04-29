@@ -20,6 +20,7 @@ add_library(libaether STATIC
     lib/libaether/stdio.c
     lib/libaether/stdlib.c
     lib/libaether/gfx.c
+    lib/libaether/manifest.c
 )
 
 target_include_directories(libaether PUBLIC

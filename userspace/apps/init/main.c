@@ -11,6 +11,7 @@
  */
 
 #include <gfx.h>
+#include <manifest.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys.h>
@@ -34,6 +35,28 @@
 
 /* Maximum number of WM window slots to query */
 #define WM_WIN_MAX   16
+
+/* ── Desktop icon grid ───────────────────────────────────────────────────── */
+
+#define DESKTOP_ICON_MAX   16
+#define DESKTOP_CELL_W     80
+#define DESKTOP_CELL_H     80
+#define DESKTOP_ICON_SIZE  48
+#define DESKTOP_ICON_X0    16
+#define DESKTOP_ICON_Y0    (ACCENT_Y + ACCENT_H + 16)   /* = 54 */
+#define DESKTOP_ICON_COLS  ((1024 - DESKTOP_ICON_X0 * 2) / DESKTOP_CELL_W)
+#define DESKTOP_DBLCLICK_TICKS  50   /* 500 ms at 100 Hz */
+
+typedef struct {
+    int         cell_x, cell_y;
+    manifest_t  manifest;
+    int         selected;
+    long        last_click_tick;
+    int         click_count;
+} desktop_icon_t;
+
+static desktop_icon_t g_icons[DESKTOP_ICON_MAX];
+static int            g_icon_count = 0;
 
 /* ── Dock layout ─────────────────────────────────────────────────────────── */
 
@@ -292,6 +315,137 @@ static int hit_close_button(int wx, int wy, int mx, int my)
            my >= wy +  8 && my < wy + 20;
 }
 
+/* ── Desktop icon subsystem (Phase 5.4) ─────────────────────────────────── */
+
+static void desktop_icon_assign_cell(int idx)
+{
+    int col = idx % DESKTOP_ICON_COLS;
+    int row = idx / DESKTOP_ICON_COLS;
+    g_icons[idx].cell_x = DESKTOP_ICON_X0 + col * DESKTOP_CELL_W;
+    g_icons[idx].cell_y = DESKTOP_ICON_Y0 + row * DESKTOP_CELL_H;
+}
+
+static void on_manifest_found(const manifest_t *m, void *ud)
+{
+    (void)ud;
+    if (g_icon_count >= DESKTOP_ICON_MAX) return;
+    desktop_icon_t *ic = &g_icons[g_icon_count];
+    ic->manifest        = *m;
+    ic->selected        = 0;
+    ic->last_click_tick = 0;
+    ic->click_count     = 0;
+    desktop_icon_assign_cell(g_icon_count);
+    g_icon_count++;
+}
+
+static void desktop_icons_load(void)
+{
+    g_icon_count = 0;
+    manifest_scan_dir(on_manifest_found, (void *)0);
+
+    if (g_icon_count == 0) {
+        static const manifest_t fallback[] = {
+            { "Terminal", "icon_term",  "/aether_term", "Terminal emulator" },
+            { "Files",    "icon_files", "/files",       "File browser"      },
+        };
+        for (int i = 0; i < 2; i++)
+            on_manifest_found(&fallback[i], (void *)0);
+    }
+}
+
+static void desktop_icons_draw_one(int idx)
+{
+    desktop_icon_t *ic = &g_icons[idx];
+    int cx = ic->cell_x;
+    int cy = ic->cell_y;
+
+    unsigned bg = ic->selected ? GFX_RGB(35, 30, 65) : C_DESKTOP;
+    gfx_fill(cx, cy, DESKTOP_CELL_W, DESKTOP_CELL_H, bg);
+    if (ic->selected)
+        gfx_rect(cx, cy, DESKTOP_CELL_W, DESKTOP_CELL_H, C_ACCENT);
+
+    int ix = cx + (DESKTOP_CELL_W - DESKTOP_ICON_SIZE) / 2;
+    int iy = cy + 4;
+
+    const char *key = ic->manifest.icon;
+    if      (strcmp(key, "icon_term")   == 0) gfx_icon_term(ix, iy);
+    else if (strcmp(key, "icon_files")  == 0) gfx_icon_files(ix, iy);
+    else if (strcmp(key, "icon_editor") == 0) gfx_icon_editor(ix, iy);
+    else                                       gfx_icon_generic(ix, iy, ic->manifest.name);
+
+    gfx_text_center(cx, DESKTOP_CELL_W, cy + 4 + DESKTOP_ICON_SIZE + 4,
+                    ic->manifest.name, C_TEXT, bg);
+}
+
+static void desktop_icons_draw(void)
+{
+    for (int i = 0; i < g_icon_count; i++)
+        desktop_icons_draw_one(i);
+}
+
+static void desktop_icons_draw_region(int rx, int ry, int rw, int rh)
+{
+    for (int i = 0; i < g_icon_count; i++) {
+        desktop_icon_t *ic = &g_icons[i];
+        if (ic->cell_x + DESKTOP_CELL_W > rx && ic->cell_x < rx + rw &&
+            ic->cell_y + DESKTOP_CELL_H > ry && ic->cell_y < ry + rh)
+            desktop_icons_draw_one(i);
+    }
+}
+
+static int desktop_icons_hit_test(int mx, int my)
+{
+    for (int i = 0; i < g_icon_count; i++) {
+        desktop_icon_t *ic = &g_icons[i];
+        if (mx >= ic->cell_x && mx < ic->cell_x + DESKTOP_CELL_W &&
+            my >= ic->cell_y && my < ic->cell_y + DESKTOP_CELL_H)
+            return i;
+    }
+    return -1;
+}
+
+static void desktop_handle_click(int mx, int my)
+{
+    int hit = desktop_icons_hit_test(mx, my);
+
+    if (hit < 0) {
+        int changed = 0;
+        for (int i = 0; i < g_icon_count; i++) {
+            if (g_icons[i].selected) {
+                g_icons[i].selected = 0;
+                changed = 1;
+            }
+        }
+        if (changed) desktop_icons_draw();
+        return;
+    }
+
+    desktop_icon_t *ic = &g_icons[hit];
+    long now = sys_get_ticks();
+
+    if (now - ic->last_click_tick < DESKTOP_DBLCLICK_TICKS)
+        ic->click_count++;
+    else
+        ic->click_count = 1;
+    ic->last_click_tick = now;
+
+    for (int i = 0; i < g_icon_count; i++) {
+        if (i != hit && g_icons[i].selected) {
+            g_icons[i].selected = 0;
+            desktop_icons_draw_one(i);
+        }
+    }
+    ic->selected = 1;
+    desktop_icons_draw_one(hit);
+
+    if (ic->click_count >= 2) {
+        ic->click_count = 0;
+        ic->selected    = 0;
+        desktop_icons_draw_one(hit);
+        sys_spawn(ic->manifest.exec);
+    }
+}
+
 /* ── WM helper: repaint desktop after a window closes ───────────────────── */
 
 static void on_window_closed(unsigned long long ev)
@@ -309,6 +463,8 @@ static void on_window_closed(unsigned long long ev)
     if (cy + clear_h > DOCK_Y) clear_h = DOCK_Y - cy;
     sys_fb_fill((unsigned)cx, (unsigned)cy,
                 (unsigned)clear_w, (unsigned)clear_h, C_DESKTOP);
+
+    desktop_icons_draw_region(cx, cy, clear_w, clear_h);
 
     /* Update dock running state (window is already unregistered at this point) */
     for (int i = 0; i < DOCK_ITEM_COUNT; i++) {
@@ -450,6 +606,8 @@ int main(void)
     draw_top_bar(gfx_ticks());
     draw_bot_bar();
     draw_dock();
+    desktop_icons_load();
+    desktop_icons_draw();
 
     /*sys_spawn("/statusbar");*/
     g_dock[0].pid = sys_spawn("/aether_term");
@@ -542,6 +700,10 @@ int main(void)
                             }
                         }
                     }
+                } else {
+                    /* Click on desktop background */
+                    if (my > ACCENT_Y + ACCENT_H && my < DOCK_Y)
+                        desktop_handle_click(mx, my);
                 }
             }
 

@@ -1,8 +1,8 @@
 # AetherOS — Living Development Plan
 
-> **Last updated:** 2026-04-28  
+> **Last updated:** 2026-04-29  
 > **Current Phase:** Phase 5 — Advanced Systems  
-> **Overall Status:** Phase 3 complete ✓  Phase 4.0 complete ✓  Phase 4.1 complete ✓  Phase 4.2 complete ✓  Phase 4.3 complete ✓  Phase 4.4 complete ✓  Phase 4.5 complete ✓  Phase 4.6 complete ✓  Phase 4.7 complete ✓  Phase 5.1 in progress 🔧  Phase 5.2 in progress 🔧  Phase 5.3 complete ✓  Phase 5.4 planned 📋  Phase 5.5 planned 📋
+> **Overall Status:** Phase 3 complete ✓  Phase 4.0 complete ✓  Phase 4.1 complete ✓  Phase 4.2 complete ✓  Phase 4.3 complete ✓  Phase 4.4 complete ✓  Phase 4.5 complete ✓  Phase 4.6 complete ✓  Phase 4.7 complete ✓  Phase 5.1 in progress 🔧  Phase 5.2 in progress 🔧  Phase 5.3 complete ✓  Phase 5.4 in progress 🔧  Phase 5.5 planned 📋
 
 ---
 
@@ -993,6 +993,28 @@ QEMU user-mode NAT: IP 10.0.2.15/24, gateway 10.0.2.2, DNS 10.0.2.3.
 - [x] **5.2.8** `scripts/run_qemu.sh` — auto-attaches `build/disk.img` if present (`-device virtio-blk-pci,drive=hd0`)
 - [x] **5.2.9** `kernel/core/main.c` — `virtio_blk_init()` + `fat32_mount()` + `vfs_init()` in init sequence
 
+#### FAT32 write support (prerequisite for 5.4/5.5) ✓ — 2026-04-29
+
+- [x] **5.2.W1** `fat32_create(path)` — allocates cluster chain, writes 8.3 directory entry, returns write handle
+  - Truncates existing file (frees old cluster chain) or creates new directory entry
+  - `find_dirent_loc` — LFN-aware dirent search with disk location tracking
+  - `find_free_dirent_loc` — finds free dirent slot; extends directory with new cluster if full
+  - `alloc_cluster` — scans FAT for free entry (== 0), marks it EOC (0x0FFFFFFF)
+  - `set_fat_entry` — read-modify-write of both FAT copies preserving reserved top nibble
+  - `free_cluster_chain` — walks and zeros the FAT chain for truncation
+- [x] **5.2.W2** `fat32_write(fh, buf, len)` — sector-by-sector write with cluster-chain extension
+  - Partial sector: read-modify-write to preserve surrounding bytes
+  - Full sector: direct write (no prior read)
+  - Auto-extends chain via `alloc_cluster` when a cluster boundary is crossed
+- [x] **5.2.W3** `fat32_close(fh)` — flushes final file size into the directory entry on write handles
+- [x] **5.2.W4** `vfs_create(path)` + `vfs_write(vfd, buf, len)` in `vfs.c`/`vfs.h`
+  - Routes to FAT32; returns -1 (EROFS) for `/initrd` and `/afs` paths
+- [x] **5.2.W5** `SYS_FS_CREATE (805)` + `SYS_FS_WRITE (804)` wired in `syscall.h` + `syscall.c`
+  - Userspace wrappers (`sys_fs_create`, `sys_fs_write`) already existed in `sys.h`
+
+**Write constraint:** only 8.3-compatible output filenames (≤8 char base, ≤3 char ext).
+Files created by mtools (`make_disk.sh`) with long names are readable normally (LFN read was always supported).
+
 #### Remaining (5.2 phase 2 — AetherFS native filesystem)
 
 - [ ] **5.2.10** Write `kernel/fs/aetherfs.c` — AetherFS (native filesystem)
@@ -1141,7 +1163,7 @@ text input accepts keyboard; list view navigates with keyboard and mouse; Tab cy
 
 ### Milestone 5.4 — Desktop Icons & App Launcher
 
-**Status:** Not started 📋
+**Status:** In progress 🔧
 
 **Goal:** The Lumina desktop background shows clickable application icons. Double-clicking an
 icon launches the corresponding application — like the traditional desktop metaphor on Windows
@@ -1194,25 +1216,25 @@ New userspace helper: `app_manifest_load(path, manifest_t*)` in libaether.
 
 #### Tasks
 
-- [ ] **5.4.1** `userspace/lib/libaether/manifest.c` + `manifest.h`
+- [x] **5.4.1** `userspace/lib/libaether/manifest.c` + `manifest.h`
   - `manifest_load(path, m)` — reads `/apps/*.app` via `sys_fs_open/read`
   - Key=value parser (no dynamic alloc; fixed field structs)
   - `manifest_scan_dir(cb)` — iterates `/apps/` directory via `sys_fs_readdir`, calls callback per manifest
-- [ ] **5.4.2** `userspace/lib/libaether/gfx.c` — icon drawing primitives
+- [x] **5.4.2** `userspace/lib/libaether/gfx.c` — icon drawing primitives
   - `gfx_icon_term(x, y)`, `gfx_icon_files(x, y)`, `gfx_icon_editor(x, y)` — built-in vector icons
   - `gfx_icon_generic(x, y, label)` — fallback for unknown app icons
   - 48×48 canvas for each; uses `gfx_fill`, `gfx_rect`, `gfx_char` primitives
-- [ ] **5.4.3** `userspace/apps/init/main.c` — desktop icon subsystem
+- [x] **5.4.3** `userspace/apps/init/main.c` — desktop icon subsystem
   - `desktop_icon_t` array (max 16 icons): `rect`, `manifest`, `selected`, `click_tracker`
   - `desktop_icons_load()` — scans `/apps/` at startup; falls back to hardcoded initrd list
   - `desktop_icons_draw()` — renders full icon grid on desktop background repaint
   - `desktop_icons_hit_test(mx, my)` — returns icon index or -1
   - Mouse handler: single-click → select + highlight; double-click → `sys_spawn(exec)`;
     click elsewhere → deselect all
-- [ ] **5.4.4** Desktop repaint on window close (from Phase 4.7)
+- [x] **5.4.4** Desktop repaint on window close (from Phase 4.7)
   - When a window closes, `init` repaints only the affected desktop rect, which includes
     re-rendering any icons that were underneath the closed window
-- [ ] **5.4.5** `scripts/make_disk.sh` — add `/apps/` directory with `.app` manifests
+- [x] **5.4.5** `scripts/make_disk.sh` — add `/apps/` directory with `.app` manifests
   - `aether_term.app`, `files.app`, `aether_editor.app` (editor added in Phase 5.5)
 - [ ] **5.4.6** Integration test
   - Desktop shows 3 icons on boot; single-click highlights; double-click launches app;

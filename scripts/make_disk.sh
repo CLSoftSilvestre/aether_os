@@ -53,11 +53,25 @@ printf "Phase 5.2 adds:\n  - virtio-blk PCI driver (kernel/drivers/block/virtio_
 printf "Line 1: The quick brown fox jumps over the lazy dog.\nLine 2: Pack my box with five dozen liquor jugs.\nLine 3: How vexingly quick daft zebras jump!\nLine 4: AetherOS filesystem test file — reading works!\n" \
     | mcopy -i "${DISK}" - "::docs/testfile.txt"
 
+# /apps/ — app manifests for desktop icon launcher (Phase 5.4)
+mmd -i "${DISK}" ::apps
+
+printf "name=Terminal\nicon=icon_term\nexec=/aether_term\ndescription=Terminal emulator\n" \
+    | mcopy -i "${DISK}" - ::apps/aether_term.app
+
+printf "name=Files\nicon=icon_files\nexec=/files\ndescription=File browser\n" \
+    | mcopy -i "${DISK}" - ::apps/files.app
+
+printf "name=AetherEditor\nicon=icon_editor\nexec=/aether_editor\ndescription=Script editor\n" \
+    | mcopy -i "${DISK}" - ::apps/aether_editor.app
+
 echo "[DISK] Contents:"
 echo "  /:"
 mdir -i "${DISK}" :: 2>/dev/null | grep -v "Volume\|^$" || true
 echo "  /docs/:"
 mdir -i "${DISK}" ::docs 2>/dev/null | grep -v "Volume\|^$" || true
+echo "  /apps/:"
+mdir -i "${DISK}" ::apps 2>/dev/null | grep -v "Volume\|^$" || true
 
 DISK_SIZE=$(du -sh "${DISK}" 2>/dev/null | cut -f1)
 echo "[DISK] Done — ${DISK} (${DISK_SIZE})"

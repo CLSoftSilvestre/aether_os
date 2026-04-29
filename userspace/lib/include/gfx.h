@@ -63,4 +63,10 @@ void gfx_printf(unsigned x, unsigned y, unsigned fg, unsigned bg,
  */
 void gfx_draw_close_button(unsigned x, unsigned y, int hovered);
 
+/* ── Desktop icon primitives (48×48, Phase 5.4) ────────────────────────── */
+void gfx_icon_term(int x, int y);
+void gfx_icon_files(int x, int y);
+void gfx_icon_editor(int x, int y);
+void gfx_icon_generic(int x, int y, const char *label);
+
 #endif /* _GFX_H */

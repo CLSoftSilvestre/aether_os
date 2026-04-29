@@ -215,6 +215,46 @@ void vfs_close(int vfd)
     f->used = 0;
 }
 
+/* ── Public: create ──────────────────────────────────────────────────────── */
+
+int vfs_create(const char *path)
+{
+    /* Only FAT32 is writable; initrd and AetherFS are read-only */
+    if (!path) return -1;
+    if (is_initrd_path(path) || is_afs_path(path)) return -1;
+    if (!fat32_ready()) return -1;
+
+    int slot = -1;
+    for (int i = 0; i < VFS_MAX_FD; i++) {
+        if (!g_fds[i].used) { slot = i; break; }
+    }
+    if (slot < 0) return -1;
+
+    int fh = fat32_create(path);
+    if (fh < 0) return -1;
+
+    vfs_fd_t *f = &g_fds[slot];
+    f->used    = 1;
+    f->backend = VFS_BACK_FAT32;
+    f->fat.fh  = fh;
+    return VFS_FD_BASE + slot;
+}
+
+/* ── Public: write ───────────────────────────────────────────────────────── */
+
+int vfs_write(int vfd, const u8 *buf, u32 len)
+{
+    if (!vfs_is_vfd(vfd)) return -1;
+    int slot = vfd - VFS_FD_BASE;
+    vfs_fd_t *f = &g_fds[slot];
+    if (!f->used || !buf || len == 0) return -1;
+
+    if (f->backend == VFS_BACK_FAT32)
+        return fat32_write(f->fat.fh, buf, len);
+
+    return -1;   /* initrd and AetherFS are read-only */
+}
+
 /* ── Public: readdir ─────────────────────────────────────────────────────── */
 
 int vfs_readdir(const char *path, char *buf, u32 len)

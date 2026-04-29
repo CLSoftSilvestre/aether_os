@@ -87,11 +87,71 @@ void gfx_printf(unsigned x, unsigned y, unsigned fg, unsigned bg,
 void gfx_draw_close_button(unsigned x, unsigned y, int hovered)
 {
     unsigned color = hovered ? GFX_RGB(255, 110, 110) : C_RED;
-    /* 12×12 filled base */
     gfx_fill(x, y, 12, 12, color);
-    /* Clip 2×2 corners over C_TITLEBAR to approximate a circle */
     gfx_fill(x,      y,      2, 2, C_TITLEBAR);
     gfx_fill(x + 10, y,      2, 2, C_TITLEBAR);
     gfx_fill(x,      y + 10, 2, 2, C_TITLEBAR);
     gfx_fill(x + 10, y + 10, 2, 2, C_TITLEBAR);
+}
+
+void gfx_icon_term(int x, int y)
+{
+    gfx_fill(x, y, 48, 48, GFX_RGB(10, 10, 18));
+    gfx_fill(x, y, 48, 10, GFX_RGB(35, 35, 55));
+    gfx_fill(x + 3, y + 3, 5, 5, C_RED);
+    gfx_char(x + 5,  y + 12, '>', C_ACCENT2, GFX_RGB(10, 10, 18));
+    gfx_char(x + 14, y + 12, '_', C_TEXT,    GFX_RGB(10, 10, 18));
+    gfx_fill(x + 5, y + 24, 28, 2, C_TEXT_DIM);
+    gfx_fill(x + 5, y + 28, 22, 2, C_TEXT_DIM);
+    gfx_fill(x + 5, y + 32, 26, 2, C_TEXT_DIM);
+    gfx_fill(x + 5, y + 36, 16, 2, C_TEXT_DIM);
+    gfx_fill(x + 5, y + 40, 20, 2, C_TEXT_DIM);
+    gfx_fill(x,      y,      2, 2, GFX_RGB(10, 10, 18));
+    gfx_fill(x + 46, y,      2, 2, GFX_RGB(10, 10, 18));
+    gfx_fill(x,      y + 46, 2, 2, GFX_RGB(10, 10, 18));
+    gfx_fill(x + 46, y + 46, 2, 2, GFX_RGB(10, 10, 18));
+}
+
+void gfx_icon_files(int x, int y)
+{
+    unsigned fg  = GFX_RGB(240, 190,  60);
+    unsigned md  = GFX_RGB(210, 165,  45);
+    unsigned cbg = GFX_RGB( 30,  28,  22);
+    gfx_fill(x, y, 48, 48, cbg);
+    gfx_fill(x +  5, y + 14, 18,  5, fg);
+    gfx_fill(x +  5, y + 19, 38, 22, fg);
+    gfx_fill(x +  5, y + 38,  38,  3, md);
+    gfx_fill(x + 10, y + 24, 22,  2, md);
+    gfx_fill(x + 10, y + 29, 26,  2, md);
+    gfx_fill(x + 10, y + 34, 18,  2, md);
+    gfx_fill(x,      y,       2,  2, cbg);
+    gfx_fill(x + 46, y,       2,  2, cbg);
+    gfx_fill(x,      y + 46,  2,  2, cbg);
+    gfx_fill(x + 46, y + 46,  2,  2, cbg);
+}
+
+void gfx_icon_editor(int x, int y)
+{
+    unsigned cbg = GFX_RGB(18, 20, 35);
+    gfx_fill(x, y, 48, 48, cbg);
+    gfx_fill(x + 5, y +  8, 28, 2, C_ACCENT);
+    gfx_fill(x + 5, y + 14, 22, 2, C_TEXT_DIM);
+    gfx_fill(x + 10, y + 19, 18, 2, C_TEXT_DIM);
+    gfx_fill(x + 5, y + 24, 24, 2, C_TEXT_DIM);
+    gfx_fill(x + 10, y + 29, 16, 2, C_TEXT_DIM);
+    gfx_fill(x + 5, y + 34, 20, 2, C_TEXT_DIM);
+    gfx_fill(x + 5, y + 39,  2,  8, C_ACCENT2);
+    gfx_fill(x,      y,      2,  2, cbg);
+    gfx_fill(x + 46, y,      2,  2, cbg);
+    gfx_fill(x,      y + 46, 2,  2, cbg);
+    gfx_fill(x + 46, y + 46, 2,  2, cbg);
+}
+
+void gfx_icon_generic(int x, int y, const char *label)
+{
+    unsigned cbg = GFX_RGB(35, 35, 60);
+    gfx_fill(x, y, 48, 48, cbg);
+    gfx_rect(x + 1, y + 1, 46, 46, C_ACCENT);
+    if (label && label[0])
+        gfx_char(x + 20, y + 20, label[0], C_TEXT, cbg);
 }

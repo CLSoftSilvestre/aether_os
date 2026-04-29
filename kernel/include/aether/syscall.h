@@ -89,11 +89,13 @@
 #define SYS_CURSOR_MOVE 605   /* (x<<32|y) — kernel moves + redraws cursor   */
 #define SYS_CURSOR_SHOW 606   /* (visible) — show (1) or hide (0) cursor      */
 
-/* Filesystem syscalls (Phase 5.2) */
+/* Filesystem syscalls (Phase 5.2 + write) */
 #define SYS_FS_OPEN      800  /* (path_ptr) → vfd (>=200) or -1                 */
 #define SYS_FS_READ      801  /* (vfd, buf_ptr, len) → bytes read or -1         */
 #define SYS_FS_CLOSE     802  /* (vfd) → 0                                       */
 #define SYS_FS_READDIR   803  /* (path_ptr, buf_ptr, len) → bytes written or -1 */
+#define SYS_FS_WRITE     804  /* (vfd, buf_ptr, len) → bytes written or -1      */
+#define SYS_FS_CREATE    805  /* (path_ptr) → vfd (>=200) or -1 (FAT32 only)   */
 
 /* Networking syscalls (Phase 5.1) */
 #define SYS_NET_STATUS   700  /* (buf_ptr) → 0; fills net_status_t in user buf  */
