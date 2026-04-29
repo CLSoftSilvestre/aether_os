@@ -89,8 +89,8 @@ static void draw_frame(void)
     gfx_fill(WX, WY, WIN_W, WIN_H, C_WIN_BG);
     gfx_fill(WX, WY, WIN_W, TITLE_H, C_TITLEBAR);
     gfx_draw_close_button(WX + 10, WY + 8, 0);
-    gfx_fill(WX + 26, WY + 8, 12, 12, C_YELLOW);
-    gfx_fill(WX + 42, WY + 8, 12, 12, C_GREEN);
+    // gfx_fill(WX + 26, WY + 8, 12, 12, C_YELLOW);
+    // gfx_fill(WX + 42, WY + 8, 12, 12, C_GREEN);
     gfx_text_center(WX, WIN_W, WY + 8,
                     "AetherFiles  --  initrd", C_TEXT, C_TITLEBAR);
     gfx_hline(WX, WY + TITLE_H, WIN_W, C_ACCENT);

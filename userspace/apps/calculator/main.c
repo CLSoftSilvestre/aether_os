@@ -574,8 +574,8 @@ static void draw_frame(void)
     gfx_fill(wx, wy, WIN_W, TITLE_H, C_TITLEBAR);
 
     gfx_draw_close_button(wx + 10, wy + 8, 0);
-    gfx_fill(wx + 26, wy + 8, 12, 12, C_YELLOW);
-    gfx_fill(wx + 42, wy + 8, 12, 12, C_GREEN);
+    // gfx_fill(wx + 26, wy + 8, 12, 12, C_YELLOW);
+    // gfx_fill(wx + 42, wy + 8, 12, 12, C_GREEN);
 
     gfx_text_center(wx, WIN_W, wy + 10, "Calculator", C_TEXT, C_TITLEBAR);
     gfx_hline(wx, wy + TITLE_H, WIN_W, C_ACCENT);

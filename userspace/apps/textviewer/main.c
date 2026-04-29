@@ -139,8 +139,8 @@ static void draw_frame(void)
     gfx_fill((unsigned)wx, (unsigned)wy, WIN_W, WIN_H, C_WIN_BG);
     gfx_fill((unsigned)wx, (unsigned)wy, WIN_W, TITLE_H, C_TITLEBAR);
     gfx_draw_close_button((unsigned)(wx + 10), (unsigned)(wy + 8), 0);
-    gfx_fill((unsigned)(wx + 26), (unsigned)(wy + 8), 12, 12, C_YELLOW);
-    gfx_fill((unsigned)(wx + 42), (unsigned)(wy + 8), 12, 12, C_GREEN);
+    // gfx_fill((unsigned)(wx + 26), (unsigned)(wy + 8), 12, 12, C_YELLOW);
+    // gfx_fill((unsigned)(wx + 42), (unsigned)(wy + 8), 12, 12, C_GREEN);
     draw_title_text();
     gfx_hline((unsigned)wx, (unsigned)(wy + TITLE_H), WIN_W, C_ACCENT);
     gfx_rect((unsigned)wx, (unsigned)wy, WIN_W, WIN_H, C_SEP);

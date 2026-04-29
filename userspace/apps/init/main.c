@@ -467,7 +467,8 @@ int main(void)
         if (++bar_counter >= 100) {
             bar_counter = 0;
             refresh_top_bar(gfx_ticks());
-            refresh_bot_bar();
+            //refresh_bot_bar();
+            draw_bot_bar();
         }
 
         /* Refresh dock running indicators every ~500 ms */

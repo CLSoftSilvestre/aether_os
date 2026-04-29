@@ -204,8 +204,8 @@ static void draw_window(void)
     gfx_fill(WX, WY, WIN_W, TITLE_H, C_TITLEBAR);
 
     gfx_draw_close_button(WX + 10, WY + 8, 0);
-    gfx_fill(WX + 26, WY + 8, 12, 12, C_YELLOW);
-    gfx_fill(WX + 42, WY + 8, 12, 12, C_GREEN);
+    // gfx_fill(WX + 26, WY + 8, 12, 12, C_YELLOW);
+    // gfx_fill(WX + 42, WY + 8, 12, 12, C_GREEN);
 
     gfx_text_center(WX, WIN_W, WY + 8,
                     "AetherTerm  --  aesh", C_TEXT, C_TITLEBAR);
@@ -373,10 +373,11 @@ static void cmd_help(void)
     term_puts("  view              launch text viewer\n");
     term_puts("  spawn <path>      launch an ELF from initrd (wait)\n");
     term_puts("  spawn <path> &    launch in background (no wait)\n");
-    term_puts("  exit [code]       exit the terminal\n");
+    term_puts("  exit [code]       exit the terminal\n\n");
     term_puts("Filesystem paths:\n");
     term_puts("  /           FAT32 disk root (when disk.img attached)\n");
     term_puts("  /initrd/    embedded CPIO initrd (always available)\n");
+    term_puts("  /afs/       AetherOS Filesystem (virtio-blk hd1)\n\n");
     term_puts("Networking:\n");
     term_puts("  net               show IP/MAC/gateway/DNS\n");
     term_puts("  ping <ip>         ICMP echo to IP address\n");
@@ -751,6 +752,7 @@ int main(void)
     sys_wm_focus_set(sys_getpid());
 
     {
+        /*
         char motd[2048];
         long n = sys_initrd_read("motd.txt", motd, (long)sizeof(motd) - 1);
         if (n > 0) {
@@ -758,8 +760,12 @@ int main(void)
             term_puts(motd);
         } else {
             term_puts("\n  Welcome to AetherOS Phase 5.1\n");
+            term_puts("\n  (c) Azordev.pt All rights reserved.\n");
             term_puts("  AetherTerm  --  type 'help' for commands\n\n");
-        }
+        }*/
+        term_puts("\n  Welcome to AetherOS");
+        term_puts("\n  (c) Azordev.pt All rights reserved.\n");
+        term_puts("\n  type 'help' for commands list\n\n");
     }
 
     char line[LINE_MAX];
