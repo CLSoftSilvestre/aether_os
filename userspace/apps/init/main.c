@@ -2,18 +2,11 @@
  * AetherOS — Desktop Manager (PID 1)
  * File: userspace/apps/init/main.c
  *
- * Phase 4.7: window lifecycle — close button hard-kills owner.
- *
- * WM responsibilities added in this phase:
- *   - Mouse click hit-test against the WM window registry
- *   - Focus change: update focused PID, redraw focus borders
- *   - Title-bar drag: show ghost preview, finalize position on release
- *     (which notifies the app via WM_EV_REDRAW to repaint at new coords)
- *
  * Desktop layout (1024×768):
  *   [0]   Top bar    1024×36
  *   [36]  Accent     1024×2
- *   [38]  Main area  1024×706
+ *   [38]  Main area  1024×650
+ *   [688] Dock       1024×56
  *   [744] Bot bar    1024×24
  */
 
@@ -31,6 +24,8 @@
 #define ACCENT_H    2
 #define BOTBAR_Y  744
 #define BOTBAR_H   24
+#define DOCK_H     56
+#define DOCK_Y    688        /* BOTBAR_Y - DOCK_H */
 #define FONT_W      8
 #define FONT_H      8
 
@@ -40,6 +35,26 @@
 /* Maximum number of WM window slots to query */
 #define WM_WIN_MAX   16
 
+/* ── Dock layout ─────────────────────────────────────────────────────────── */
+
+#define DOCK_ITEM_COUNT   5
+#define DOCK_SLOT_W      80    /* width of each icon slot */
+#define DOCK_START_X    312    /* (1024 - 5*80) / 2 */
+#define DOCK_ICON_SIZE   40    /* 40x40 icon */
+
+typedef struct {
+    const char *path;
+    long        pid;   /* 0 = not running */
+} dock_item_t;
+
+static dock_item_t g_dock[DOCK_ITEM_COUNT] = {
+    { "/aether_term", 0 },
+    { "/calculator",  0 },
+    { "/widget_demo", 0 },
+    { "/files",       0 },
+    { "/textviewer",  0 },
+};
+
 /* ── Helpers ─────────────────────────────────────────────────────────────── */
 
 static void fmt_uptime(char *buf, long ticks)
@@ -47,6 +62,140 @@ static void fmt_uptime(char *buf, long ticks)
     long s = ticks / 100, m = s / 60; s %= 60;
     long h = m / 60;                  m %= 60;
     snprintf(buf, 16, "%02ld:%02ld:%02ld", h, m, s);
+}
+
+/* ── WM helper: find win_id whose owner is pid ───────────────────────────── */
+
+static long find_win_for_pid(long pid)
+{
+    for (int i = 0; i < WM_WIN_MAX; i++) {
+        if (sys_wm_get_pid(i) == pid) return i;
+    }
+    return -1;
+}
+
+/* ── Dock icon drawing ────────────────────────────────────────────────────── */
+
+/* Clip the 4 corner pixels of a 40x40 icon to match the dock background */
+static void icon_round_corners(int ix, int iy)
+{
+    sys_fb_fill(ix,    iy,    2, 2, C_PANEL);
+    sys_fb_fill(ix+38, iy,    2, 2, C_PANEL);
+    sys_fb_fill(ix,    iy+38, 2, 2, C_PANEL);
+    sys_fb_fill(ix+38, iy+38, 2, 2, C_PANEL);
+}
+
+/* Terminal: dark shell window with ">_" prompt */
+static void draw_icon_term(int ix, int iy)
+{
+    gfx_fill(ix, iy, 40, 40, GFX_RGB(10, 10, 18));
+    gfx_fill(ix, iy, 40, 8, GFX_RGB(35, 35, 55));          /* title bar */
+    gfx_fill(ix+3, iy+2, 4, 4, C_RED);                     /* close dot */
+    gfx_char(ix+4, iy+10, '>', C_ACCENT2, GFX_RGB(10, 10, 18));
+    gfx_char(ix+12, iy+10, '_', C_TEXT,   GFX_RGB(10, 10, 18));
+    gfx_fill(ix+4, iy+22, 24, 2, C_TEXT_DIM);              /* text lines */
+    gfx_fill(ix+4, iy+26, 18, 2, C_TEXT_DIM);
+    gfx_fill(ix+4, iy+30, 22, 2, C_TEXT_DIM);
+    gfx_fill(ix+4, iy+34, 12, 2, C_TEXT_DIM);
+    icon_round_corners(ix, iy);
+}
+
+/* Calculator: purple body with display + button grid */
+static void draw_icon_calc(int ix, int iy)
+{
+    gfx_fill(ix, iy, 40, 40, GFX_RGB(30, 22, 55));
+    gfx_fill(ix+4, iy+4, 32, 9, GFX_RGB(10, 10, 25));      /* display */
+    gfx_char(ix+24, iy+5, '0', GFX_RGB(100, 255, 130), GFX_RGB(10, 10, 25));
+    for (int r = 0; r < 4; r++) {
+        for (int c = 0; c < 3; c++) {
+            unsigned col = (r == 3 && c == 2)
+                           ? GFX_RGB(90, 76, 200) : GFX_RGB(50, 38, 85);
+            gfx_fill(ix+4+c*12, iy+16+r*6, 10, 4, col);
+        }
+    }
+    icon_round_corners(ix, iy);
+}
+
+/* Widget demo: button, slider, checkbox on dark blue */
+static void draw_icon_widget(int ix, int iy)
+{
+    gfx_fill(ix, iy, 40, 40, GFX_RGB(20, 35, 55));
+    gfx_fill(ix+4, iy+6, 32, 10, GFX_RGB(55, 70, 120));    /* button body */
+    gfx_rect(ix+4, iy+6, 32, 10, GFX_RGB(80, 100, 180));   /* button border */
+    gfx_char(ix+16, iy+7, 'A', C_TEXT, GFX_RGB(55, 70, 120));
+    gfx_fill(ix+4, iy+21, 32, 3, GFX_RGB(40, 50, 90));     /* slider track */
+    gfx_fill(ix+4, iy+20, 15, 5, C_ACCENT);                /* slider thumb */
+    gfx_rect(ix+4, iy+30, 8, 8, C_TEXT_DIM);               /* checkbox */
+    gfx_fill(ix+6, iy+32, 4, 4, C_ACCENT2);                /* checkbox tick */
+    gfx_fill(ix+16, iy+32, 16, 2, C_TEXT_DIM);             /* label lines */
+    gfx_fill(ix+16, iy+35, 12, 2, C_TEXT_DIM);
+    icon_round_corners(ix, iy);
+}
+
+/* Files: yellow folder with file lines */
+static void draw_icon_files(int ix, int iy)
+{
+    unsigned fg = GFX_RGB(240, 190, 60);
+    unsigned md = GFX_RGB(210, 165, 45);
+    gfx_fill(ix, iy, 40, 40, GFX_RGB(30, 28, 22));
+    gfx_fill(ix+4, iy+12, 16, 4, fg);                      /* folder tab */
+    gfx_fill(ix+4, iy+16, 32, 20, fg);                     /* folder body */
+    gfx_fill(ix+4, iy+34, 32, 2, md);                      /* bottom shade */
+    gfx_fill(ix+8, iy+20, 18, 2, md);                      /* file lines */
+    gfx_fill(ix+8, iy+24, 22, 2, md);
+    gfx_fill(ix+8, iy+28, 14, 2, md);
+    icon_round_corners(ix, iy);
+}
+
+/* Text viewer: white paper with text lines and page fold */
+static void draw_icon_text(int ix, int iy)
+{
+    unsigned paper = GFX_RGB(230, 228, 240);
+    unsigned line  = GFX_RGB(80, 80, 110);
+    unsigned strip = GFX_RGB(200, 198, 218);
+    gfx_fill(ix, iy, 40, 40, paper);
+    gfx_fill(ix+28, iy, 12, 40, strip);                    /* right margin */
+    gfx_fill(ix+28, iy, 12, 12, paper);                    /* fold corner */
+    gfx_fill(ix+28, iy+12, 1, 1, GFX_RGB(150, 148, 170)); /* fold crease */
+    gfx_fill(ix+4, iy+8,  20, 2, line);
+    gfx_fill(ix+4, iy+13, 22, 2, line);
+    gfx_fill(ix+4, iy+18, 18, 2, line);
+    gfx_fill(ix+4, iy+23, 22, 2, line);
+    gfx_fill(ix+4, iy+28, 16, 2, line);
+    gfx_fill(ix+4, iy+33, 20, 2, line);
+}
+
+/* ── Dock drawing ─────────────────────────────────────────────────────────── */
+
+static void draw_dock_item(int idx)
+{
+    int sx = DOCK_START_X + idx * DOCK_SLOT_W;
+    int ix = sx + (DOCK_SLOT_W - DOCK_ICON_SIZE) / 2;
+    int iy = DOCK_Y + 4;
+
+    gfx_fill(sx, DOCK_Y, DOCK_SLOT_W, DOCK_H, C_PANEL);
+
+    switch (idx) {
+    case 0: draw_icon_term(ix, iy);   break;
+    case 1: draw_icon_calc(ix, iy);   break;
+    case 2: draw_icon_widget(ix, iy); break;
+    case 3: draw_icon_files(ix, iy);  break;
+    case 4: draw_icon_text(ix, iy);   break;
+    }
+
+    /* Running indicator: cyan bar below icon when app has an active window */
+    int running = g_dock[idx].pid && (find_win_for_pid(g_dock[idx].pid) >= 0);
+    int dx = sx + (DOCK_SLOT_W - 16) / 2;
+    int dy = DOCK_Y + DOCK_H - 8;
+    gfx_fill(dx, dy, 16, 4, running ? C_ACCENT2 : C_PANEL);
+}
+
+static void draw_dock(void)
+{
+    gfx_fill(0, DOCK_Y, 1024, DOCK_H, C_PANEL);
+    gfx_hline(0, DOCK_Y, 1024, C_SEP);
+    for (int i = 0; i < DOCK_ITEM_COUNT; i++)
+        draw_dock_item(i);
 }
 
 /* ── Chrome drawing ──────────────────────────────────────────────────────── */
@@ -129,30 +278,14 @@ static void draw_focus_border(long win_id, int focused)
 
     unsigned color = focused ? C_ACCENT : C_SEP;
 
-    /* 2px border on all four sides, drawn as thin filled rects */
-    sys_fb_fill(x,         y,         w, 2, color);   /* top    */
-    sys_fb_fill(x,         y + h - 2, w, 2, color);   /* bottom */
-    sys_fb_fill(x,         y,         2, h, color);   /* left   */
-    sys_fb_fill(x + w - 2, y,         2, h, color);   /* right  */
-}
-
-/* ── WM helper: find win_id whose owner is pid ───────────────────────────── */
-
-static long find_win_for_pid(long pid)
-{
-    for (int i = 0; i < WM_WIN_MAX; i++) {
-        if (sys_wm_get_pid(i) == pid) return i;
-    }
-    return -1;
+    sys_fb_fill(x,         y,         w, 2, color);
+    sys_fb_fill(x,         y + h - 2, w, 2, color);
+    sys_fb_fill(x,         y,         2, h, color);
+    sys_fb_fill(x + w - 2, y,         2, h, color);
 }
 
 /* ── WM helper: close button hit-test ───────────────────────────────────── */
 
-/*
- * Returns non-zero if (mx, my) falls inside the red close button for a window
- * whose top-left corner is (wx, wy).  Buttons are 12×12 at (wx+10, wy+8) —
- * matching the gfx_draw_close_button placement in aether_term and files.
- */
 static int hit_close_button(int wx, int wy, int mx, int my)
 {
     return mx >= wx + 10 && mx < wx + 22 &&
@@ -165,9 +298,49 @@ static void on_window_closed(unsigned long long ev)
 {
     int cx, cy, cw, ch;
     wm_decode_closed(ev, &cx, &cy, &cw, &ch);
-    sys_fb_fill((unsigned)cx, (unsigned)cy, (unsigned)cw, (unsigned)ch, C_DESKTOP);
 
-    /* If the closed window was focused, assign focus to the first remaining window */
+    /*
+     * Expand clear area by 4px right/bottom to erase the drop-shadow that
+     * apps draw just outside their registered rect.
+     */
+    int clear_w = cw + 4;
+    int clear_h = ch + 4;
+    if (cx + clear_w > 1024) clear_w = 1024 - cx;
+    if (cy + clear_h > DOCK_Y) clear_h = DOCK_Y - cy;
+    sys_fb_fill((unsigned)cx, (unsigned)cy,
+                (unsigned)clear_w, (unsigned)clear_h, C_DESKTOP);
+
+    /* Update dock running state (window is already unregistered at this point) */
+    for (int i = 0; i < DOCK_ITEM_COUNT; i++) {
+        if (g_dock[i].pid && find_win_for_pid(g_dock[i].pid) < 0)
+            g_dock[i].pid = 0;
+    }
+
+    /* Redraw dock — clears any overlap with closed window and refreshes indicators */
+    draw_dock();
+
+    /*
+     * Trigger a repaint for every surviving window that overlaps the vacated
+     * region.  Without this, those windows' pixels were overwritten by the
+     * closed app and they never know they need to redraw.
+     */
+    int overlap_w = cw + 4;
+    int overlap_h = ch + 4;
+    for (int i = 0; i < WM_WIN_MAX; i++) {
+        long pid = sys_wm_get_pid(i);
+        if (!pid) continue;
+        long pos  = sys_wm_get_pos(i);
+        long size = sys_wm_get_size(i);
+        if (pos == -1 || size == 0) continue;
+        int wx = (int)((unsigned long long)pos  >> 32);
+        int wy = (int)((unsigned long long)pos  & 0xFFFFFFFFu);
+        int ww = (int)((unsigned long long)size >> 32);
+        int wh = (int)((unsigned long long)size & 0xFFFFFFFFu);
+        if (cx < wx+ww && cx+overlap_w > wx && cy < wy+wh && cy+overlap_h > wy)
+            sys_wm_push_event(pid, wm_pack_redraw(wx, wy));
+    }
+
+    /* If the closed window held focus, assign it to the first remaining window */
     if (sys_wm_focus_get() == 0) {
         for (int i = 0; i < WM_WIN_MAX; i++) {
             long pid = sys_wm_get_pid(i);
@@ -211,22 +384,51 @@ static long hit_test(int mx, int my)
     return -1;
 }
 
+/* ── Dock click handler ──────────────────────────────────────────────────── */
+
+static void dock_click(int mx)
+{
+    if (mx < DOCK_START_X || mx >= DOCK_START_X + DOCK_ITEM_COUNT * DOCK_SLOT_W)
+        return;
+
+    int idx = (mx - DOCK_START_X) / DOCK_SLOT_W;
+    if (idx < 0 || idx >= DOCK_ITEM_COUNT) return;
+
+    long wid = g_dock[idx].pid ? find_win_for_pid(g_dock[idx].pid) : -1;
+
+    if (wid >= 0) {
+        /* App running — focus its window */
+        long old_pid = sys_wm_focus_get();
+        if (old_pid && old_pid != g_dock[idx].pid) {
+            long old_win = find_win_for_pid(old_pid);
+            if (old_win >= 0) draw_focus_border(old_win, 0);
+        }
+        draw_focus_border(wid, 1);
+        sys_wm_focus_set(g_dock[idx].pid);
+    } else {
+        /* App not running — launch it */
+        long pid = sys_spawn(g_dock[idx].path);
+        if (pid > 0) {
+            g_dock[idx].pid = pid;
+            draw_dock_item(idx);
+        }
+    }
+}
+
 /* ── Drag state ──────────────────────────────────────────────────────────── */
 
 static int  g_drag_active    = 0;
 static long g_drag_win_id    = -1;
-static int  g_drag_off_x     = 0;    /* click offset within title bar */
+static int  g_drag_off_x     = 0;
 static int  g_drag_off_y     = 0;
-static int  g_drag_ghost_x   = 0;    /* last-drawn ghost position */
+static int  g_drag_ghost_x   = 0;
 static int  g_drag_ghost_y   = 0;
 static int  g_drag_ghost_w   = 0;
 
-/* Draw / erase the drag ghost (title-bar + accent strip at current position) */
 static void draw_drag_ghost(int x, int y, int w)
 {
-    sys_fb_fill(x, y,              w, APP_TITLE_H, C_TITLEBAR);
-    sys_fb_fill(x, y + APP_TITLE_H, w, 2,          C_ACCENT);
-    /* 1px outline so the ghost is visible over the desktop */
+    sys_fb_fill(x, y,               w, APP_TITLE_H, C_TITLEBAR);
+    sys_fb_fill(x, y + APP_TITLE_H, w, 2,           C_ACCENT);
     sys_fb_fill(x,     y,     w, 1, C_ACCENT);
     sys_fb_fill(x,     y,     1, APP_TITLE_H + 2, C_ACCENT);
     sys_fb_fill(x+w-1, y,     1, APP_TITLE_H + 2, C_ACCENT);
@@ -247,18 +449,18 @@ int main(void)
     draw_desktop();
     draw_top_bar(gfx_ticks());
     draw_bot_bar();
+    draw_dock();
 
     sys_spawn("/statusbar");
-    long term_pid = sys_spawn("/aether_term");
+    g_dock[0].pid = sys_spawn("/aether_term");
 
-    /* Pre-focus the terminal so keyboard works as soon as the QEMU window
-     * is frontmost — without this, g_focused_pid stays 0 and all key events
-     * are silently dropped until the user clicks on a window. */
-    sys_wm_focus_set(term_pid);
+    /* Pre-focus the terminal so keyboard works immediately */
+    sys_wm_focus_set(g_dock[0].pid);
 
     sys_cursor_show(1);
 
     int  bar_counter  = 0;
+    int  dock_counter = 0;
     int  prev_buttons = 0;
 
     for (;;) {
@@ -266,6 +468,12 @@ int main(void)
             bar_counter = 0;
             refresh_top_bar(gfx_ticks());
             refresh_bot_bar();
+        }
+
+        /* Refresh dock running indicators every ~500 ms */
+        if (++dock_counter >= 50) {
+            dock_counter = 0;
+            draw_dock();
         }
 
         /* ── Drain WM events (window-closed notifications from kernel) ── */
@@ -283,32 +491,34 @@ int main(void)
 
             int mx = (int)ev.x;
             int my = (int)ev.y;
-            int btn     = (int)(ev.buttons & 1);
-            int pressed  = btn && !prev_buttons;   /* rising edge  */
-            int released = !btn && prev_buttons;   /* falling edge */
+            int btn      = (int)(ev.buttons & 1);
+            int pressed  = btn && !prev_buttons;
+            int released = !btn && prev_buttons;
             prev_buttons = btn;
 
-            /* ── Left button pressed: hit-test + focus + drag start ── */
+            /* ── Left button pressed ─────────────────────────────────── */
             if (pressed) {
+                /* Dock area — launch or focus app */
+                if (my >= DOCK_Y && my < BOTBAR_Y) {
+                    dock_click(mx);
+                    continue;
+                }
+
                 long win_id = hit_test(mx, my);
                 if (win_id >= 0) {
                     long new_pid  = sys_wm_get_pid(win_id);
                     long prev_pid = sys_wm_focus_get();
 
-                    /* Update focus if it changed */
                     if (new_pid != (long)prev_pid) {
-                        /* Dim old border */
                         if (prev_pid) {
                             long old_win = find_win_for_pid(prev_pid);
                             if (old_win >= 0)
                                 draw_focus_border(old_win, 0);
                         }
-                        /* Highlight new border */
                         draw_focus_border(win_id, 1);
                         sys_wm_focus_set(new_pid);
                     }
 
-                    /* Check title bar (close button or drag) */
                     long pos  = sys_wm_get_pos(win_id);
                     long size = sys_wm_get_size(win_id);
                     if (pos != -1 && size != 0) {
@@ -318,10 +528,8 @@ int main(void)
 
                         if (my >= wy && my < wy + APP_TITLE_H) {
                             if (hit_close_button(wx, wy, mx, my)) {
-                                /* Hard-kill the window owner */
                                 sys_wm_close(win_id);
                             } else {
-                                /* Start drag */
                                 g_drag_active  = 1;
                                 g_drag_win_id  = win_id;
                                 g_drag_off_x   = mx - wx;
@@ -341,11 +549,10 @@ int main(void)
                 int nx = mx - g_drag_off_x;
                 int ny = my - g_drag_off_y;
 
-                /* Clamp so window stays on-screen */
                 if (nx < 0) nx = 0;
                 if (ny < TOPBAR_H + ACCENT_H) ny = TOPBAR_H + ACCENT_H;
                 if (nx + g_drag_ghost_w > 1024) nx = 1024 - g_drag_ghost_w;
-                if (ny + APP_TITLE_H > BOTBAR_Y) ny = BOTBAR_Y - APP_TITLE_H;
+                if (ny + APP_TITLE_H > DOCK_Y) ny = DOCK_Y - APP_TITLE_H;
 
                 if (nx != g_drag_ghost_x || ny != g_drag_ghost_y) {
                     erase_drag_ghost(g_drag_ghost_x, g_drag_ghost_y,
@@ -358,27 +565,24 @@ int main(void)
 
             /* ── Button released: commit drag ────────────────────────── */
             if (g_drag_active && released) {
-                /* Erase ghost */
                 erase_drag_ghost(g_drag_ghost_x, g_drag_ghost_y,
                                  g_drag_ghost_w);
 
-                /* Update WM registry + notify app to repaint */
+                /* Restore dock separator if ghost grazed it */
+                if (g_drag_ghost_y + APP_TITLE_H + 2 >= DOCK_Y)
+                    gfx_hline(0, DOCK_Y, 1024, C_SEP);
+
                 sys_wm_move(g_drag_win_id,
                             g_drag_ghost_x, g_drag_ghost_y);
-
-                /* Redraw focus border at new position
-                 * (app will repaint its own content after WM_EV_REDRAW) */
                 draw_focus_border(g_drag_win_id, 1);
 
                 g_drag_active = 0;
                 g_drag_win_id = -1;
             }
 
-            /* ── Forward mouse event to the window under the cursor ────── */
-            /* Widget apps receive mouse events via sys_wm_event_poll(),    */
-            /* not sys_mouse_poll(), because init owns the global ring.     */
+            /* ── Forward mouse event to the window under the cursor ──── */
             if (!g_drag_active) {
-                long fw_id  = hit_test(mx, my);
+                long fw_id = hit_test(mx, my);
                 if (fw_id >= 0) {
                     long fw_pid = sys_wm_get_pid(fw_id);
                     if (fw_pid > 1)

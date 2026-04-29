@@ -91,6 +91,13 @@ static inline int wm_event_is_mouse(unsigned long long v)
     return (int)((v >> 56) == WM_EV_MOUSE);
 }
 
+static inline unsigned long long wm_pack_redraw(int x, int y)
+{
+    return ((unsigned long long)WM_EV_REDRAW << 32) |
+           ((unsigned long long)((unsigned int)x & 0xFFFFu) << 16) |
+           ((unsigned long long)((unsigned int)y & 0xFFFFu));
+}
+
 static inline unsigned long long wm_pack_mouse(unsigned int x, unsigned int y,
                                                 unsigned int buttons)
 {
