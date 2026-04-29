@@ -68,6 +68,9 @@ int pci_scan_virtio_net(pci_dev_t *r);
 /* Scan bus 0 for VirtIO block (modern 0x1042 OR transitional 0x1001/subsys=2). Returns 1 if found. */
 int pci_scan_virtio_blk(pci_dev_t *r);
 
+/* Scan bus 0 for all VirtIO block devices. Returns count found (up to max_devs). */
+int pci_scan_virtio_blk_n(pci_dev_t *devs, int max_devs);
+
 /* Print all PCI devices found on bus 0 (for boot diagnostics). */
 void pci_list_devices(void);
 

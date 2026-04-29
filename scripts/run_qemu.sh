@@ -31,6 +31,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BUILD_DIR="${SCRIPT_DIR}/../build"
 KERNEL_IMG="${BUILD_DIR}/kernel8.img"
 DISK_IMG="${BUILD_DIR}/disk.img"
+AFS_IMG="${BUILD_DIR}/afs.img"
 
 if [ ! -f "${KERNEL_IMG}" ]; then
     echo "[ERROR] Kernel image not found: ${KERNEL_IMG}"
@@ -90,16 +91,26 @@ QEMU_ARGS=(
     -device virtio-net-pci,netdev=n0
 )
 
-# Block storage (Phase 5.2): attach disk.img if it exists
-# Create with: bash scripts/make_disk.sh
+# Block storage (Phase 5.2): hd0 = FAT32 disk.img, hd1 = AetherFS afs.img
+# Create with: bash scripts/make_disk.sh  and  bash scripts/make_afs.sh
 if [ -f "${DISK_IMG}" ]; then
-    echo "[QEMU] Disk: ${DISK_IMG} (FAT32)"
+    echo "[QEMU] hd0: ${DISK_IMG} (FAT32  → /)"
     QEMU_ARGS+=(
         -drive file="${DISK_IMG}",format=raw,if=none,id=hd0
         -device virtio-blk-pci,drive=hd0
     )
 else
-    echo "[QEMU] No disk image — run scripts/make_disk.sh to create one"
+    echo "[QEMU] hd0: not found — run scripts/make_disk.sh to create FAT32 image"
+fi
+
+if [ -f "${AFS_IMG}" ]; then
+    echo "[QEMU] hd1: ${AFS_IMG} (AetherFS → /afs)"
+    QEMU_ARGS+=(
+        -drive file="${AFS_IMG}",format=raw,if=none,id=hd1
+        -device virtio-blk-pci,drive=hd1
+    )
+else
+    echo "[QEMU] hd1: not found — run scripts/make_afs.sh to create AetherFS image"
 fi
 
 if [ "$HEADLESS" = "1" ]; then

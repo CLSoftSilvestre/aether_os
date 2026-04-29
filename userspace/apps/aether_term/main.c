@@ -445,13 +445,19 @@ static void cmd_mount(void)
 {
     term_puts("Mounted filesystems:\n");
     term_puts("  /initrd    initrd (CPIO, embedded in kernel)\n");
-    /* Check if disk is available by attempting a readdir */
+
     char buf[64];
     long n = sys_fs_readdir("/", buf, sizeof(buf));
     if (n > 0 && buf[0] != '(')
-        term_puts("  /          FAT32 (virtio-blk disk)\n");
+        term_puts("  /          FAT32  (virtio-blk hd0)\n");
     else
-        term_puts("  /          (no disk — run make_disk.sh and attach disk.img)\n");
+        term_puts("  /          (no FAT32 — run make_disk.sh and attach disk.img)\n");
+
+    n = sys_fs_readdir("/afs", buf, sizeof(buf));
+    if (n > 0 && buf[0] != '(')
+        term_puts("  /afs       AetherFS (virtio-blk hd1)\n");
+    else
+        term_puts("  /afs       (no AetherFS — run make_afs.sh and attach afs.img)\n");
 }
 
 static void cmd_disk(void)

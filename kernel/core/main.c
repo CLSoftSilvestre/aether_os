@@ -30,6 +30,7 @@
 #include "aether/net.h"
 #include "aether/vfs.h"
 #include "aether/fat32.h"
+#include "aether/aetherfs.h"
 #include "aether/types.h"
 #include "drivers/block/virtio_blk.h"
 #include "drivers/pci/pci_ecam.h"
@@ -117,6 +118,7 @@ void kernel_main(void)
     pci_list_devices();
     virtio_blk_init();
     fat32_mount();
+    aetherfs_mount();   /* device 1; no-op if second disk not attached */
     vfs_init();
 
     /* ── 7. Scheduler + Pipe + WM subsystem ────────────────────────── */

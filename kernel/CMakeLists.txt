@@ -29,6 +29,7 @@ set(KERNEL_SOURCES
     fs/initrd.c
     fs/elf.c
     fs/fat32.c
+    fs/aetherfs.c
     fs/vfs.c
 
     # Drivers — block storage (Phase 5.2)
