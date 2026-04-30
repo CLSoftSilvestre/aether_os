@@ -34,9 +34,9 @@ static char keycode_to_char(keycode_t kc, unsigned int mods)
         char base = 'a' + (kc - KEY_A);
         return shift ? (char)(base - 32) : base;
     }
-    /* Digits */
+    /* Digits — PT-PT shifted row: =!"#$%&/() */
     static const char digits_normal[] = "0123456789";
-    static const char digits_shift[]  = ")!@#$%^&*(";
+    static const char digits_shift[]  = "=!\"#$%&/()";
     if (kc >= KEY_0 && kc <= KEY_9) {
         int idx = kc - KEY_0;
         return shift ? digits_shift[idx] : digits_normal[idx];
@@ -44,35 +44,35 @@ static char keycode_to_char(keycode_t kc, unsigned int mods)
     /* Space */
     if (kc == KEY_SPACE) return ' ';
 
-    /* Punctuation */
+    /* Punctuation — PT-PT layout */
     if (!shift) {
         switch (kc) {
-        case KEY_MINUS:      return '-';
-        case KEY_EQUALS:     return '=';
-        case KEY_LBRACKET:   return '[';
-        case KEY_RBRACKET:   return ']';
-        case KEY_BACKSLASH:  return '\\';
-        case KEY_SEMICOLON:  return ';';
-        case KEY_APOSTROPHE: return '\'';
+        case KEY_GRAVE:      return '\\';   /* PT: \ */
+        case KEY_MINUS:      return '\'';   /* PT: ' */
+        case KEY_EQUALS:     return '\xab'; /* PT: « */
+        case KEY_LBRACKET:   return '+';    /* PT: + */
+        case KEY_RBRACKET:   return 0;      /* PT: dead-´ */
+        case KEY_BACKSLASH:  return '~';    /* PT: dead-~ (base char) */
+        case KEY_SEMICOLON:  return '\xe7'; /* PT: ç */
+        case KEY_APOSTROPHE: return '\xba'; /* PT: º */
         case KEY_COMMA:      return ',';
         case KEY_DOT:        return '.';
-        case KEY_SLASH:      return '/';
-        case KEY_GRAVE:      return '`';
+        case KEY_SLASH:      return '-';    /* PT: - */
         default: break;
         }
     } else {
         switch (kc) {
-        case KEY_MINUS:      return '_';
-        case KEY_EQUALS:     return '+';
-        case KEY_LBRACKET:   return '{';
-        case KEY_RBRACKET:   return '}';
-        case KEY_BACKSLASH:  return '|';
-        case KEY_SEMICOLON:  return ':';
-        case KEY_APOSTROPHE: return '"';
-        case KEY_COMMA:      return '<';
-        case KEY_DOT:        return '>';
-        case KEY_SLASH:      return '?';
-        case KEY_GRAVE:      return '~';
+        case KEY_GRAVE:      return '|';    /* PT: | */
+        case KEY_MINUS:      return '?';    /* PT: ? */
+        case KEY_EQUALS:     return '\xbb'; /* PT: » */
+        case KEY_LBRACKET:   return '*';    /* PT: * */
+        case KEY_RBRACKET:   return '`';    /* PT: dead-` (base char) */
+        case KEY_BACKSLASH:  return '^';    /* PT: dead-^ (base char) */
+        case KEY_SEMICOLON:  return '\xc7'; /* PT: Ç */
+        case KEY_APOSTROPHE: return '\xaa'; /* PT: ª */
+        case KEY_COMMA:      return ';';    /* PT: ; */
+        case KEY_DOT:        return ':';    /* PT: : */
+        case KEY_SLASH:      return '_';    /* PT: _ */
         default: break;
         }
     }

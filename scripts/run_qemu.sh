@@ -145,12 +145,18 @@ else
     # refreshes until that happens.  Splitting the monitor onto its own socket
     # keeps stdio line-buffered for UART output while the event loop can wake
     # freely on VNC socket activity.
+    #
+    # -k pt: tells QEMU's VNC server to use the Portuguese keyboard layout
+    # when translating X11 keysyms (sent by the VNC client) into evdev
+    # keycodes for virtio-keyboard-pci.  Without this, keys specific to the
+    # PT-PT layout (ç, º, «, etc.) are not mapped to the correct positions.
     QEMU_ARGS+=(
         -serial stdio
         -monitor unix:/tmp/aether-qemu-monitor.sock,server,nowait
         -device ramfb
         -vga none
         -display vnc=127.0.0.1:0
+        -k pt
         -device virtio-tablet-pci
         -device virtio-keyboard-pci
     )

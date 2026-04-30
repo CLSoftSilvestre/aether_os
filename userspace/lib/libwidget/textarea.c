@@ -275,10 +275,43 @@ static int textarea_event(widget_t *w, const widget_event_t *ev)
     }
     if (kc >= KEY_0 && kc <= KEY_9) {
         int shift = (mods & MOD_SHIFT);
-        static const char digs[] = "0123456789";
-        static const char sdigs[] = ")!@#$%^&*(";
+        static const char digs[]  = "0123456789";
+        static const char sdigs[] = "=!\"#$%&/()"; /* PT-PT shifted row */
         ta_insert_char(d, shift ? sdigs[kc - KEY_0] : digs[kc - KEY_0]);
         w->dirty = 1; return 1;
+    }
+
+    /* Punctuation — PT-PT layout */
+    {
+        int shift = (mods & MOD_SHIFT);
+        char ch = 0;
+        if (!shift) {
+            switch (kc) {
+            case KEY_GRAVE:      ch = '\\';   break; /* PT: \ */
+            case KEY_MINUS:      ch = '\'';   break; /* PT: ' */
+            case KEY_LBRACKET:   ch = '+';    break; /* PT: + */
+            case KEY_BACKSLASH:  ch = '~';    break; /* PT: dead-~ */
+            case KEY_SEMICOLON:  ch = '\xe7'; break; /* PT: ç */
+            case KEY_COMMA:      ch = ',';    break;
+            case KEY_DOT:        ch = '.';    break;
+            case KEY_SLASH:      ch = '-';    break; /* PT: - */
+            default: break;
+            }
+        } else {
+            switch (kc) {
+            case KEY_GRAVE:      ch = '|';    break; /* PT: | */
+            case KEY_MINUS:      ch = '?';    break; /* PT: ? */
+            case KEY_LBRACKET:   ch = '*';    break; /* PT: * */
+            case KEY_RBRACKET:   ch = '`';    break; /* PT: dead-` */
+            case KEY_BACKSLASH:  ch = '^';    break; /* PT: dead-^ */
+            case KEY_SEMICOLON:  ch = '\xc7'; break; /* PT: Ç */
+            case KEY_COMMA:      ch = ';';    break; /* PT: ; */
+            case KEY_DOT:        ch = ':';    break; /* PT: : */
+            case KEY_SLASH:      ch = '_';    break; /* PT: _ */
+            default: break;
+            }
+        }
+        if (ch) { ta_insert_char(d, ch); w->dirty = 1; return 1; }
     }
 
     return 0;

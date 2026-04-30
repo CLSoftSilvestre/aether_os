@@ -375,8 +375,9 @@ static void path_resolve(char *out, int outsz, const char *rel)
 
     if (!rel || rel[0] == '\0') {
         /* empty → stay in CWD */
-        for (int i = 0; g_cwd[i] && i < outsz - 1; i++) out[i] = g_cwd[i];
-        out[outsz - 1] = '\0';
+        int i;
+        for (i = 0; g_cwd[i] && i < outsz - 1; i++) out[i] = g_cwd[i];
+        out[i] = '\0';
         return;
     }
 

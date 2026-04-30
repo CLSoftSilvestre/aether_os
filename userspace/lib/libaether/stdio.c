@@ -157,9 +157,12 @@ static const char kc_ascii[KEY_MAX] = {
     [KEY_0]='0',[KEY_1]='1',[KEY_2]='2',[KEY_3]='3',[KEY_4]='4',
     [KEY_5]='5',[KEY_6]='6',[KEY_7]='7',[KEY_8]='8',[KEY_9]='9',
     [KEY_ENTER]='\n',[KEY_BACKSPACE]='\b',[KEY_TAB]='\t',[KEY_SPACE]=' ',
-    [KEY_MINUS]='-',[KEY_EQUALS]='=',[KEY_LBRACKET]='[',[KEY_RBRACKET]=']',
-    [KEY_BACKSLASH]='\\',[KEY_SEMICOLON]=';',[KEY_APOSTROPHE]='\'',
-    [KEY_COMMA]=',',[KEY_DOT]='.',[KEY_SLASH]='/',[KEY_GRAVE]='`',
+    /* PT-PT layout: punctuation/symbol keys */
+    [KEY_GRAVE]='\\',[KEY_MINUS]='\'',[KEY_EQUALS]='\xab', /* \, ', « */
+    [KEY_LBRACKET]='+',[KEY_RBRACKET]=0,                  /* +, dead-´ */
+    [KEY_BACKSLASH]='~',                                   /* dead-~ */
+    [KEY_SEMICOLON]='\xe7',[KEY_APOSTROPHE]='\xba',        /* ç, º */
+    [KEY_COMMA]=',',[KEY_DOT]='.',[KEY_SLASH]='-',
 };
 
 static const char kc_ascii_shift[KEY_MAX] = {
@@ -169,12 +172,16 @@ static const char kc_ascii_shift[KEY_MAX] = {
     [KEY_P]='P',[KEY_Q]='Q',[KEY_R]='R',[KEY_S]='S',[KEY_T]='T',
     [KEY_U]='U',[KEY_V]='V',[KEY_W]='W',[KEY_X]='X',[KEY_Y]='Y',
     [KEY_Z]='Z',
-    [KEY_0]=')',[KEY_1]='!',[KEY_2]='@',[KEY_3]='#',[KEY_4]='$',
-    [KEY_5]='%',[KEY_6]='^',[KEY_7]='&',[KEY_8]='*',[KEY_9]='(',
+    /* PT-PT shifted number row: =!"#$%&/() */
+    [KEY_0]='=',[KEY_1]='!',[KEY_2]='"',[KEY_3]='#',[KEY_4]='$',
+    [KEY_5]='%',[KEY_6]='&',[KEY_7]='/',[KEY_8]='(',[KEY_9]=')',
     [KEY_ENTER]='\n',[KEY_BACKSPACE]='\b',[KEY_TAB]='\t',[KEY_SPACE]=' ',
-    [KEY_MINUS]='_',[KEY_EQUALS]='+',[KEY_LBRACKET]='{',[KEY_RBRACKET]='}',
-    [KEY_BACKSLASH]='|',[KEY_SEMICOLON]=':',[KEY_APOSTROPHE]='"',
-    [KEY_COMMA]='<',[KEY_DOT]='>',[KEY_SLASH]='?',[KEY_GRAVE]='~',
+    /* PT-PT shifted punctuation */
+    [KEY_GRAVE]='|',[KEY_MINUS]='?',[KEY_EQUALS]='\xbb', /* |, ?, » */
+    [KEY_LBRACKET]='*',[KEY_RBRACKET]='`',               /* *, dead-` */
+    [KEY_BACKSLASH]='^',                                  /* dead-^ */
+    [KEY_SEMICOLON]='\xc7',[KEY_APOSTROPHE]='\xaa',       /* Ç, ª */
+    [KEY_COMMA]=';',[KEY_DOT]=':',[KEY_SLASH]='_',
 };
 
 static char keycode_to_char(key_event_t ev)
