@@ -157,6 +157,18 @@ _zero_bss:
 _bss_done:
 
     /*
+     * Enable FP/SIMD access from EL0.
+     * CPACR_EL1.FPEN [21:20] = 0b11  → no trapping at EL0 or EL1.
+     * Reset value is 0b00 (trap everything); the kernel uses
+     * -mgeneral-regs-only so it never touches FP registers itself,
+     * but userspace processes need them for any double-precision math.
+     * EC=0x07 ("Trapped SIMD/FP access") is the fault if we skip this.
+     */
+    mov x0, #(3 << 20)
+    msr CPACR_EL1, x0
+    isb
+
+    /*
      * Jump to the C kernel entry point.
      * bl = Branch with Link = CALL in 8086.
      * Return address is stored in x30 (link register).

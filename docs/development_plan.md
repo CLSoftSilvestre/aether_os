@@ -1,8 +1,8 @@
 # AetherOS — Living Development Plan
 
-> **Last updated:** 2026-04-29  
+> **Last updated:** 2026-04-30  
 > **Current Phase:** Phase 5 — Advanced Systems  
-> **Overall Status:** Phase 3 complete ✓  Phase 4.0 complete ✓  Phase 4.1 complete ✓  Phase 4.2 complete ✓  Phase 4.3 complete ✓  Phase 4.4 complete ✓  Phase 4.5 complete ✓  Phase 4.6 complete ✓  Phase 4.7 complete ✓  Phase 5.1 in progress 🔧  Phase 5.2 in progress 🔧  Phase 5.3 complete ✓  Phase 5.4 in progress 🔧  Phase 5.5 planned 📋
+> **Overall Status:** Phase 3 complete ✓  Phase 4.0 complete ✓  Phase 4.1 complete ✓  Phase 4.2 complete ✓  Phase 4.3 complete ✓  Phase 4.4 complete ✓  Phase 4.5 complete ✓  Phase 4.6 complete ✓  Phase 4.7 complete ✓  Phase 5.1 in progress 🔧  Phase 5.2 in progress 🔧  Phase 5.3 complete ✓  Phase 5.4 in progress 🔧  Phase 5.5 code complete 🔧
 
 ---
 
@@ -1338,40 +1338,42 @@ bytes) onto the child's initial stack before `launch_el0`. `crt0.S` picks them u
 #### Tasks
 
 **5.5.1 — FAT32 write support**
-- [ ] **5.5.1** `kernel/fs/fat32.c` — `fat32_write_file(path, buf, len)`
+- [x] **5.5.1** `kernel/fs/fat32.c` — `fat32_write_file(path, buf, len)`
   - Allocate cluster chain for new file; write data sectors; update directory entry
   - `fat32_create_file(path)` — create empty file and directory entry
   - Flush: `virtio_blk_write_sectors()` for each dirty cluster and FAT sector
   - `vfs_write` + `vfs_create` in `vfs.c`; syscalls `SYS_FS_WRITE (804)` + `SYS_FS_CREATE (805)`
 
 **5.5.2 — Process arguments (argc/argv)**
-- [ ] **5.5.2** `kernel/core/process.c` — `process_spawn_child_args(path, argv, argc)`
-  - After ELF load, copy argv strings onto user stack (below stack pointer)
-  - Push argv pointer array, then set x0=argc, x1=argv_ptr before eret
-- [ ] **5.5.3** `userspace/lib/crt0.S` — accept x0/x1 as argc/argv, pass to `main(argc, argv)`
-- [ ] **5.5.4** `kernel/core/syscall.c` + `sys.h` — `SYS_SPAWN_ARGS (1 extended)` / `sys_spawn_args()`
+- [x] **5.5.2** `kernel/core/process.c` — `process_spawn_child_args(path, argv, argc)`
+  - After ELF load, copy argv strings onto user stack; push argv pointer array; set x0=argc, x1=argv_ptr before eret
+  - Also fixed `task_exit()` pipe fd cleanup (write_open decrement) so pipe_read returns EOF after child exits
+- [x] **5.5.3** `userspace/lib/crt0.S` — preserve x0/x1 across BSS zero; pass to `main(argc, argv)`
+- [x] **5.5.4** `kernel/core/syscall.c` + `sys.h` + `syscall.h` — `SYS_SPAWN_ARGS (29)` / `sys_spawn_args()`
+  - `kernel/include/aether/scheduler.h`: added `el0_argc`, `el0_argv` to `task_t`; updated `task_create_isolated` + `task_get_user_regs` signatures
+  - `kernel/mm/vmm.c`: `launch_el0` now takes x0_argc, x1_argv; moves them into registers before eret
+  - `userspace/lib/libaether/stdlib.c`: added `realloc()` (alloc+copy) for Lua GC support
 
 **5.5.3 — Lua 5.4 port (`aether_interp`)**
-- [ ] **5.5.5** Download Lua 5.4 source; add to `userspace/vendor/lua54/`
-- [ ] **5.5.6** `userspace/vendor/lua54/luaconf_aether.h` — platform shim
-  - Replace `FILE*` I/O with syscall wrappers; disable dynamic library loading; cap memory at 2MB
-- [ ] **5.5.7** `userspace/apps/aether_interp/main.c`
+- [x] **5.5.5** `scripts/fetch_lua.sh` — download Lua 5.4.7 source to `userspace/vendor/lua54/`
+- [x] **5.5.6** `userspace/vendor/lua54/aether/luaconf.h` — platform shim
+  - Minimal FILE* typedef; fwrite/fprintf/fopen stubs; locale/time/signal/errno stubs; sscanf/sprintf stubs
+  - `lua_writestring` → `fwrite(s,1,l,stdout)` where stdout is our LuaFile_t{fd=1}
+  - `LUA_USE_LONGJMP`, `LUA_NOENV`, no dynamic loading
+- [x] **5.5.7** `userspace/apps/aether_interp/main.c`
   - `main(argc, argv)`: opens `argv[1]` via `sys_fs_open`, reads into buffer, calls `luaL_dostring`
-  - Stdout hook: `lua_print` → `sys_write(1, ...)` → stdout pipe → editor output panel
-  - `os.version` global set to AetherOS version string
-  - `os.spawn(path)` binding → `sys_spawn(path)` for scripts that launch other apps
-- [ ] **5.5.8** CMakeLists: build `aether_interp` ELF; add to initrd CPIO
+  - Custom `lua_alloc_fn` with 2MB static pool (bump+copy allocator — handles Lua GC realloc calls)
+  - Custom `os` table: `os.version="AetherOS 0.5.5"`, `os.spawn(path)`, `os.ticks()`, `os.exit()`
+- [x] **5.5.8** CMakeLists: `liblua54` static lib + `user_aether_interp` ELF; guarded by Lua source presence check
 
 **5.5.4 — AetherEditor app**
-- [ ] **5.5.9** `userspace/apps/aether_editor/main.c` — libwidget-based editor
-  - `widget_run()` loop with textarea (editor), output panel (label / scrolling text), toolbar buttons
-  - "Run": writes textarea content to `/tmp/script.as` via `SYS_FS_CREATE + SYS_FS_WRITE`,
-    creates a pipe pair, spawns `aether_interp /tmp/script.as` with stdout → pipe write end,
-    reads pipe read end into output panel asynchronously
-  - "Save": prompts for filename (text input dialog), writes to `/scripts/<name>.as`
-  - "Open": shows file picker list view over `/scripts/` directory
-  - Line numbers column (30px) drawn beside textarea; monospace font
-- [ ] **5.5.10** CMakeLists + initrd + `/apps/aether_editor.app` manifest
+- [x] **5.5.9** `userspace/apps/aether_editor/main.c` — libwidget-based editor
+  - `widget_run()` loop with textarea (source), output label (results), Run/Clear/Open/Save toolbar
+  - "Run": writes to `/tmp/script.as`, creates pipe, dup2 write end to fd[1], `sys_spawn_args("/aether_interp")`, restores fd[1], `sys_waitpid`, reads pipe output into output label
+  - "Save": filename textinput dialog → writes to `/scripts/<name>.as`
+  - "Open": listview picker over `/scripts/` directory → loads into textarea
+- [x] **5.5.10** CMakeLists + initrd + `/apps/aether_editor.app` manifest (already in make_disk.sh)
+  - `scripts/make_disk.sh`: adds `/scripts/` dir with sample `hello.as`; adds `/tmp/` dir
 
 **5.5.5 — Integration test**
 - [ ] **5.5.11** Boot → double-click AetherEditor icon → editor opens

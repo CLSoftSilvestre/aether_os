@@ -18,4 +18,11 @@ int process_spawn(const char *path);
  */
 int process_spawn_child(const char *path, u32 ppid, u32 *child_pid_out);
 
+/*
+ * process_spawn_child_args — like process_spawn_child but places argc/argv
+ * on the child's initial user stack.  x0=argc and x1=argv_ptr on first eret.
+ */
+int process_spawn_child_args(const char *path, u32 ppid, u32 *child_pid_out,
+                              const char *const *argv, u32 argc);
+
 #endif /* AETHER_PROCESS_H */

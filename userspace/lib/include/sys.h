@@ -58,6 +58,9 @@
 /* Window Manager syscalls (Phase 5.3) */
 #define SYS_WM_PUSH_EVENT  28
 
+/* Process argv syscall (Phase 5.5) */
+#define SYS_SPAWN_ARGS     29
+
 /* WM event types (match kernel wm.h) */
 #define WM_EV_REDRAW         0xFEu
 #define WM_EV_WINDOW_CLOSED  0xFFu
@@ -142,6 +145,14 @@ static inline void sys_sleep(long ticks)
 static inline long sys_spawn(const char *path)
 {
     return _sys1(SYS_SPAWN, (long)(const void *)path);
+}
+
+/* Spawn with argv: kernel copies up to 16 strings onto the child's user stack */
+static inline long sys_spawn_args(const char *path,
+                                   const char *const *argv, long argc)
+{
+    return _sys3(SYS_SPAWN_ARGS, (long)(const void *)path,
+                 (long)(const void *)argv, argc);
 }
 
 /* Wait for child PID; writes exit code to *status (may be NULL) */

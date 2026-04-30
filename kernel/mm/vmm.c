@@ -368,19 +368,22 @@ void vmm_free_process_pt(uintptr_t l1_phys)
  *   - eret executes: PC ← ELR_EL1, PSTATE ← SPSR_EL1
  */
 __attribute__((noreturn))
-void launch_el0(uintptr_t entry, uintptr_t user_stack)
+void launch_el0(uintptr_t entry, uintptr_t user_stack,
+                uintptr_t x0_argc, uintptr_t x1_argv)
 {
-    kinfo("VMM: launching EL0 process — entry=%p stack=%p\n",
-          (void *)entry, (void *)user_stack);
+    kinfo("VMM: launching EL0 process — entry=%p stack=%p argc=%lu\n",
+          (void *)entry, (void *)user_stack, (unsigned long)x0_argc);
 
     __asm__ volatile(
         "msr ELR_EL1,  %0\n"
         "msr SPSR_EL1, %1\n"   /* EL0t, all interrupts unmasked */
         "msr SP_EL0,   %2\n"
+        "mov x0,       %3\n"   /* argc */
+        "mov x1,       %4\n"   /* argv user VA */
         "eret\n"
         :
-        : "r"(entry), "r"(0UL), "r"(user_stack)
-        : "memory"
+        : "r"(entry), "r"(0UL), "r"(user_stack), "r"(x0_argc), "r"(x1_argv)
+        : "memory", "x0", "x1"
     );
 
     __builtin_unreachable();

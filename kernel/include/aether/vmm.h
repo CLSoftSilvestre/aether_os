@@ -145,7 +145,8 @@
 void vmm_init(void);
 
 __attribute__((noreturn))
-void launch_el0(uintptr_t entry, uintptr_t user_stack);
+void launch_el0(uintptr_t entry, uintptr_t user_stack,
+                uintptr_t x0_argc, uintptr_t x1_argv);
 
 /* ── Per-process page table API (Phase 4.3) ──────────────────────────── */
 

@@ -29,6 +29,21 @@ void free(void *ptr)
     (void)ptr;   /* bump allocator — no-op */
 }
 
+void *realloc(void *ptr, size_t size)
+{
+    if (!size) return NULL;
+    void *n = malloc(size);
+    if (!n) return NULL;
+    if (ptr) {
+        /* Copy old data — we don't know the old size, so copy up to 'size'.
+           This is safe: the bump allocator never unmaps old blocks. */
+        unsigned char *s = (unsigned char *)ptr;
+        unsigned char *d = (unsigned char *)n;
+        for (size_t i = 0; i < size; i++) d[i] = s[i];
+    }
+    return n;
+}
+
 /* ── atoi / atol ─────────────────────────────────────────────────────── */
 
 long atol(const char *s)
@@ -46,6 +61,9 @@ int atoi(const char *s)
 {
     return (int)atol(s);
 }
+
+int abs(int x)   { return x < 0 ? -x : x; }
+long labs(long x){ return x < 0 ? -x : x; }
 
 /* ── exit ────────────────────────────────────────────────────────────── */
 

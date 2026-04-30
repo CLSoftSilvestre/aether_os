@@ -171,6 +171,7 @@ struct widget_t {
     widget_state_t  state;
     int             dirty;      /* 1 = needs redraw */
     int             focusable;  /* 1 = Tab can land here */
+    int             hidden;     /* 1 = skip draw + hit-test */
 
     widget_draw_fn  draw_fn;
     widget_event_fn event_fn;

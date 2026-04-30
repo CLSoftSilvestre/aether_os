@@ -99,6 +99,7 @@ static int       s_focus_count;
 
 static void collect_focusable(widget_t *w)
 {
+    if (w->hidden) return;
     if (w->focusable && s_focus_count < FOCUS_MAX)
         s_focus_list[s_focus_count++] = w;
     for (int i = 0; i < w->nchildren; i++)
@@ -128,6 +129,8 @@ static void focus_cycle(widget_t *root, int direction)
 static widget_t *hit_test(widget_t *w, int mx, int my,
                            int parent_ax, int parent_ay)
 {
+    if (w->hidden) return NULL;
+
     int ax = parent_ax + w->bounds.x;
     int ay = parent_ay + w->bounds.y;
 
@@ -156,6 +159,8 @@ static widget_t *hit_test(widget_t *w, int mx, int my,
  */
 static void draw_recursive(widget_t *w, int parent_ax, int parent_ay, int force)
 {
+    if (w->hidden) return;
+
     int ax = parent_ax + w->bounds.x;
     int ay = parent_ay + w->bounds.y;
 

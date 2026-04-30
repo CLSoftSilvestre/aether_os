@@ -215,6 +215,17 @@ static long do_sys_spawn(const char *path)
     return rc == 0 ? (long)child_pid : -1L;
 }
 
+/* SYS_SPAWN_ARGS (29): path + user argv[] + argc — x1 points to char*[] */
+static long do_sys_spawn_args(const char *path,
+                               const char *const *argv, u32 argc)
+{
+    if (!path || !argv || argc == 0) return -1;
+    u32 child_pid = 0;
+    u32 ppid = task_current_pid();
+    int rc = process_spawn_child_args(path, ppid, &child_pid, argv, argc);
+    return rc == 0 ? (long)child_pid : -1L;
+}
+
 static long do_sys_waitpid(long pid, int *status)
 {
     return (long)task_waitpid((u32)pid, status);
@@ -635,6 +646,10 @@ long syscall_dispatch(trap_frame_t *frame)
 
     case SYS_SPAWN:
         return do_sys_spawn((const char *)arg0);
+
+    case SYS_SPAWN_ARGS:
+        return do_sys_spawn_args((const char *)arg0,
+                                  (const char *const *)arg1, (u32)arg2);
 
     case SYS_KILL:
         return do_sys_kill((long)arg0);

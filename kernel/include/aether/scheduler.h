@@ -102,6 +102,8 @@ typedef struct {
     /* User-process fields (0 for kernel tasks) */
     uintptr_t     el0_entry;        /* EL0 entry point virtual address */
     uintptr_t     el0_sp;           /* EL0 initial stack pointer */
+    u32           el0_argc;         /* argc to pass in x0 on first eret */
+    uintptr_t     el0_argv;         /* user-VA of argv[] array (x1 on first eret) */
     uintptr_t     l1_table_phys;    /* per-process L1 page table PA (0 = global) */
     uintptr_t     user_code_phys;   /* physical base of ELF pages (0 = identity) */
     u32           user_code_pages;  /* page count of ELF allocation */
@@ -137,6 +139,7 @@ int task_create_isolated(uintptr_t el0_entry, uintptr_t el0_sp,
                          uintptr_t l1_phys, u32 ppid,
                          uintptr_t user_code_phys, u32 user_code_pages,
                          uintptr_t user_stack_phys, u32 user_stack_pages,
+                         u32 argc, uintptr_t argv_user_va,
                          u32 *pid_out);
 
 /*
@@ -144,7 +147,8 @@ int task_create_isolated(uintptr_t el0_entry, uintptr_t el0_sp,
  * the current task.  Called from the user-task trampoline before eret.
  */
 void task_get_user_regs(uintptr_t *entry_out, uintptr_t *sp_out,
-                        uintptr_t *l1_phys_out);
+                        uintptr_t *l1_phys_out,
+                        u32 *argc_out, uintptr_t *argv_out);
 
 /*
  * task_waitpid — block until child PID exits or is already a zombie.

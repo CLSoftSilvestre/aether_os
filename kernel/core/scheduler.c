@@ -202,6 +202,7 @@ int task_create_isolated(uintptr_t el0_entry, uintptr_t el0_sp,
                          uintptr_t l1_phys, u32 ppid,
                          uintptr_t user_code_phys, u32 user_code_pages,
                          uintptr_t user_stack_phys, u32 user_stack_pages,
+                         u32 argc, uintptr_t argv_user_va,
                          u32 *pid_out)
 {
     task_t *t = alloc_task(trampoline, name);
@@ -209,6 +210,8 @@ int task_create_isolated(uintptr_t el0_entry, uintptr_t el0_sp,
 
     t->el0_entry        = el0_entry;
     t->el0_sp           = el0_sp;
+    t->el0_argc         = argc;
+    t->el0_argv         = argv_user_va;
     t->l1_table_phys    = l1_phys;
     t->ppid             = ppid;
     t->user_code_phys   = user_code_phys;
@@ -239,12 +242,15 @@ int task_create_isolated(uintptr_t el0_entry, uintptr_t el0_sp,
 }
 
 void task_get_user_regs(uintptr_t *entry_out, uintptr_t *sp_out,
-                        uintptr_t *l1_phys_out)
+                        uintptr_t *l1_phys_out,
+                        u32 *argc_out, uintptr_t *argv_out)
 {
     task_t *t = &g_tasks[g_current_idx];
     if (entry_out)   *entry_out   = t->el0_entry;
     if (sp_out)      *sp_out      = t->el0_sp;
     if (l1_phys_out) *l1_phys_out = t->l1_table_phys;
+    if (argc_out)    *argc_out    = t->el0_argc;
+    if (argv_out)    *argv_out    = t->el0_argv;
 }
 
 void task_yield(void)
@@ -308,6 +314,14 @@ void task_exit(void)
         for (u32 i = 0; i < t->user_stack_pages; i++)
             pmm_free_page(t->user_stack_phys + (uintptr_t)i * PMM_PAGE_SIZE);
         t->user_stack_phys = 0;
+    }
+
+    /* Close all pipe fds so pipe_read() in the parent gets EOF */
+    for (u32 i = 0; i < PROC_MAX_FD; i++) {
+        fd_entry_t *e = &t->fd_table[i];
+        if (e->type == FD_TYPE_PIPE_R) pipe_close_read((int)e->pipe_idx);
+        if (e->type == FD_TYPE_PIPE_W) pipe_close_write((int)e->pipe_idx);
+        e->type = FD_TYPE_CLOSED;
     }
 
     if (t->ppid) {

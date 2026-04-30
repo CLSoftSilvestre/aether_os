@@ -64,6 +64,9 @@
 /* Window Manager (Phase 5.3) */
 #define SYS_WM_PUSH_EVENT  28  /* (pid, event_u64) → 0; injects into PID's ring */
 
+/* Process argv (Phase 5.5) */
+#define SYS_SPAWN_ARGS     29  /* (path, argv[], argc) → child PID or -1        */
+
 /* Clipboard (Phase 5.3) */
 #define SYS_CLIPBOARD_WRITE 26 /* (buf_ptr, len) → 0; stores up to 4KB       */
 #define SYS_CLIPBOARD_READ  27 /* (buf_ptr, max_len) → actual bytes copied    */

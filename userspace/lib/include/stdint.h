@@ -14,4 +14,10 @@ typedef signed long        int64_t;
 typedef unsigned long      uintptr_t;
 typedef long               intptr_t;
 
+typedef unsigned long long uintmax_t;
+typedef long long          intmax_t;
+
+typedef long               ptrdiff_t;
+typedef unsigned long      size_t;
+
 #endif /* _STDINT_H */
