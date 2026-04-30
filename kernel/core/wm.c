@@ -201,8 +201,17 @@ void wm_move(int id, int x, int y)
     if (id < 0 || id >= WM_MAX_WINDOWS || !g_wins[id].active)
         return;
 
+    /* Snapshot old rect before moving */
+    int old_x = g_wins[id].x;
+    int old_y = g_wins[id].y;
+    int w     = g_wins[id].w;
+    int h     = g_wins[id].h;
+
     g_wins[id].x = x;
     g_wins[id].y = y;
+
+    /* Tell init to repaint the region the window just vacated */
+    wm_deliver_to_pid(1, wm_pack_window_closed(old_x, old_y, w, h));
 
     /* Notify the window's owner so it can redraw at the new position */
     wm_deliver_to_pid(g_wins[id].pid, wm_pack_redraw(x, y));
