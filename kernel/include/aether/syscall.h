@@ -99,6 +99,7 @@
 #define SYS_FS_READDIR   803  /* (path_ptr, buf_ptr, len) → bytes written or -1 */
 #define SYS_FS_WRITE     804  /* (vfd, buf_ptr, len) → bytes written or -1      */
 #define SYS_FS_CREATE    805  /* (path_ptr) → vfd (>=200) or -1 (FAT32 only)   */
+#define SYS_FS_MKDIR     806  /* (path_ptr) → 0 or -1 (FAT32 only)             */
 
 /* Networking syscalls (Phase 5.1) */
 #define SYS_NET_STATUS   700  /* (buf_ptr) → 0; fills net_status_t in user buf  */

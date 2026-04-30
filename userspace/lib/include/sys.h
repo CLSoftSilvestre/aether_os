@@ -520,6 +520,7 @@ static inline long sys_fs_readdir(const char *path, char *buf, long len)
 
 #define SYS_FS_WRITE  804
 #define SYS_FS_CREATE 805
+#define SYS_FS_MKDIR  806
 
 /* Create (or truncate) a file by path; returns vfd (>=200) or -1 */
 static inline long sys_fs_create(const char *path)
@@ -531,6 +532,12 @@ static inline long sys_fs_create(const char *path)
 static inline long sys_fs_write(long vfd, const void *buf, long len)
 {
     return _sys3(SYS_FS_WRITE, vfd, (long)buf, len);
+}
+
+/* Create a directory by path (FAT32 only); returns 0 or -1 */
+static inline long sys_fs_mkdir(const char *path)
+{
+    return _sys1(SYS_FS_MKDIR, (long)(const void *)path);
 }
 
 /* ── String helpers (no libc) ────────────────────────────────────── */

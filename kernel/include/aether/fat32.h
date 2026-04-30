@@ -22,5 +22,6 @@ int  fat32_readdir(const char *path, char *buf, u32 len); /* returns bytes writt
 /* Write support — creates/truncates a file; only 8.3-compatible names */
 int  fat32_create (const char *path);               /* returns handle 0..7 or -1 */
 int  fat32_write  (int fh, const u8 *buf, u32 len); /* bytes written or -1 */
+int  fat32_mkdir  (const char *path);               /* create directory; returns 0 or -1 */
 
 #endif /* AETHER_FAT32_H */

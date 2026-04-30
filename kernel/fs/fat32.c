@@ -801,6 +801,100 @@ int fat32_create(const char *path)
     return slot;
 }
 
+/* ── Public: mkdir ───────────────────────────────────────────────────────── */
+
+int fat32_mkdir(const char *path)
+{
+    if (!g_mounted || !path) return -1;
+    while (*path == '/') path++;
+    if (!*path) return -1;
+
+    /* Split parent dir from the new directory name */
+    const char *last_slash = (void *)0;
+    for (const char *q = path; *q; q++) if (*q == '/') last_slash = q;
+
+    u32 dir_cluster = g_bpb.root_cluster;
+    const char *dirname = path;
+
+    if (last_slash) {
+        char parent[261];
+        int plen = (int)(last_slash - path);
+        if (plen >= 261) return -1;
+        for (int i = 0; i < plen; i++) parent[i] = path[i];
+        parent[plen] = '\0';
+
+        u32 cl = 0u; u8 attr = 0u;
+        if (lookup_path(parent, &cl, (u32 *)0, &attr) != 0) return -1;
+        if (!(attr & ATTR_DIRECTORY)) return -1;
+        dir_cluster = cl;
+        dirname     = last_slash + 1;
+    }
+    if (!dirname[0]) return -1;
+
+    /* Reject if name already exists */
+    u64 dummy_lba = 0u; u32 dummy_off = 0u, dummy_cl = 0u;
+    if (find_dirent_loc(dir_cluster, dirname,
+                        &dummy_lba, &dummy_off, &dummy_cl, (u32 *)0) == 0)
+        return -1;   /* already exists */
+
+    /* Allocate a cluster for the new directory's data */
+    u32 new_cluster = alloc_cluster();
+    if (new_cluster == 0u) return -1;
+
+    /* Zero-fill the new cluster, then write . and .. entries */
+    u32 spc = g_bpb.sectors_per_cluster;
+    u32 lba = cluster_to_lba(new_cluster);
+    for (int i = 0; i < 512; i++) g_sector_buf[i] = 0;
+    for (u32 s = 0u; s < spc; s++) {
+        if (write_sector((u64)(lba + s), g_sector_buf) != 0) {
+            free_cluster_chain(new_cluster);
+            return -1;
+        }
+    }
+
+    /* Write "." entry pointing to the new directory itself */
+    if (read_sector((u64)lba, g_sector_buf) != 0) { free_cluster_chain(new_cluster); return -1; }
+    fat32_dirent_t *dot = (fat32_dirent_t *)g_sector_buf;
+    dot->name[0] = '.'; for (int i = 1; i < 8; i++) dot->name[i] = ' ';
+    for (int i = 0; i < 3; i++) dot->ext[i] = ' ';
+    dot->attr       = ATTR_DIRECTORY;
+    dot->nt_res     = 0u; dot->create_cs = 0u; dot->create_time = 0u;
+    dot->create_date= 0u; dot->access_date= 0u;
+    dot->cluster_hi = (u16)((new_cluster >> 16u) & 0xFFFFu);
+    dot->write_time = 0u; dot->write_date = 0u;
+    dot->cluster_lo = (u16)(new_cluster & 0xFFFFu);
+    dot->file_size  = 0u;
+
+    /* Write ".." entry pointing to parent */
+    fat32_dirent_t *dotdot = (fat32_dirent_t *)(g_sector_buf + 32);
+    dotdot->name[0] = '.'; dotdot->name[1] = '.';
+    for (int i = 2; i < 8; i++) dotdot->name[i] = ' ';
+    for (int i = 0; i < 3; i++) dotdot->ext[i] = ' ';
+    dotdot->attr       = ATTR_DIRECTORY;
+    dotdot->nt_res     = 0u; dotdot->create_cs = 0u; dotdot->create_time = 0u;
+    dotdot->create_date= 0u; dotdot->access_date= 0u;
+    u32 parent_cl = (dir_cluster == g_bpb.root_cluster) ? 0u : dir_cluster;
+    dotdot->cluster_hi = (u16)((parent_cl >> 16u) & 0xFFFFu);
+    dotdot->write_time = 0u; dotdot->write_date = 0u;
+    dotdot->cluster_lo = (u16)(parent_cl & 0xFFFFu);
+    dotdot->file_size  = 0u;
+
+    if (write_sector((u64)lba, g_sector_buf) != 0) { free_cluster_chain(new_cluster); return -1; }
+
+    /* Write the directory entry in the parent */
+    u64 dirent_lba = 0u; u32 dirent_off = 0u;
+    if (find_free_dirent_loc(dir_cluster, &dirent_lba, &dirent_off) != 0) {
+        free_cluster_chain(new_cluster);
+        return -1;
+    }
+    if (write_dirent_at(dirent_lba, dirent_off, dirname,
+                        new_cluster, 0u, ATTR_DIRECTORY) != 0) {
+        free_cluster_chain(new_cluster);
+        return -1;
+    }
+    return 0;
+}
+
 /* ── Public: write ───────────────────────────────────────────────────────── */
 
 int fat32_write(int fh, const u8 *buf, u32 len)

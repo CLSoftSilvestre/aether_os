@@ -240,6 +240,16 @@ int vfs_create(const char *path)
     return VFS_FD_BASE + slot;
 }
 
+/* ── Public: mkdir ───────────────────────────────────────────────────────── */
+
+int vfs_mkdir(const char *path)
+{
+    if (!path) return -1;
+    if (is_initrd_path(path) || is_afs_path(path)) return -1;
+    if (!fat32_ready()) return -1;
+    return fat32_mkdir(path);
+}
+
 /* ── Public: write ───────────────────────────────────────────────────────── */
 
 int vfs_write(int vfd, const u8 *buf, u32 len)

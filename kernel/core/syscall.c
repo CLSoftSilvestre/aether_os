@@ -749,6 +749,7 @@ long syscall_dispatch(trap_frame_t *frame)
     case SYS_FS_READDIR: return (long)vfs_readdir((const char *)arg0, (char *)arg1, (u32)arg2);
     case SYS_FS_CREATE:  return (long)vfs_create ((const char *)arg0);
     case SYS_FS_WRITE:   return (long)vfs_write  ((int)arg0, (const u8 *)arg1, (u32)arg2);
+    case SYS_FS_MKDIR:   return (long)vfs_mkdir  ((const char *)arg0);
 
     /* Networking (Phase 5.1) */
     case SYS_NET_STATUS: return do_sys_net_status(arg0);

@@ -2,8 +2,8 @@
  * AetherOS — AetherTerm
  * File: userspace/apps/aether_term/main.c
  *
- * Phase 5.1: adds net/ping/nslookup/wget commands on top of the Phase 4.6
- * WM integration (sys_wm_key_recv, WM_EV_REDRAW repositioning).
+ * Phase 5.6: adds CWD tracking and filesystem navigation commands (cd, mkdir,
+ * pwd, touch, rm) on top of Phase 5.1 networking.
  *
  * Window position is stored in g_win_x / g_win_y (mutable globals).
  * All drawing uses WX / WY macros that add the current offset so the window
@@ -340,9 +340,93 @@ static int term_readline(char *buf, int max)
 
 /* ── Shell built-ins ─────────────────────────────────────────────────────── */
 
-#define PROMPT    "aesh> "
 #define ARGV_MAX   16
 #define LINE_MAX  256
+
+/* ── Current working directory ───────────────────────────────────────────── */
+
+#define CWD_MAX  256
+static char g_cwd[CWD_MAX] = "/";
+
+/* Print the prompt including the CWD. */
+static void print_prompt(void)
+{
+    term_puts("aesh[");
+    term_puts(g_cwd);
+    term_puts("]> ");
+}
+
+/*
+ * path_resolve — build an absolute path from the CWD + user-supplied path.
+ *
+ * Rules:
+ *   - Empty or NULL  → copy CWD into out
+ *   - Starts with /  → absolute; copy as-is
+ *   - Anything else  → join CWD + "/" + path, then normalize
+ *
+ * Normalisation collapses "." components and resolves ".." against the
+ * accumulated result.  The result is always "/"-prefixed and never has a
+ * trailing slash (except for the root itself).
+ */
+static void path_resolve(char *out, int outsz, const char *rel)
+{
+    char tmp[CWD_MAX * 2];
+    int n = 0;
+
+    if (!rel || rel[0] == '\0') {
+        /* empty → stay in CWD */
+        for (int i = 0; g_cwd[i] && i < outsz - 1; i++) out[i] = g_cwd[i];
+        out[outsz - 1] = '\0';
+        return;
+    }
+
+    if (rel[0] == '/') {
+        /* absolute path */
+        for (int i = 0; rel[i] && i < (int)sizeof(tmp) - 1; i++) tmp[n++] = rel[i];
+    } else {
+        /* prepend CWD */
+        for (int i = 0; g_cwd[i] && n < (int)sizeof(tmp) - 1; i++) tmp[n++] = g_cwd[i];
+        if (n > 1 && tmp[n-1] != '/' && n < (int)sizeof(tmp) - 1) tmp[n++] = '/';
+        for (int i = 0; rel[i] && n < (int)sizeof(tmp) - 1; i++) tmp[n++] = rel[i];
+    }
+    tmp[n] = '\0';
+
+    /* Normalise: walk components, build result in out[] */
+    /* We use a simple stack stored inside out itself: out[0]='/' always. */
+    out[0] = '/'; out[1] = '\0';
+    int outlen = 1;
+
+    const char *p = tmp;
+    while (*p) {
+        while (*p == '/') p++;   /* skip slashes */
+        if (!*p) break;
+
+        /* collect one component */
+        const char *start = p;
+        while (*p && *p != '/') p++;
+        int clen = (int)(p - start);
+
+        if (clen == 1 && start[0] == '.') continue;  /* skip "." */
+
+        if (clen == 2 && start[0] == '.' && start[1] == '.') {
+            /* go up one level */
+            if (outlen > 1) {
+                outlen--;
+                while (outlen > 1 && out[outlen-1] != '/') outlen--;
+                if (outlen > 1 && out[outlen-1] == '/') outlen--;
+            }
+            out[outlen] = '\0';
+            continue;
+        }
+
+        /* append /component */
+        if (outlen + 1 + clen + 1 >= outsz) break;  /* would overflow */
+        if (outlen > 1) out[outlen++] = '/';
+        for (int i = 0; i < clen; i++) out[outlen++] = start[i];
+        out[outlen] = '\0';
+    }
+    if (outlen == 0) { out[0] = '/'; out[1] = '\0'; }
+}
 
 static int parse_args(char *line, char **argv, int maxargs)
 {
@@ -358,7 +442,12 @@ static void cmd_help(void)
     term_puts("Built-in commands:\n");
     term_puts("  help              show this message\n");
     term_puts("  echo [args]       print arguments\n");
-    term_puts("  ls [path]         list directory (default: /)\n");
+    term_puts("  pwd               print working directory\n");
+    term_puts("  cd [path]         change directory (.. goes up, / is root)\n");
+    term_puts("  ls [path]         list directory (default: CWD)\n");
+    term_puts("  mkdir <path>      create a directory (FAT32 only)\n");
+    term_puts("  touch <path>      create an empty file (FAT32 only)\n");
+    term_puts("  rm <path>         remove a file (not yet implemented)\n");
     term_puts("  cat <path>        print a file (disk or initrd)\n");
     term_puts("  mount             show mounted filesystems\n");
     term_puts("  disk              show disk usage\n");
@@ -377,7 +466,8 @@ static void cmd_help(void)
     term_puts("Filesystem paths:\n");
     term_puts("  /           FAT32 disk root (when disk.img attached)\n");
     term_puts("  /initrd/    embedded CPIO initrd (always available)\n");
-    term_puts("  /afs/       AetherOS Filesystem (virtio-blk hd1)\n\n");
+    term_puts("  /afs/       AetherOS Filesystem (virtio-blk hd1)\n");
+    term_puts("  Relative paths are resolved against the current CWD.\n\n");
     term_puts("Networking:\n");
     term_puts("  net               show IP/MAC/gateway/DNS\n");
     term_puts("  ping <ip>         ICMP echo to IP address\n");
@@ -396,18 +486,18 @@ static void cmd_echo(int argc, char **argv)
 
 static void cmd_ls(const char *path)
 {
-    /* Default path: "/" (disk root).  "/initrd" lists the initrd. */
-    if (!path || path[0] == '\0') path = "/";
+    char resolved[CWD_MAX];
+    path_resolve(resolved, sizeof(resolved), path);
 
     char buf[4096];
-    long n = sys_fs_readdir(path, buf, (long)sizeof(buf) - 1);
+    long n = sys_fs_readdir(resolved, buf, (long)sizeof(buf) - 1);
     if (n < 0) {
-        term_printf("ls: %s: no such directory\n", path);
+        term_printf("ls: %s: no such directory\n", resolved);
         return;
     }
     if (n == 0) { term_puts("(empty)\n"); return; }
     buf[n] = '\0';
-    term_printf("[%s]\n", path);
+    term_printf("[%s]\n", resolved);
     term_puts(buf);
     if (n > 0 && buf[n-1] != '\n') term_putc('\n');
 }
@@ -416,9 +506,12 @@ static void cmd_cat(const char *path)
 {
     if (!path || path[0] == '\0') { term_puts("usage: cat <path>\n"); return; }
 
+    char resolved[CWD_MAX];
+    path_resolve(resolved, sizeof(resolved), path);
+
     /* Try VFS first (handles both disk and /initrd/ paths) */
     char buf[4096];
-    long vfd = sys_fs_open(path);
+    long vfd = sys_fs_open(resolved);
     if (vfd >= 0) {
         long total = 0;
         long n;
@@ -435,11 +528,75 @@ static void cmd_cat(const char *path)
     }
 
     /* Fallback: try initrd directly (bare filename without /initrd/ prefix) */
-    long n = sys_initrd_read(path, buf, (long)sizeof(buf) - 1);
-    if (n < 0) { term_printf("cat: %s: not found\n", path); return; }
+    long n = sys_initrd_read(resolved, buf, (long)sizeof(buf) - 1);
+    if (n < 0) { term_printf("cat: %s: not found\n", resolved); return; }
     buf[n] = '\0';
     term_puts(buf);
     if (n > 0 && buf[n-1] != '\n') term_putc('\n');
+}
+
+/* ── Navigation commands ─────────────────────────────────────────────────── */
+
+static void cmd_pwd(void)
+{
+    term_puts(g_cwd);
+    term_putc('\n');
+}
+
+static void cmd_cd(const char *path)
+{
+    if (!path || path[0] == '\0') {
+        /* cd with no args → go to root, like a minimal shell convention */
+        g_cwd[0] = '/'; g_cwd[1] = '\0';
+        return;
+    }
+
+    char candidate[CWD_MAX];
+    path_resolve(candidate, sizeof(candidate), path);
+
+    /* Verify the target is a real directory by trying readdir */
+    char probe[16];
+    long n = sys_fs_readdir(candidate, probe, sizeof(probe));
+    if (n < 0) {
+        term_printf("cd: %s: no such directory\n", candidate);
+        return;
+    }
+
+    for (int i = 0; i < CWD_MAX; i++) { g_cwd[i] = candidate[i]; if (!candidate[i]) break; }
+}
+
+static void cmd_mkdir(const char *path)
+{
+    if (!path || path[0] == '\0') { term_puts("usage: mkdir <path>\n"); return; }
+
+    char resolved[CWD_MAX];
+    path_resolve(resolved, sizeof(resolved), path);
+
+    if (sys_fs_mkdir(resolved) < 0)
+        term_printf("mkdir: %s: failed (exists, read-only fs, or disk full)\n", resolved);
+    else
+        term_printf("mkdir: created %s\n", resolved);
+}
+
+static void cmd_touch(const char *path)
+{
+    if (!path || path[0] == '\0') { term_puts("usage: touch <path>\n"); return; }
+
+    char resolved[CWD_MAX];
+    path_resolve(resolved, sizeof(resolved), path);
+
+    long vfd = sys_fs_create(resolved);
+    if (vfd < 0) {
+        term_printf("touch: %s: failed\n", resolved);
+        return;
+    }
+    sys_fs_close(vfd);
+}
+
+static void cmd_rm(const char *path)
+{
+    (void)path;
+    term_puts("rm: not yet supported (FAT32 unlink not implemented)\n");
 }
 
 static void cmd_mount(void)
@@ -772,7 +929,7 @@ int main(void)
     char *argv[ARGV_MAX];
 
     for (;;) {
-        term_puts(PROMPT);
+        print_prompt();
         int n = term_readline(line, LINE_MAX);
         if (n == 0) continue;
 
@@ -792,7 +949,12 @@ int main(void)
 
         if      (strcmp(cmd, "help")     == 0) cmd_help();
         else if (strcmp(cmd, "echo")     == 0) cmd_echo(argc, argv);
+        else if (strcmp(cmd, "pwd")      == 0) cmd_pwd();
+        else if (strcmp(cmd, "cd")       == 0) cmd_cd(argc > 1 ? argv[1] : NULL);
         else if (strcmp(cmd, "ls")       == 0) cmd_ls(argc > 1 ? argv[1] : NULL);
+        else if (strcmp(cmd, "mkdir")    == 0) cmd_mkdir(argc > 1 ? argv[1] : NULL);
+        else if (strcmp(cmd, "touch")    == 0) cmd_touch(argc > 1 ? argv[1] : NULL);
+        else if (strcmp(cmd, "rm")       == 0) cmd_rm(argc > 1 ? argv[1] : NULL);
         else if (strcmp(cmd, "cat")      == 0) cmd_cat(argc > 1 ? argv[1] : NULL);
         else if (strcmp(cmd, "mount")    == 0) cmd_mount();
         else if (strcmp(cmd, "disk")     == 0) cmd_disk();
