@@ -1,7 +1,7 @@
 # AetherOS
 AetherOS is an experimental hobby operating system built from scratch, specifically designed for the Raspberry Pi 5 (AArch64) architecture. It emphasizes a modern development workflow using QEMU for emulation and testing.
 
-![Alttext](./screenshots/new_apps.png)
+![Alttext](./screenshots/Aetheros.png)
 
 ## Table of Contents
 [Why AetherOS](#why-aetheros)
@@ -104,7 +104,8 @@ A graphical terminal for interaction with AetherOS
 ![Alttext](./screenshots/terminal.png)
 
 ### Files browser
-File browser to view the files in the FS. For now just the content of the initrd, however the app will be updated to be able to visualize the content of FAT32 and AetherFS mounts.
+File browser to view the files in the FS. The app can show the content of the several drives mounted in the system like: initRD, FAT32 and AetherFS mounts if available.
+Double clicking one txt file will automayically open it in the Text Editor application, while the scripts file (.as) will open directly in the Script Editor.
 ![Alttext](./screenshots/files.png)
 
 ### Text Editor
