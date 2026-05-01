@@ -27,6 +27,7 @@ add_library(libaether STATIC
     lib/libaether/math.c
     lib/libaether/gfx.c
     lib/libaether/manifest.c
+    lib/libaether/vfs_mounts.c
     lib/libaether/setjmp.S
 )
 
@@ -47,6 +48,7 @@ add_library(libwidget STATIC
     lib/libwidget/listview.c
     lib/libwidget/scrollbar.c
     lib/libwidget/checkbox.c
+    lib/libwidget/treeview.c
 )
 
 target_include_directories(libwidget PUBLIC
@@ -114,14 +116,14 @@ set_target_properties(user_statusbar PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
 )
 
-# ── files — Phase 4.4 graphical file browser ─────────────────────────────────
+# ── files — Phase 5.6 two-pane file explorer ─────────────────────────────────
 add_executable(user_files
     apps/files/main.c
     lib/crt0.S
 )
 target_include_directories(user_files PRIVATE lib/include)
 target_compile_options(user_files PRIVATE ${USER_COMPILE_FLAGS})
-target_link_libraries(user_files PRIVATE libaether)
+target_link_libraries(user_files PRIVATE libwidget libaether)
 target_link_options(user_files PRIVATE
     -T ${USER_LINKER_SCRIPT} -nostdlib -static -Wl,--build-id=none
 )

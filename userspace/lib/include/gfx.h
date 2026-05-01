@@ -69,4 +69,18 @@ void gfx_icon_files(int x, int y);
 void gfx_icon_editor(int x, int y);
 void gfx_icon_generic(int x, int y, const char *label);
 
+/* ── Scalable file/drive icons (Phase 5.6) ─────────────────────────────── *
+ * Each function draws a sz×sz icon at pixel (x, y).
+ * sz = 14 for tree rows, sz = 48 for icon grid.
+ */
+void gfx_icon_drive_fat32(int x, int y, int sz);
+void gfx_icon_drive_initrd(int x, int y, int sz);
+void gfx_icon_drive_afs(int x, int y, int sz);
+void gfx_icon_folder(int x, int y, int sz);
+void gfx_icon_folder_open(int x, int y, int sz);
+void gfx_icon_file_txt(int x, int y, int sz);
+void gfx_icon_file_as(int x, int y, int sz);
+void gfx_icon_file_exec(int x, int y, int sz);
+void gfx_icon_file_generic(int x, int y, int sz);
+
 #endif /* _GFX_H */

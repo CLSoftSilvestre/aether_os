@@ -42,7 +42,41 @@ typedef enum {
     WIDGET_LISTVIEW,
     WIDGET_SCROLLBAR,
     WIDGET_CHECKBOX,
+    WIDGET_TREEVIEW,    /* Phase 5.6: collapsible directory tree */
 } widget_type_t;
+
+/* ── TreeView icon types (TVICON_*) ─────────────────────────────────────── */
+#define TVICON_DRIVE_FAT32   0
+#define TVICON_DRIVE_INITRD  1
+#define TVICON_DRIVE_AFS     2
+#define TVICON_FOLDER_CLOSED 3
+#define TVICON_FOLDER_OPEN   4
+#define TVICON_FILE          5
+
+/* ── TreeView node ──────────────────────────────────────────────────────── */
+typedef struct {
+    char          label[64];
+    unsigned char icon_type;     /* TVICON_* */
+    unsigned char depth;         /* 0 = drive root, 1+ = subdirs */
+    unsigned char has_children;
+    unsigned char expanded;
+    int           parent_idx;    /* -1 for roots */
+    void         *userdata;      /* pointer to path string in app's pool */
+} tv_node_t;
+
+/* ── TreeView retained state (app declares this; treeview_init stores ptr) ─ */
+typedef struct {
+    tv_node_t  nodes[128];
+    int        node_count;
+    int        visible[128];     /* indices into nodes[] for visible rows */
+    int        visible_count;
+    int        selected;         /* index into visible[], -1 = none */
+    int        scroll_offset;    /* first visible row index */
+    int        draw_ax, draw_ay; /* last absolute draw origin (for events) */
+    void     (*on_select)(tv_node_t *node, void *ctx);
+    void     (*on_expand)(tv_node_t *node, void *ctx);
+    void      *cb_ctx;
+} treeview_data_t;
 
 /* ── Visual state ───────────────────────────────────────────────────────── */
 typedef enum {
@@ -262,5 +296,31 @@ void checkbox_set_checked(widget_t *w, int checked);
 /* (not part of public API but declared here for cross-file access) */
 widget_t *widget_get_focused(void);
 void      widget_set_focused(widget_t *w);  /* dispatches FOCUS_IN/OUT */
+
+/* ── TreeView API (Phase 5.6) ───────────────────────────────────────────── */
+
+/* Init treeview widget; data is the caller-allocated treeview_data_t */
+void treeview_init(widget_t *w, int x, int y, int width, int height,
+                   treeview_data_t *data);
+
+/* Add a root drive node; returns index in nodes[] or -1 if pool full */
+int  treeview_add_root(widget_t *w, const char *label, unsigned char icon,
+                       void *userdata);
+
+/* Add a child of parent_idx; returns node index or -1 */
+int  treeview_add_child(widget_t *w, int parent_idx, const char *label,
+                        unsigned char icon, int has_children, void *userdata);
+
+/* Remove all descendants of parent_idx and compact the node pool */
+void treeview_remove_children(widget_t *w, int parent_idx);
+
+/* Wire up select/expand callbacks */
+void treeview_set_callbacks(widget_t *w,
+                            void (*on_select)(tv_node_t *node, void *ctx),
+                            void (*on_expand)(tv_node_t *node, void *ctx),
+                            void *ctx);
+
+/* Rebuild visible[] from the current expand/collapse state */
+void treeview_rebuild_visible(widget_t *w);
 
 #endif /* AETHER_WIDGET_H */

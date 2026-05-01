@@ -155,3 +155,214 @@ void gfx_icon_generic(int x, int y, const char *label)
     if (label && label[0])
         gfx_char(x + 20, y + 20, label[0], C_TEXT, cbg);
 }
+
+/* ── Scalable icon helpers ──────────────────────────────────────────────── */
+
+/* Scale n (designed for 48-px canvas) to actual sz */
+#define S(n)  ((int)(sz) * (n) / 48)
+
+/* ── Drive: FAT32 hard-disk silhouette ─────────────────────────────────── */
+void gfx_icon_drive_fat32(int x, int y, int sz)
+{
+    unsigned bg   = GFX_RGB( 20,  22,  32);
+    unsigned body = GFX_RGB(140, 140, 160);
+    unsigned top  = GFX_RGB(170, 170, 190);
+    unsigned dot  = GFX_RGB( 80, 200, 120);
+
+    gfx_fill(x, y, sz, sz, bg);
+    /* Disk body */
+    gfx_fill(x + S(4), y + S(10), S(40), S(28), body);
+    /* Top plate (lighter) */
+    gfx_fill(x + S(4), y + S(10), S(40), S(8),  top);
+    /* Platter circle approximation */
+    gfx_fill(x + S(18), y + S(20), S(12), S(12), GFX_RGB(100,100,120));
+    /* Activity LED */
+    if (sz >= 16)
+        gfx_fill(x + S(34), y + S(14), S(4), S(4), dot);
+    /* Label "FAT" — only at larger sizes */
+    if (sz >= 32) {
+        gfx_text((unsigned)(x + S(10)), (unsigned)(y + S(32)),
+                 "FAT", C_TEXT_DIM, body);
+    }
+}
+
+/* ── Drive: InitRD RAM chip ────────────────────────────────────────────── */
+void gfx_icon_drive_initrd(int x, int y, int sz)
+{
+    unsigned bg   = GFX_RGB( 12,  24,  28);
+    unsigned chip = GFX_RGB(  0, 160, 180);
+    unsigned pin  = GFX_RGB(  0, 120, 140);
+
+    gfx_fill(x, y, sz, sz, bg);
+    /* Chip body */
+    gfx_fill(x + S(8),  y + S(12), S(32), S(24), chip);
+    /* Pins left */
+    gfx_fill(x + S(2),  y + S(16), S(6),  S(4),  pin);
+    gfx_fill(x + S(2),  y + S(24), S(6),  S(4),  pin);
+    /* Pins right */
+    gfx_fill(x + S(40), y + S(16), S(6),  S(4),  pin);
+    gfx_fill(x + S(40), y + S(24), S(6),  S(4),  pin);
+    /* Label "RAM" */
+    if (sz >= 32) {
+        gfx_text((unsigned)(x + S(8)), (unsigned)(y + S(20)),
+                 "RAM", C_TEXT, chip);
+    }
+}
+
+/* ── Drive: AetherFS disc ──────────────────────────────────────────────── */
+void gfx_icon_drive_afs(int x, int y, int sz)
+{
+    unsigned bg   = GFX_RGB( 18,  10,  32);
+    unsigned disc = GFX_RGB( 50,  44,  90);
+    unsigned ring = GFX_RGB( 80,  68, 140);
+
+    gfx_fill(x, y, sz, sz, bg);
+    /* Disc circle (approximated with nested fills) */
+    gfx_fill(x + S(6),  y + S(6),  S(36), S(36), disc);
+    gfx_fill(x + S(10), y + S(10), S(28), S(28), ring);
+    gfx_fill(x + S(16), y + S(16), S(16), S(16), disc);
+    gfx_fill(x + S(20), y + S(20), S(8),  S(8),  GFX_RGB( 30, 26, 50));
+    /* "A" glyph in accent */
+    if (sz >= 16) {
+        int ax2 = x + S(20) - (sz >= 32 ? 4 : 2);
+        int ay2 = y + S(14);
+        gfx_char((unsigned)ax2, (unsigned)ay2, 'A', C_ACCENT, disc);
+    }
+}
+
+/* ── Folder: closed two-tone yellow shape ─────────────────────────────── */
+void gfx_icon_folder(int x, int y, int sz)
+{
+    unsigned bg   = GFX_RGB( 28,  26,  20);
+    unsigned gold = GFX_RGB(230, 175,  50);
+    unsigned dark = GFX_RGB(190, 145,  40);
+
+    gfx_fill(x, y, sz, sz, bg);
+    /* Tab (top-left notch) */
+    gfx_fill(x + S(4),  y + S(12), S(16), S(6),  gold);
+    /* Body */
+    gfx_fill(x + S(4),  y + S(18), S(40), S(24), gold);
+    /* Shadow edge */
+    gfx_fill(x + S(4),  y + S(38), S(40), S(4),  dark);
+    /* Interior lines at larger sizes */
+    if (sz >= 32) {
+        gfx_fill(x + S(10), y + S(24), S(26), S(2), dark);
+        gfx_fill(x + S(10), y + S(30), S(20), S(2), dark);
+    }
+}
+
+/* ── Folder: open with lifted front panel ─────────────────────────────── */
+void gfx_icon_folder_open(int x, int y, int sz)
+{
+    unsigned bg   = GFX_RGB( 28,  26,  20);
+    unsigned gold = GFX_RGB(230, 175,  50);
+    unsigned lite = GFX_RGB(250, 205,  80);
+    unsigned dark = GFX_RGB(190, 145,  40);
+
+    gfx_fill(x, y, sz, sz, bg);
+    /* Back panel */
+    gfx_fill(x + S(4),  y + S(14), S(40), S(28), dark);
+    /* Tab */
+    gfx_fill(x + S(4),  y + S(10), S(16), S(6),  gold);
+    /* Front panel lifted (shifted up 4px) */
+    gfx_fill(x + S(2),  y + S(22), S(42), S(20), gold);
+    /* Highlight on front lip */
+    gfx_fill(x + S(2),  y + S(22), S(42), S(3),  lite);
+    /* Interior visible behind front */
+    if (sz >= 24) {
+        gfx_fill(x + S(10), y + S(16), S(24), S(4), GFX_RGB(210, 190, 100));
+    }
+}
+
+/* ── File: plain text document with horizontal lines ─────────────────── */
+void gfx_icon_file_txt(int x, int y, int sz)
+{
+    unsigned bg   = GFX_RGB( 20,  20,  32);
+    unsigned page = GFX_RGB(220, 220, 230);
+    unsigned fold = GFX_RGB(160, 160, 180);
+    unsigned line = GFX_RGB(160, 160, 200);
+
+    gfx_fill(x, y, sz, sz, bg);
+    /* Page body */
+    gfx_fill(x + S(6),  y + S(4),  S(30), S(40), page);
+    /* Folded top-right corner */
+    gfx_fill(x + S(26), y + S(4),  S(10), S(10), bg);
+    gfx_fill(x + S(26), y + S(4),  S(10), S(10), fold);
+    gfx_fill(x + S(26), y + S(14), S(10), S(2),  fold);
+    gfx_fill(x + S(36), y + S(4),  S(2),  S(10), fold);
+    /* Text lines */
+    if (sz >= 20) {
+        gfx_fill(x + S(10), y + S(18), S(20), S(2), line);
+        gfx_fill(x + S(10), y + S(23), S(22), S(2), line);
+        gfx_fill(x + S(10), y + S(28), S(18), S(2), line);
+        gfx_fill(x + S(10), y + S(33), S(16), S(2), line);
+    }
+}
+
+/* ── File: AetherScript source with code glyph ────────────────────────── */
+void gfx_icon_file_as(int x, int y, int sz)
+{
+    unsigned bg   = GFX_RGB( 20,  20,  32);
+    unsigned page = GFX_RGB(220, 220, 230);
+    unsigned fold = GFX_RGB(160, 160, 180);
+
+    gfx_fill(x, y, sz, sz, bg);
+    /* Page */
+    gfx_fill(x + S(6),  y + S(4),  S(30), S(40), page);
+    gfx_fill(x + S(26), y + S(4),  S(10), S(10), bg);
+    gfx_fill(x + S(26), y + S(4),  S(10), S(10), fold);
+    gfx_fill(x + S(26), y + S(14), S(10), S(2),  fold);
+    gfx_fill(x + S(36), y + S(4),  S(2),  S(10), fold);
+    /* "{}" glyph in accent */
+    if (sz >= 24) {
+        gfx_char((unsigned)(x + S(12)), (unsigned)(y + S(20)),
+                 '{', C_ACCENT, page);
+        gfx_char((unsigned)(x + S(20)), (unsigned)(y + S(20)),
+                 '}', C_ACCENT, page);
+    } else {
+        gfx_fill(x + S(10), y + S(20), S(16), S(2), C_ACCENT);
+    }
+    /* accent bar at top of page */
+    gfx_fill(x + S(6), y + S(4), S(20), S(3), C_ACCENT);
+}
+
+/* ── File: executable / gear silhouette ───────────────────────────────── */
+void gfx_icon_file_exec(int x, int y, int sz)
+{
+    unsigned bg   = GFX_RGB( 16,  16,  26);
+    unsigned gear = GFX_RGB( 80, 200, 120);
+    unsigned hub  = GFX_RGB( 20,  60,  36);
+
+    gfx_fill(x, y, sz, sz, bg);
+    /* Outer gear ring (approximated as crossed rectangles + corners) */
+    gfx_fill(x + S(14), y + S(4),  S(20), S(40), gear);  /* vertical bar */
+    gfx_fill(x + S(4),  y + S(14), S(40), S(20), gear);  /* horizontal bar */
+    gfx_fill(x + S(10), y + S(8),  S(28), S(32), gear);  /* fill body */
+    /* Teeth stubs */
+    gfx_fill(x + S(18), y + S(2),  S(12), S(4),  gear);
+    gfx_fill(x + S(18), y + S(42), S(12), S(4),  gear);
+    gfx_fill(x + S(2),  y + S(18), S(4),  S(12), gear);
+    gfx_fill(x + S(42), y + S(18), S(4),  S(12), gear);
+    /* Hub */
+    gfx_fill(x + S(18), y + S(18), S(12), S(12), hub);
+}
+
+/* ── File: generic page with folded corner ────────────────────────────── */
+void gfx_icon_file_generic(int x, int y, int sz)
+{
+    unsigned bg   = GFX_RGB( 20,  20,  32);
+    unsigned page = GFX_RGB(200, 200, 218);
+    unsigned fold = GFX_RGB(140, 140, 165);
+
+    gfx_fill(x, y, sz, sz, bg);
+    /* Page body (excluding top-right fold area) */
+    gfx_fill(x + S(6),  y + S(4),  S(30), S(40), page);
+    /* Fold: overwrite corner with bg, draw fold triangle */
+    gfx_fill(x + S(26), y + S(4),  S(10), S(10), bg);
+    gfx_fill(x + S(26), y + S(4),  S(10), S(10), fold);
+    /* Fold crease lines */
+    gfx_fill(x + S(26), y + S(14), S(10), S(2),  fold);
+    gfx_fill(x + S(36), y + S(4),  S(2),  S(10), fold);
+}
+
+#undef S

@@ -483,7 +483,7 @@ static void build_ui(void)
 
 /* ── Main ────────────────────────────────────────────────────────────────── */
 
-int main(void)
+int main(int argc, const char *const *argv)
 {
     gfx_init();
 
@@ -491,6 +491,10 @@ int main(void)
 
     draw_frame();
     build_ui();
+
+    /* Phase 5.6: if launched with a path argument, load the file immediately */
+    if (argc >= 2 && argv[1] && argv[1][0])
+        load_script_from(argv[1]);
 
     g_ctx.win_x         = &g_win_x;
     g_ctx.win_y         = &g_win_y;
