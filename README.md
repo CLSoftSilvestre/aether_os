@@ -108,8 +108,12 @@ File browser to view the files in the FS. For now just the content of the initrd
 ![Alttext](./screenshots/files.png)
 
 ### Text Editor
-Application with basic text editor capabilities. Will be updated in the future to support LUA scripting and be the basic IDE for developing applications inside AetherOS.
+Default application for viewing and editing text files. It has the basic text editor capabilities.
 ![Alttext](./screenshots/text_editor.png)
+
+### Scripts Editor
+AetherOS supports LUA 5.4 scripting. This is the basic IDE for developing applications and running inside AetherOS.
+![Alttext](./screenshots/Script%20Editor.png)
 
 ### Calculator
 Self-explanatory application, however a fundamental piece of every operative system. The calculator allow users to make basic math calculations.
