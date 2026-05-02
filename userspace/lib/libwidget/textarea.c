@@ -25,6 +25,106 @@
 #define C_TA_CUR   C_ACCENT
 #define C_TA_LNUM  C_TEXT_DIM  /* line number colour */
 
+/* ── Syntax highlight palette (One Dark-inspired) ────────────────────────── */
+#define C_HL_KEYWORD  GFX_RGB(198, 120, 221)  /* purple-pink — keywords   */
+#define C_HL_STRING   GFX_RGB(152, 195, 121)  /* green       — strings    */
+#define C_HL_COMMENT  GFX_RGB( 92,  99, 112)  /* gray        — comments   */
+#define C_HL_NUMBER   GFX_RGB(209, 154, 102)  /* amber       — numbers    */
+#define C_HL_OPER     GFX_RGB( 86, 182, 194)  /* cyan        — operators  */
+
+static const char * const hl_keywords[] = {
+    "and", "break", "do", "else", "elseif", "end", "false",
+    "for", "function", "if", "in", "local", "nil", "not",
+    "or", "repeat", "return", "then", "true", "until", "while",
+    NULL
+};
+
+static int is_ident_char(char c)
+{
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+           (c >= '0' && c <= '9') || c == '_';
+}
+
+static int is_oper_char(char c)
+{
+    return c == '+' || c == '-' || c == '*' || c == '/' || c == '%' ||
+           c == '^' || c == '&' || c == '|' || c == '~' || c == '<' ||
+           c == '>' || c == '=' || c == '!' || c == '(' || c == ')' ||
+           c == '{' || c == '}' || c == '[' || c == ']' || c == ';' ||
+           c == ':' || c == ',' || c == '.' || c == '#';
+}
+
+/* Fills colors[0..len-1] with per-character highlight colors for one line. */
+static void highlight_line(const char *line, unsigned int *colors, int len)
+{
+    int i = 0;
+
+    while (i < len) {
+        /* Comment: -- to end of line */
+        if (line[i] == '-' && i + 1 < len && line[i + 1] == '-') {
+            for (int j = i; j < len; j++) colors[j] = C_HL_COMMENT;
+            return;
+        }
+
+        /* Double-quoted string */
+        if (line[i] == '"') {
+            colors[i++] = C_HL_STRING;
+            while (i < len && line[i] != '"') {
+                if (line[i] == '\\' && i + 1 < len) colors[i++] = C_HL_STRING;
+                colors[i++] = C_HL_STRING;
+            }
+            if (i < len) colors[i++] = C_HL_STRING;
+            continue;
+        }
+
+        /* Single-quoted string */
+        if (line[i] == '\'') {
+            colors[i++] = C_HL_STRING;
+            while (i < len && line[i] != '\'') {
+                if (line[i] == '\\' && i + 1 < len) colors[i++] = C_HL_STRING;
+                colors[i++] = C_HL_STRING;
+            }
+            if (i < len) colors[i++] = C_HL_STRING;
+            continue;
+        }
+
+        /* Numbers (digits, optional decimal point) */
+        if (line[i] >= '0' && line[i] <= '9') {
+            while (i < len && ((line[i] >= '0' && line[i] <= '9') || line[i] == '.'))
+                colors[i++] = C_HL_NUMBER;
+            continue;
+        }
+
+        /* Identifiers / keywords */
+        if ((line[i] >= 'a' && line[i] <= 'z') ||
+            (line[i] >= 'A' && line[i] <= 'Z') || line[i] == '_') {
+            int start = i;
+            while (i < len && is_ident_char(line[i])) i++;
+            int wlen = i - start;
+
+            unsigned int wc = C_TEXT;
+            for (int k = 0; hl_keywords[k]; k++) {
+                const char *kw = hl_keywords[k];
+                int kl = 0;
+                while (kw[kl]) kl++;
+                if (kl == wlen) {
+                    int match = 1;
+                    for (int j = 0; j < wlen; j++)
+                        if (line[start + j] != kw[j]) { match = 0; break; }
+                    if (match) { wc = C_HL_KEYWORD; break; }
+                }
+            }
+            for (int j = start; j < i; j++) colors[j] = wc;
+            continue;
+        }
+
+        /* Operators / punctuation */
+        if (is_oper_char(line[i])) { colors[i++] = C_HL_OPER; continue; }
+
+        colors[i++] = C_TEXT;
+    }
+}
+
 static int visible_rows(widget_t *w)
 {
     return (w->bounds.h - 2 * TA_PAD_Y) / WGT_FONT_H;
@@ -59,11 +159,15 @@ static void textarea_draw(widget_t *w, int ax, int ay)
         int len = 0;
         while (line[len]) len++;
 
+        unsigned int hl[WGT_TEXTAREA_LINE_LEN];
+        for (int j = 0; j < len; j++) hl[j] = C_TEXT;
+        highlight_line(line, hl, len);
+
         for (int c = 0; c < cols && c < len; c++) {
-            unsigned int fg = C_TEXT;
+            unsigned int fg = hl[c];
             unsigned int bg = C_TA_BG;
 
-            /* Cursor highlight */
+            /* Cursor highlight takes priority */
             if (focused && line_idx == d->cur_row && c == d->cur_col) {
                 fg = C_TA_BG;
                 bg = C_TA_CUR;
