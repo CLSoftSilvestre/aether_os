@@ -148,6 +148,8 @@ static unsigned char detect_icon(const char *name)
         return FICON_TXT;
     if (n >= 3 && name[n-3]=='.' && name[n-2]=='a' && name[n-1]=='s')
         return FICON_AS;
+    if (n >= 3 && name[n-3]=='.' && name[n-2]=='A' && name[n-1]=='S')
+        return FICON_AS;
     if (n >= 4 && name[n-4]=='.' && name[n-3]=='e' &&
         name[n-2]=='l' && name[n-1]=='f')
         return FICON_EXEC;
