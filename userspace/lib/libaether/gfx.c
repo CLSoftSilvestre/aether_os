@@ -366,3 +366,80 @@ void gfx_icon_file_generic(int x, int y, int sz)
 }
 
 #undef S
+
+/* ── 48×48 Tic-Tac-Toe desktop icon ───────────────────────────────────── */
+/*
+ * Draws a stylised 3×3 board with pre-filled X and O marks so the icon is
+ * instantly recognisable at a glance.
+ *
+ * Board grid lines are drawn in the accent purple.  The three X marks use
+ * the game's red and the two O rings use cyan — matching the in-game colors.
+ * Cells:   X | O | X
+ *          O | X | O   (centre X)
+ *            | O | X
+ */
+void gfx_icon_tictactoe(int x, int y)
+{
+    unsigned cbg  = GFX_RGB( 22,  20,  38);
+    unsigned grid = GFX_RGB( 90,  78, 175);   /* muted accent purple */
+    unsigned xcol = GFX_RGB(220,  72,  72);   /* X red               */
+    unsigned ocol = GFX_RGB(  0, 185, 205);   /* O cyan              */
+
+    gfx_fill(x, y, 48, 48, cbg);
+
+    /* Grid lines: two vertical + two horizontal, 2 px thick */
+    /* Divide 48px into 3 columns of 14px with 2px lines between */
+    /* Column dividers at x+14 and x+30 (width 2) */
+    gfx_fill(x + 15, y +  1, 2, 46, grid);
+    gfx_fill(x + 31, y +  1, 2, 46, grid);
+    /* Row dividers at y+15 and y+31 (height 2) */
+    gfx_fill(x +  1, y + 15, 46, 2, grid);
+    gfx_fill(x +  1, y + 31, 46, 2, grid);
+
+    /* Cell origins (top-left pixel of drawable area inside each cell):
+     *   col 0: x+2   col 1: x+18   col 2: x+34
+     *   row 0: y+2   row 1: y+18   row 2: y+34
+     * Each cell has ~12px drawable width and height.                    */
+#define ICON_X(cx,cy,i,j) \
+    do { \
+        int _ox = (x+2) + (cx)*16; \
+        int _oy = (y+2) + (cy)*16; \
+        int _len = 10; \
+        for (int _t = 0; _t < _len; _t++) { \
+            gfx_fill(_ox+1+_t, _oy+1+_t,             2, 2, xcol); \
+            gfx_fill(_ox+1+_t, _oy+1+(_len-1-_t),    2, 2, xcol); \
+        } \
+        (void)(i); (void)(j); \
+    } while (0)
+
+#define ICON_O(cx,cy) \
+    do { \
+        int _ox = (x+2) + (cx)*16; \
+        int _oy = (y+2) + (cy)*16; \
+        gfx_rect(_ox+1, _oy+1, 11, 11, ocol); \
+        gfx_rect(_ox+2, _oy+2,  9,  9, ocol); \
+        gfx_rect(_ox+3, _oy+3,  7,  7, ocol); \
+    } while (0)
+
+    /* Filled board:  X O X / O X O / _ O X */
+    ICON_X(0, 0, 0, 0);
+    ICON_O(1, 0);
+    ICON_X(2, 0, 0, 0);
+
+    ICON_O(0, 1);
+    ICON_X(1, 1, 0, 0);   /* centre */
+    ICON_O(2, 1);
+
+    /* cell (0,2) is empty — intentional */
+    ICON_O(1, 2);
+    ICON_X(2, 2, 0, 0);
+
+#undef ICON_X
+#undef ICON_O
+
+    /* Round corners */
+    gfx_fill(x,      y,      2, 2, cbg);
+    gfx_fill(x + 46, y,      2, 2, cbg);
+    gfx_fill(x,      y + 46, 2, 2, cbg);
+    gfx_fill(x + 46, y + 46, 2, 2, cbg);
+}

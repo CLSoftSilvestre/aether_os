@@ -164,6 +164,22 @@ set_target_properties(user_calculator PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
 )
 
+# ── tictactoe — Tic-Tac-Toe game (Human vs Human / Human vs CPU) ─────────────
+add_executable(user_tictactoe
+    apps/tictactoe/main.c
+    lib/crt0.S
+)
+target_include_directories(user_tictactoe PRIVATE lib/include)
+target_compile_options(user_tictactoe PRIVATE ${USER_COMPILE_FLAGS})
+target_link_libraries(user_tictactoe PRIVATE libwidget libaether)
+target_link_options(user_tictactoe PRIVATE
+    -T ${USER_LINKER_SCRIPT} -nostdlib -static -Wl,--build-id=none
+)
+set_target_properties(user_tictactoe PROPERTIES
+    OUTPUT_NAME "tictactoe" SUFFIX ""
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
+)
+
 # ── widget_demo — Phase 5.3 widget toolkit demo ───────────────────────────────
 add_executable(user_widget_demo
     apps/widget_demo/main.c
@@ -314,6 +330,7 @@ add_custom_command(
     OUTPUT  ${INITRD_STAGING}/motd.txt
     COMMAND ${CMAKE_COMMAND} -E copy_directory ${INITRD_FILES_SRC} ${INITRD_STAGING}
     DEPENDS ${INITRD_FILES_SRC}/motd.txt
+            ${INITRD_FILES_SRC}/apps/tictactoe.app
     COMMENT "Copying initrd static files"
 )
 
@@ -324,7 +341,7 @@ add_custom_command(
                 ${INITRD_STAGING}
                 ${INITRD_CPIO}
     DEPENDS user_init user_aether_term user_statusbar user_files user_textviewer
-            user_calculator user_widget_demo user_aether_editor
+            user_calculator user_tictactoe user_widget_demo user_aether_editor
             ${INTERP_TARGET}
             ${INITRD_STAGING}/motd.txt
     COMMENT "Packaging initrd.cpio"

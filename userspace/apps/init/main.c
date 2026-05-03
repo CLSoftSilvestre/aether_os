@@ -60,9 +60,9 @@ static int            g_icon_count = 0;
 
 /* ── Dock layout ─────────────────────────────────────────────────────────── */
 
-#define DOCK_ITEM_COUNT   5
+#define DOCK_ITEM_COUNT   6
 #define DOCK_SLOT_W      80    /* width of each icon slot */
-#define DOCK_START_X    312    /* (1024 - 5*80) / 2 */
+#define DOCK_START_X    272    /* (1024 - 6*80) / 2 */
 #define DOCK_ICON_SIZE   40    /* 40x40 icon */
 
 typedef struct {
@@ -73,6 +73,7 @@ typedef struct {
 static dock_item_t g_dock[DOCK_ITEM_COUNT] = {
     { "/aether_term", 0 },
     { "/calculator",  0 },
+    { "/tictactoe",   0 },
     { "/widget_demo", 0 },
     { "/files",       0 },
     { "/textviewer",  0 },
@@ -170,6 +171,51 @@ static void draw_icon_files(int ix, int iy)
     icon_round_corners(ix, iy);
 }
 
+/* Tic-Tac-Toe: purple 3x3 grid with X and O marks */
+static void draw_icon_tictactoe(int ix, int iy)
+{
+    unsigned cbg  = GFX_RGB( 22,  20,  38);
+    unsigned grid = GFX_RGB( 90,  78, 175);
+    unsigned xcol = GFX_RGB(220,  72,  72);
+    unsigned ocol = GFX_RGB(  0, 185, 205);
+
+    gfx_fill(ix, iy, 40, 40, cbg);
+
+    /* Grid lines — two vertical, two horizontal, 2 px thick */
+    gfx_fill(ix + 12, iy +  1, 2, 38, grid);
+    gfx_fill(ix + 26, iy +  1, 2, 38, grid);
+    gfx_fill(ix +  1, iy + 12, 38, 2, grid);
+    gfx_fill(ix +  1, iy + 26, 38, 2, grid);
+
+    /* Cells: X O X / O X O / _ O X  (same pattern as 48px icon) */
+    /* Col origins: 2, 15, 28  Row origins: 2, 15, 28  Cell size ~11px */
+#define DI_X(cx, cy) \
+    do { \
+        int _ox = ix + 2 + (cx)*13; \
+        int _oy = iy + 2 + (cy)*13; \
+        for (int _t = 0; _t < 9; _t++) { \
+            gfx_fill(_ox+_t,       _oy+_t,     2, 2, xcol); \
+            gfx_fill(_ox+_t,       _oy+8-_t,   2, 2, xcol); \
+        } \
+    } while (0)
+#define DI_O(cx, cy) \
+    do { \
+        int _ox = ix + 2 + (cx)*13; \
+        int _oy = iy + 2 + (cy)*13; \
+        gfx_rect(_ox,   _oy,   10, 10, ocol); \
+        gfx_rect(_ox+1, _oy+1,  8,  8, ocol); \
+    } while (0)
+
+    DI_X(0, 0); DI_O(1, 0); DI_X(2, 0);
+    DI_O(0, 1); DI_X(1, 1); DI_O(2, 1);
+                DI_O(1, 2); DI_X(2, 2);
+
+#undef DI_X
+#undef DI_O
+
+    icon_round_corners(ix, iy);
+}
+
 /* Text viewer: white paper with text lines and page fold */
 static void draw_icon_text(int ix, int iy)
 {
@@ -199,11 +245,12 @@ static void draw_dock_item(int idx)
     gfx_fill(sx, DOCK_Y, DOCK_SLOT_W, DOCK_H, C_PANEL);
 
     switch (idx) {
-    case 0: draw_icon_term(ix, iy);   break;
-    case 1: draw_icon_calc(ix, iy);   break;
-    case 2: draw_icon_widget(ix, iy); break;
-    case 3: draw_icon_files(ix, iy);  break;
-    case 4: draw_icon_text(ix, iy);   break;
+    case 0: draw_icon_term(ix, iy);       break;
+    case 1: draw_icon_calc(ix, iy);       break;
+    case 2: draw_icon_tictactoe(ix, iy);  break;
+    case 3: draw_icon_widget(ix, iy);     break;
+    case 4: draw_icon_files(ix, iy);      break;
+    case 5: draw_icon_text(ix, iy);       break;
     }
 
     /* Running indicator: cyan bar below icon when app has an active window */
@@ -368,10 +415,11 @@ static void desktop_icons_draw_one(int idx)
     int iy = cy + 4;
 
     const char *key = ic->manifest.icon;
-    if      (strcmp(key, "icon_term")   == 0) gfx_icon_term(ix, iy);
-    else if (strcmp(key, "icon_files")  == 0) gfx_icon_files(ix, iy);
-    else if (strcmp(key, "icon_editor") == 0) gfx_icon_editor(ix, iy);
-    else                                       gfx_icon_generic(ix, iy, ic->manifest.name);
+    if      (strcmp(key, "icon_term")       == 0) gfx_icon_term(ix, iy);
+    else if (strcmp(key, "icon_files")      == 0) gfx_icon_files(ix, iy);
+    else if (strcmp(key, "icon_editor")     == 0) gfx_icon_editor(ix, iy);
+    else if (strcmp(key, "icon_tictactoe")  == 0) gfx_icon_tictactoe(ix, iy);
+    else                                           gfx_icon_generic(ix, iy, ic->manifest.name);
 
     gfx_text_center(cx, DESKTOP_CELL_W, cy + 4 + DESKTOP_ICON_SIZE + 4,
                     ic->manifest.name, C_TEXT, bg);
