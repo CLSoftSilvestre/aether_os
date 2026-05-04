@@ -1678,18 +1678,42 @@ AetherEditor with that script loaded; navigation and Backspace work in both pane
 
 ### Milestone 6.1 — GPU Integration
 
-**Status:** Not started
+**Status:** In progress
+
+#### Architecture
+
+| Layer | File(s) | Notes |
+|-------|---------|-------|
+| Kernel mailbox driver | `kernel/drivers/gpu/mailbox.c` | VideoCore property interface; powers on V3D |
+| Kernel V3D driver | `kernel/drivers/gpu/v3d.c` | BO allocator + blur; hardware ident from V3D_HUB_IDENT0 |
+| Kernel syscalls | `SYS_GPU_ALLOC/FREE/MAP/INFO/BLUR` (900–904) | Dispatched in `kernel/core/syscall.c` |
+| Userspace API | `userspace/lib/include/gpu.h` + `libaether/gpu.c` | `gpu_init`, `gpu_alloc`, `gpu_blur`, `gpu_glass_panel` |
+
+**QEMU vs Pi 4:** Define `AETHER_TARGET_PI4` in CMakeLists for hardware builds.
+Without it, mailbox/V3D are stubbed and all effects use the software path.
+
+**Glassmorphism roadmap:**
+- Blur (this milestone): `gpu_glass_panel(bg, pitch, out, w, h, tint, tint_a, radius)` — available now via software path
+- Hardware acceleration (6.1.5): TFU multi-pass on Pi 4
+- Animations (future): spring interpolation in libwidget + per-frame `gpu_glass_panel` refresh
+- 3-D liquid effect (future): Mesa/GLES vertex-shader distortion + environment mapping
 
 #### Tasks
 
-- [ ] **6.1.1** Write `kernel/drivers/gpu/v3d.c` — V3D DRM driver
-  - GPU memory management (Buffer Objects)
-  - Command stream submission
-  - GPU scheduler
-- [ ] **6.1.2** Write `kernel/drivers/gpu/vchiq.c` — VideoCore mailbox/VCHIQ
-- [ ] **6.1.3** Port Mesa Gallium V3D driver (userspace)
-- [ ] **6.1.4** Enable OpenGL ES 3.1 for applications
-- [ ] **6.1.5** GPU-accelerate compositor blur effects (Lumina glassmorphism)
+- [x] **6.1.1** Write `kernel/drivers/gpu/v3d.c` — V3D driver
+  - Buffer Object pool backed by `pmm_alloc_pages()`
+  - Separable box-blur (software fallback, O(1) per pixel)
+  - Hardware init path: mailbox power-on → IDENT0 identity check
+  - `v3d_blur()` with PMM ping-pong buffer (no read-after-write artefacts)
+- [x] **6.1.2** Write `kernel/drivers/gpu/mailbox.c` — VideoCore mailbox
+  - BCM2711 mailbox register map + property tag protocol
+  - `mailbox_set_power_state`, `mailbox_get_clock_rate`
+  - Graceful stub when `AETHER_TARGET_PI4` not defined
+- [ ] **6.1.3** Port Mesa Gallium V3D driver (userspace) — deferred to Phase 6.1.3+
+- [ ] **6.1.4** Enable OpenGL ES 3.1 for applications — depends on 6.1.3
+- [ ] **6.1.5** GPU-accelerate compositor blur effects
+  - TFU (Texture Formatting Unit) multi-pass bilinear filter
+  - Wire `v3d_blur()` hardware path on Pi 4
 - [ ] **6.1.6** H.264/H.265 hardware decode via V3D
 
 ---
@@ -1725,6 +1749,9 @@ AetherEditor with that script loaded; navigation and Backspace work in both pane
 | 2026-04-28 | Widget library as retained tree + immediate-mode dispatch (Phase 5.3) | Retains enough state for keyboard focus and animation without full OOP class hierarchy; avoids the complexity of a full MVC framework |
 | 2026-04-28 | FAT32 write support before custom AetherFS (Phase 5.5) | Scripts need a writable FS; FAT32 write is incremental; AetherFS (CoW B-tree) is a Phase 5.2 stretch goal |
 | 2026-04-30 | TreeView as a reusable libwidget type; icon grid stays inline in files app (Phase 5.6) | TreeView will be reused by future save-as dialogs, settings navigator, and project tree in AetherEditor — extracting it now avoids duplication. The icon grid is too file-domain-specific (extension dispatch, double-click spawn) to be a useful generic widget at this stage; a WIDGET_GRIDVIEW can be extracted later. |
+| 2026-05-03 | GPU BO allocator backed by PMM rather than a separate CMA heap (Phase 6.1) | Keeps the memory model simple — one PMM for all physical pages. GPU BOs are in the kernel RAM range which EL0 can access via AP=BOTH_RW identity map. A dedicated CMA/IOMMU region is a Phase 6.2 refinement. |
+| 2026-05-03 | Separable box-blur as initial software path (Phase 6.1) | O(1) per pixel sliding-window; visually equivalent to Gaussian at σ≈radius/2. PMM ping-pong buffer avoids horizontal/vertical read-after-write artefacts. TFU hardware path deferred to 6.1.5 when real Pi 4 testing is available. |
+| 2026-05-03 | `gpu_glass_panel()` composites blur+tint in one call (Phase 6.1) | Encapsulates the full frosted-glass recipe so UI code doesn't need to manage intermediate BOs. Apps call it on every repaint; compositor will batch calls in Phase 6.1.5. |
 
 ---
 

@@ -72,7 +72,8 @@ static void treeview_draw(widget_t *w, int ax, int ay)
     int pw = w->bounds.w;
     int ph = w->bounds.h;
 
-    gfx_fill(ax, ay, pw, ph, C_PANEL);
+    unsigned pane_bg = td->bg_color ? td->bg_color : C_PANEL;
+    gfx_fill(ax, ay, pw, ph, pane_bg);
 
     int max_rows = ph / TV_ROW_H;
 
@@ -85,7 +86,7 @@ static void treeview_draw(widget_t *w, int ax, int ay)
         tv_node_t *node = &td->nodes[ni];
 
         /* Selection / hover background */
-        unsigned row_bg = C_PANEL;
+        unsigned row_bg = pane_bg;
         if (vi == td->selected) {
             gfx_fill(ax, row_y, pw, TV_ROW_H, C_TV_SEL);
             row_bg = C_TV_SEL;
@@ -285,6 +286,7 @@ void treeview_init(widget_t *w, int x, int y, int width, int height,
     widget_init(w, WIDGET_TREEVIEW, x, y, width, height);
     memset(data, 0, sizeof(*data));
     data->selected = -1;
+    data->bg_color = C_PANEL;   /* default; caller may override before first draw */
     w->userdata  = data;
     w->draw_fn   = treeview_draw;
     w->event_fn  = treeview_event;

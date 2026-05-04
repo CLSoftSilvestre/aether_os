@@ -516,6 +516,14 @@ static inline long sys_fs_readdir(const char *path, char *buf, long len)
     return _sys3(SYS_FS_READDIR, (long)(const void *)path, (long)buf, len);
 }
 
+/* ── GPU / V3D syscalls (Phase 6.1) ──────────────────────────────── */
+
+#define SYS_GPU_ALLOC  900
+#define SYS_GPU_FREE   901
+#define SYS_GPU_MAP    902
+#define SYS_GPU_INFO   903
+#define SYS_GPU_BLUR   904
+
 /* ── AetherFS write syscalls (Phase 5.5) ────────────────────────── */
 
 #define SYS_FS_WRITE  804

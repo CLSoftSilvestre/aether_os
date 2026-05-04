@@ -26,6 +26,7 @@ add_library(libaether STATIC
     lib/libaether/stdlib.c
     lib/libaether/math.c
     lib/libaether/gfx.c
+    lib/libaether/gpu.c
     lib/libaether/manifest.c
     lib/libaether/vfs_mounts.c
     lib/libaether/setjmp.S

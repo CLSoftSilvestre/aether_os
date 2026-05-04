@@ -63,6 +63,10 @@ set(KERNEL_SOURCES
     # Drivers — USB OHCI + HID (Phase 4.6)
     drivers/usb/ohci.c
 
+    # Drivers — GPU / V3D (Phase 6.1)
+    drivers/gpu/mailbox.c
+    drivers/gpu/v3d.c
+
     # Drivers — VirtIO net (Phase 5.1)
     drivers/net/virtio_net.c
 

@@ -76,6 +76,7 @@ typedef struct {
     void     (*on_select)(tv_node_t *node, void *ctx);
     void     (*on_expand)(tv_node_t *node, void *ctx);
     void      *cb_ctx;
+    unsigned int bg_color;   /* panel background; 0 → C_PANEL */
 } treeview_data_t;
 
 /* ── Visual state ───────────────────────────────────────────────────────── */

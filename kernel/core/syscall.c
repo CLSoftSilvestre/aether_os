@@ -43,6 +43,7 @@
 #include "aether/dns.h"
 #include "aether/socket.h"
 #include "aether/vfs.h"
+#include "drivers/gpu/v3d.h"
 
 /* ── Individual syscall implementations ─────────────────────────────────── */
 
@@ -760,6 +761,44 @@ long syscall_dispatch(trap_frame_t *frame)
     case SYS_NET_SEND:   return do_sys_net_send(arg0, arg1, arg2);
     case SYS_NET_RECV:   return do_sys_net_recv(arg0, arg1, arg2);
     case SYS_NET_CLOSE:  return do_sys_net_close(arg0);
+
+    /* GPU / V3D (Phase 6.1) */
+    case SYS_GPU_ALLOC:
+        return (long)v3d_bo_alloc((u32)arg0);
+
+    case SYS_GPU_FREE:
+        return (long)v3d_bo_free((u32)arg0);
+
+    case SYS_GPU_MAP: {
+        /* arg0 = bo_handle, arg1 = pointer to uintptr_t in user space */
+        uintptr_t phys = v3d_bo_phys((u32)arg0);
+        if (!phys) return -1;
+        /* Identity-mapped kernel: PA == VA, EL0 AP=BOTH_RW for full RAM */
+        *(uintptr_t *)arg1 = phys;
+        return 0;
+    }
+
+    case SYS_GPU_INFO: {
+        gpu_caps_t *caps = (gpu_caps_t *)arg0;
+        if (!caps) return -1;
+        v3d_get_caps(caps);
+        return 0;
+    }
+
+    case SYS_GPU_BLUR: {
+        /* arg0 = (src_handle << 32) | dst_handle
+         * arg1 = (width << 32) | height
+         * arg2 = radius */
+        u32 src_h  = (u32)((u64)arg0 >> 32);
+        u32 dst_h  = (u32)((u64)arg0 & 0xFFFFFFFFu);
+        u32 width  = (u32)((u64)arg1 >> 32);
+        u32 height = (u32)((u64)arg1 & 0xFFFFFFFFu);
+        u32 radius = (u32)arg2;
+        uintptr_t src_phys = v3d_bo_phys(src_h);
+        uintptr_t dst_phys = v3d_bo_phys(dst_h);
+        if (!src_phys || !dst_phys) return -1;
+        return (long)v3d_blur(src_phys, dst_phys, width, height, radius);
+    }
 
     default:
         kwarn("[SYS] unknown syscall #%lu from PID %lu\n",

@@ -34,6 +34,8 @@
 #include "aether/types.h"
 #include "drivers/block/virtio_blk.h"
 #include "drivers/pci/pci_ecam.h"
+#include "drivers/gpu/mailbox.h"
+#include "drivers/gpu/v3d.h"
 
 extern u8 __stack_top[];
 
@@ -108,6 +110,10 @@ void kernel_main(void)
      * 100 Hz for ongoing packet delivery after DHCP.
      */
     net_init();
+
+    /* ── 6b.5 GPU / V3D (Phase 6.1) ────────────────────────────────── */
+    mailbox_init();
+    v3d_init();
 
     /* ── 6c. Block storage + VFS (Phase 5.2) ───────────────────────── */
     /*
