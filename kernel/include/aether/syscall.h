@@ -67,6 +67,9 @@
 /* Process argv (Phase 5.5) */
 #define SYS_SPAWN_ARGS     29  /* (path, argv[], argc) → child PID or -1        */
 
+/* File descriptor close (Phase 5.1) */
+#define SYS_CLOSE          30  /* sys_close(fd) → 0                             */
+
 /* Clipboard (Phase 5.3) */
 #define SYS_CLIPBOARD_WRITE 26 /* (buf_ptr, len) → 0; stores up to 4KB       */
 #define SYS_CLIPBOARD_READ  27 /* (buf_ptr, max_len) → actual bytes copied    */

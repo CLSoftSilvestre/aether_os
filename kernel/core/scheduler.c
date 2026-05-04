@@ -225,8 +225,14 @@ int task_create_isolated(uintptr_t el0_entry, uintptr_t el0_sp,
         if (g_tasks[i].pid == ppid) { parent = &g_tasks[i]; break; }
     }
     if (parent) {
-        for (u32 i = 0; i < PROC_MAX_FD; i++)
+        for (u32 i = 0; i < PROC_MAX_FD; i++) {
             t->fd_table[i] = parent->fd_table[i];
+            /* Bump pipe ref counts so each fd slot owns a reference */
+            if (t->fd_table[i].type == FD_TYPE_PIPE_R)
+                pipe_open_read((int)t->fd_table[i].pipe_idx);
+            if (t->fd_table[i].type == FD_TYPE_PIPE_W)
+                pipe_open_write((int)t->fd_table[i].pipe_idx);
+        }
     } else {
         init_uart_fds(t);
     }
@@ -502,6 +508,9 @@ long task_dup2_fd(u32 oldfd, u32 newfd)
     if (ne->type == FD_TYPE_PIPE_W) pipe_close_write((int)ne->pipe_idx);
 
     *ne = t->fd_table[oldfd];
+    /* Bump ref count for the new alias */
+    if (ne->type == FD_TYPE_PIPE_R) pipe_open_read((int)ne->pipe_idx);
+    if (ne->type == FD_TYPE_PIPE_W) pipe_open_write((int)ne->pipe_idx);
     return (long)newfd;
 }
 

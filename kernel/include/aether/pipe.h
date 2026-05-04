@@ -13,6 +13,10 @@ int  pipe_alloc(void);
 void pipe_close_read(int idx);
 void pipe_close_write(int idx);
 
+/* pipe_open_read / pipe_open_write — increment ref count (used on fd inherit/dup) */
+void pipe_open_read(int idx);
+void pipe_open_write(int idx);
+
 /* pipe_read — read up to len bytes; blocks if empty (returns 0 if write end closed) */
 long pipe_read(int idx, char *buf, long len);
 

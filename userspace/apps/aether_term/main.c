@@ -474,6 +474,8 @@ static void cmd_help(void)
     term_puts("  ping <ip>         ICMP echo to IP address\n");
     term_puts("  nslookup <host>   DNS A-record lookup\n");
     term_puts("  wget <ip>:<port><path>  HTTP GET (first 512 bytes)\n");
+    term_puts("  http <url>          HTTP/1.1 client (Content-Length + chunked)\n");
+    term_puts("    e.g. http http://10.0.2.2:8080/\n");
 }
 
 static void cmd_echo(int argc, char **argv)
@@ -981,13 +983,46 @@ int main(void)
         } else {
             char path[64];
             snprintf(path, sizeof(path), "/%s", cmd);
-            long child = sys_spawn(path);
-            if (child < 0) {
-                term_printf("aesh: %s: command not found\n", cmd);
+
+            if (background) {
+                long child = sys_spawn_args(path, (const char *const *)argv, argc);
+                if (child < 0)
+                    term_printf("aesh: %s: command not found\n", cmd);
             } else {
-                if (!background) {
-                    wait_foreground(child);
-                    redraw_after_child();
+                /* Pipe-capture child's stdout so it appears in the terminal. */
+                int pfds[2];
+                if (sys_pipe(pfds) < 0) {
+                    /* No pipe available — fall back to direct spawn */
+                    long child = sys_spawn_args(path, (const char *const *)argv, argc);
+                    if (child < 0)
+                        term_printf("aesh: %s: command not found\n", cmd);
+                    else { wait_foreground(child); redraw_after_child(); }
+                } else {
+                    /* Redirect our stdout to pipe write so the child inherits it */
+                    sys_dup2(STDOUT_FILENO, 5);            /* save our stdout in slot 5 */
+                    sys_dup2(pfds[1], STDOUT_FILENO);      /* our stdout → pipe write   */
+                    long child = sys_spawn_args(path, (const char *const *)argv, argc);
+                    sys_dup2(5, STDOUT_FILENO);            /* restore our stdout        */
+                    sys_close(5);
+                    sys_close(pfds[1]);                    /* parent drops write end    */
+
+                    if (child < 0) {
+                        sys_close(pfds[0]);
+                        term_printf("aesh: %s: command not found\n", cmd);
+                    } else {
+                        /* Drain child output into the terminal window */
+                        char rbuf[256];
+                        long n;
+                        while ((n = sys_read(pfds[0], rbuf, (long)sizeof(rbuf) - 1)) > 0) {
+                            rbuf[n] = '\0';
+                            term_puts(rbuf);
+                        }
+                        sys_close(pfds[0]);
+                        /* Child exited (EOF = write end closed); reap it */
+                        int status = 0;
+                        sys_waitpid(child, &status);
+                        redraw_after_child();
+                    }
                 }
             }
         }

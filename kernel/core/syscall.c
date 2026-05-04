@@ -673,6 +673,10 @@ long syscall_dispatch(trap_frame_t *frame)
     case SYS_DUP2:
         return do_sys_dup2((long)arg0, (long)arg1);
 
+    case SYS_CLOSE:
+        task_close_fd((u32)arg0);
+        return 0;
+
     case SYS_READ:
         return do_sys_read((long)arg0, (char *)arg1, (long)arg2);
 

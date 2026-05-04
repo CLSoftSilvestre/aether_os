@@ -63,6 +63,18 @@ void pipe_close_write(int idx)
     if (p->write_open > 0) p->write_open--;
 }
 
+void pipe_open_read(int idx)
+{
+    if (idx < 0 || idx >= MAX_PIPES) return;
+    g_pipes[idx].read_open++;
+}
+
+void pipe_open_write(int idx)
+{
+    if (idx < 0 || idx >= MAX_PIPES) return;
+    g_pipes[idx].write_open++;
+}
+
 static u32 pipe_used(const pipe_t *p)
 {
     return (p->head - p->tail) & (PIPE_BUF - 1);

@@ -165,6 +165,22 @@ set_target_properties(user_calculator PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
 )
 
+# ── aether_http — HTTP/1.1 client (Phase 5.1) ────────────────────────────────
+add_executable(user_aether_http
+    apps/aether_http/main.c
+    lib/crt0.S
+)
+target_include_directories(user_aether_http PRIVATE lib/include)
+target_compile_options(user_aether_http PRIVATE ${USER_COMPILE_FLAGS})
+target_link_libraries(user_aether_http PRIVATE libaether)
+target_link_options(user_aether_http PRIVATE
+    -T ${USER_LINKER_SCRIPT} -nostdlib -static -Wl,--build-id=none
+)
+set_target_properties(user_aether_http PROPERTIES
+    OUTPUT_NAME "http" SUFFIX ""
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
+)
+
 # ── tictactoe — Tic-Tac-Toe game (Human vs Human / Human vs CPU) ─────────────
 add_executable(user_tictactoe
     apps/tictactoe/main.c
@@ -343,6 +359,7 @@ add_custom_command(
                 ${INITRD_CPIO}
     DEPENDS user_init user_aether_term user_statusbar user_files user_textviewer
             user_calculator user_tictactoe user_widget_demo user_aether_editor
+            user_aether_http
             ${INTERP_TARGET}
             ${INITRD_STAGING}/motd.txt
     COMMENT "Packaging initrd.cpio"

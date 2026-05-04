@@ -28,6 +28,7 @@
 #define SYS_PS          21
 #define SYS_PIPE        22
 #define SYS_DUP2        24
+#define SYS_CLOSE       30
 #define SYS_READ         63
 #define SYS_WRITE        34
 #define SYS_INITRD_LS   500
@@ -203,6 +204,12 @@ static inline long sys_pipe(int fds[2])
 static inline long sys_dup2(int oldfd, int newfd)
 {
     return _sys2(SYS_DUP2, (long)oldfd, (long)newfd);
+}
+
+/* Close a file descriptor (pipe end, socket, or vfs fd) */
+static inline void sys_close(int fd)
+{
+    _sys1(SYS_CLOSE, (long)fd);
 }
 
 static inline long sys_initrd_ls(char *buf, long len)
