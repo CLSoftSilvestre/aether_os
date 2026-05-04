@@ -122,12 +122,15 @@ static int parse_url(const char *raw, url_t *out)
 {
     const char *p = raw;
 
-    if (strncmp(p, "http://", 7) == 0) {
-        p += 7;
-    } else if (strncmp(p, "https://", 8) == 0) {
-        printf("http: HTTPS not supported\n");
+    /* Reject HTTPS; strip any other scheme prefix before "//".
+     * Also tolerates keyboard layout glitches like "http|//" → "http://". */
+    if (strncmp(p, "https://", 8) == 0 || strncmp(p, "https|//", 8) == 0) {
+        printf("aether_http: HTTPS not supported\n");
         return -1;
     }
+    const char *dslash = strstr(p, "//");
+    if (dslash != NULL && (size_t)(dslash - p) < 10)
+        p = dslash + 2;
 
     /* Host part: up to ':' or '/' */
     int i = 0;
