@@ -129,8 +129,8 @@ static int tcp_send_seg(u8 flags, const u8 *data, u16 data_len)
 
     if (data_len) nm_copy(g_tcp_txbuf + TCP_HDR_LEN, data, data_len);
 
-    hdr->checksum = tcp_checksum(g_our_ip, g_conn.remote_ip,
-                                  g_tcp_txbuf, total);
+    hdr->checksum = net_htons(tcp_checksum(g_our_ip, g_conn.remote_ip,
+                                           g_tcp_txbuf, total));
 
     /* Advance SND_SEQ for data-bearing or SYN/FIN segments */
     if (data_len || (flags & (TCP_SYN | TCP_FIN)))

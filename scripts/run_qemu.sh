@@ -87,8 +87,10 @@ QEMU_ARGS=(
 
     # Network (Phase 5.1): user-mode NAT networking via virtio-net-pci
     # QEMU provides: DHCP lease 10.0.2.15/24, gateway 10.0.2.2, DNS 10.0.2.3
+    # disable-legacy=on forces pure modern VirtIO 1.x (devid=0x1041, no transitional quirks)
     -netdev user,id=n0
-    -device virtio-net-pci,netdev=n0
+    -object filter-dump,id=pcap0,netdev=n0,file=/tmp/aether.pcap
+    -device virtio-net-pci,netdev=n0,disable-legacy=on
 )
 
 # Block storage (Phase 5.2): hd0 = FAT32 disk.img, hd1 = AetherFS afs.img

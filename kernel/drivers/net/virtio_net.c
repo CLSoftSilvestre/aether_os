@@ -61,7 +61,7 @@
 
 /* ── Virtqueue layout ────────────────────────────────────────────────────── */
 #define VNET_QSIZ       16u
-#define VNET_HDR_SZ     10u             /* virtio_net_hdr without num_buffers */
+#define VNET_HDR_SZ     12u             /* virtio_net_hdr_v1 (VIRTIO_F_VERSION_1 requires num_buffers) */
 #define VNET_FRAME_SZ   1514u
 #define VNET_BUF_SZ     (VNET_HDR_SZ + VNET_FRAME_SZ)   /* 1524 */
 #define QUEUE_ALIGN     4096u
@@ -88,7 +88,7 @@ typedef struct {
     virtq_used_elem_t ring[VNET_QSIZ];
 } virtq_used_t;
 
-/* virtio_net_hdr (no MRGRXBUF feature) */
+/* virtio_net_hdr_v1: required when VIRTIO_F_VERSION_1 is negotiated */
 typedef struct {
     u8  flags;
     u8  gso_type;
@@ -96,7 +96,8 @@ typedef struct {
     u16 gso_size;
     u16 csum_start;
     u16 csum_offset;
-} __attribute__((packed)) vnet_hdr_t;    /* 10 bytes */
+    u16 num_buffers;   /* always 0 on TX; set to 1 by device on RX without MRGRXBUF */
+} __attribute__((packed)) vnet_hdr_t;    /* 12 bytes */
 
 /* ── Static queue memory ─────────────────────────────────────────────────── */
 
@@ -199,6 +200,10 @@ static void setup_queue(u8 qidx, u8 *mem_block,
     vcfg_w32(g_cc, VCC_QUEUE_DRV_HI,  (u32)(pa_avail >> 32));
     vcfg_w32(g_cc, VCC_QUEUE_DEV_LO,  (u32)pa_used);
     vcfg_w32(g_cc, VCC_QUEUE_DEV_HI,  (u32)(pa_used >> 32));
+
+    kdebug("virtio-net: q%u sz=%u desc=0x%lx avail=0x%lx used=0x%lx\n",
+           (unsigned)qidx, (unsigned)qsz,
+           (unsigned long)pa_desc, (unsigned long)pa_avail, (unsigned long)pa_used);
 }
 
 static void kick_queue(u16 qidx)
@@ -273,7 +278,11 @@ int virtio_net_init(void)
           g_our_mac[0], g_our_mac[1], g_our_mac[2],
           g_our_mac[3], g_our_mac[4], g_our_mac[5]);
 
-    /* Set up RX queue (0) */
+    /* Set up RX queue (0): descriptors only — avail->idx stays 0.
+     * QEMU initialises its last_avail_idx = avail->idx at QUEUE_ENABLE time.
+     * Filling the avail ring before enabling would set avail->idx = 16 at
+     * that moment, making QEMU think there are 0 pending entries on the
+     * first kick (16 - 16 = 0).  Fill AFTER enabling so QEMU starts at 0. */
     setup_queue(0, rx_mem, &g_rx_desc, &g_rx_avail, &g_rx_used);
     g_rx_avail->flags = 1u;   /* suppress used-ring notifications */
     g_rx_avail->idx   = 0u;
@@ -284,17 +293,14 @@ int virtio_net_init(void)
         g_rx_desc[i].len   = VNET_BUF_SZ;
         g_rx_desc[i].flags = VIRTQ_DESC_F_WRITE;
         g_rx_desc[i].next  = 0;
-        g_rx_avail->ring[i] = (u16)i;
-        g_rx_avail->idx++;
     }
 
-    /* DSB ensures all descriptor/avail ring writes (Normal memory) are
-     * visible to QEMU before the QUEUE_ENABLE MMIO write (Device memory).
-     * Without DSB, ARM allows the Device write to be observed first, so
-     * QEMU would enable the queue before seeing any RX descriptors. */
     DSB();
     vcfg_w16(g_cc, VCC_QUEUE_SEL, 0u);
-    vcfg_w16(g_cc, VCC_QUEUE_ENABLE, 1u);
+    vcfg_w16(g_cc, VCC_QUEUE_ENABLE, 1u);   /* QEMU: last_avail_idx = 0 */
+    DSB();
+    kdebug("virtio-net: Q0 ENABLE readback=%u\n",
+           (unsigned)vcfg_r16(g_cc, VCC_QUEUE_ENABLE));
 
     /* Set up TX queue (1) */
     setup_queue(1, tx_mem, &g_tx_desc, &g_tx_avail, &g_tx_used);
@@ -305,6 +311,9 @@ int virtio_net_init(void)
     DSB();
     vcfg_w16(g_cc, VCC_QUEUE_SEL, 1u);
     vcfg_w16(g_cc, VCC_QUEUE_ENABLE, 1u);
+    DSB();
+    kdebug("virtio-net: Q1 ENABLE readback=%u\n",
+           (unsigned)vcfg_r16(g_cc, VCC_QUEUE_ENABLE));
 
     /* DRIVER_OK */
     DSB();
@@ -312,8 +321,21 @@ int virtio_net_init(void)
             VS_ACKNOWLEDGE | VS_DRIVER | VS_FEATURES_OK | VS_DRIVER_OK);
     DSB();
 
-    /* Initial RX kick — DSB above ensures DRIVER_OK write is visible first */
+    kdebug("virtio-net: rx_used flags=0x%x idx=%u\n",
+           (unsigned)g_rx_used->flags, (unsigned)g_rx_used->idx);
+
+    /* Now populate the avail ring with all 16 RX buffers and kick.
+     * avail->idx goes from 0 → 16; QEMU sees 16 new entries on the kick. */
+    for (u32 i = 0; i < VNET_QSIZ; i++) {
+        g_rx_avail->ring[i] = (u16)i;
+        g_rx_avail->idx++;
+    }
+    DSB();
     kick_queue(0u);
+
+    kdebug("virtio-net: status=0x%x rx_avail_idx=%u\n",
+           (unsigned)vcfg_r8(g_cc, VCC_DEV_STATUS),
+           (unsigned)g_rx_avail->idx);
 
     g_net_initialized = 1;
     kinfo("virtio-net: ready\n");
@@ -330,7 +352,7 @@ int virtio_net_tx(const u8 *frame, u16 len)
     /* Build buffer: virtio_net_hdr (zeroed) + frame */
     vnet_hdr_t *hdr = (vnet_hdr_t *)tx_buf;
     hdr->flags = hdr->gso_type = hdr->hdr_len =
-    hdr->gso_size = hdr->csum_start = hdr->csum_offset = 0;
+    hdr->gso_size = hdr->csum_start = hdr->csum_offset = hdr->num_buffers = 0;
 
     u8 *payload = tx_buf + VNET_HDR_SZ;
     for (u16 i = 0; i < len; i++) payload[i] = frame[i];
@@ -357,8 +379,10 @@ int virtio_net_tx(const u8 *frame, u16 len)
     }
     if (g_tx_used->idx != g_tx_last_used) {
         g_tx_last_used = g_tx_used->idx;
+        kdebug("virtio-net: TX ok len=%u\n", (unsigned)(VNET_HDR_SZ + len));
     } else {
-        kdebug("virtio-net: TX timeout (used=%u avail=%u)\n",
+        kdebug("virtio-net: TX timeout len=%u (used=%u avail=%u)\n",
+             (unsigned)(VNET_HDR_SZ + len),
              (unsigned)g_tx_used->idx, (unsigned)g_tx_avail->idx);
     }
 
@@ -370,6 +394,13 @@ int virtio_net_tx(const u8 *frame, u16 len)
 void virtio_net_rx_poll(void)
 {
     if (!g_net_initialized) return;
+
+    static u32 s_rx_polls;
+    if (++s_rx_polls == 1 || (s_rx_polls & 0x3FFu) == 0u) {
+        kdebug("virtio-net: rx#%u used=%u last=%u avail=%u\n",
+               (unsigned)s_rx_polls, (unsigned)g_rx_used->idx,
+               (unsigned)g_rx_last_used, (unsigned)g_rx_avail->idx);
+    }
 
     DMB();
     while (g_rx_used->idx != g_rx_last_used) {

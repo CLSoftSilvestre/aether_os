@@ -16,6 +16,9 @@
 #define DHCP_CLIENT_PORT  68u
 #define DHCP_SERVER_PORT  67u
 #define DHCP_MAGIC        0x63825363UL
+/* Fixed header size: all dhcp_pkt_t fields before options[] (240 bytes).
+ * QEMU slirp sends compact replies (~270 B), far less than sizeof(dhcp_pkt_t)=548. */
+#define DHCP_FIXED_LEN    240u
 
 /* DHCP message types (option 53) */
 #define DHCP_DISCOVER  1u
@@ -117,26 +120,46 @@ static void dhcp_rx_handler(u32 src_ip, u16 src_port,
                              const u8 *data, u16 data_len)
 {
     (void)src_port;
-    if (data_len < (u16)sizeof(dhcp_pkt_t)) return;
+    kdebug("DHCP: rx src=%u.%u.%u.%u len=%u\n",
+           (src_ip>>24)&0xFFu, (src_ip>>16)&0xFFu,
+           (src_ip>>8)&0xFFu,   src_ip&0xFFu, (unsigned)data_len);
+    if (data_len < (u16)DHCP_FIXED_LEN) {
+        kdebug("DHCP: rx drop: len=%u < min=%u\n",
+               (unsigned)data_len, (unsigned)DHCP_FIXED_LEN);
+        return;
+    }
 
     const dhcp_pkt_t *pkt = (const dhcp_pkt_t *)data;
-    if (pkt->op != 2u) return;                          /* not BOOTREPLY */
-    if (net_ntohl(pkt->xid) != g_dhcp_xid) return;     /* wrong XID */
-    if (net_ntohl(pkt->magic) != DHCP_MAGIC) return;
+    if (pkt->op != 2u) {
+        kdebug("DHCP: rx drop: op=%u (want 2)\n", (unsigned)pkt->op);
+        return;
+    }
+    if (net_ntohl(pkt->xid) != g_dhcp_xid) {
+        kdebug("DHCP: rx drop: xid=0x%08x want=0x%08x\n",
+               (unsigned)net_ntohl(pkt->xid), (unsigned)g_dhcp_xid);
+        return;
+    }
+    if (net_ntohl(pkt->magic) != DHCP_MAGIC) {
+        kdebug("DHCP: rx drop: bad magic 0x%08x\n",
+               (unsigned)net_ntohl(pkt->magic));
+        return;
+    }
 
-    /* Scan options */
+    /* Scan options — limit to what was actually received */
     const u8 *opts = pkt->options;
+    int  opts_len  = (int)data_len - (int)DHCP_FIXED_LEN;
+    if (opts_len > 308) opts_len = 308;
     int  i = 0;
     u8   msg_type = 0;
     u32  sub_mask = 0, gateway = 0, dns_server = 0, server_id = 0;
 
-    while (i < 308) {
+    while (i < opts_len) {
         u8 code = opts[i++];
         if (code == 255u) break;
         if (code == 0)    continue;
-        if (i >= 308) break;
+        if (i >= opts_len) break;
         u8 len = opts[i++];
-        if (i + len > 308) break;
+        if (i + len > opts_len) break;
 
         switch (code) {
         case 53: msg_type  = opts[i]; break;
@@ -182,6 +205,8 @@ int dhcp_init(void)
 
     g_dhcp_got_offer = 0;
     g_dhcp_got_ack   = 0;
+
+    kdebug("DHCP: xid=0x%08x\n", (unsigned)g_dhcp_xid);
 
     /* Register UDP handler on port 68 */
     udp_bind(DHCP_CLIENT_PORT, dhcp_rx_handler);

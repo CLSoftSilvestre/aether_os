@@ -118,7 +118,7 @@ int ip_tx(u32 dst_ip, u8 proto, const u8 *payload, u16 payload_len)
     hdr->checksum   = 0;
     ip_to_bytes(g_our_ip, hdr->src);
     ip_to_bytes(dst_ip,   hdr->dst);
-    hdr->checksum = ip_checksum(hdr, (u16)IP_HDR_LEN);
+    hdr->checksum = net_htons(ip_checksum(hdr, (u16)IP_HDR_LEN));
 
     nm_copy(g_ip_txbuf + IP_HDR_LEN, payload, payload_len);
     eth_tx(dst_mac, ETHERTYPE_IP, g_ip_txbuf, total);
@@ -141,7 +141,7 @@ static void icmp_rx(u32 src_ip, const u8 *icmp_pkt, u16 len)
         r->type     = ICMP_ECHO_REPLY;
         r->code     = 0;
         r->checksum = 0;
-        r->checksum = ip_checksum(reply_buf, len);
+        r->checksum = net_htons(ip_checksum(reply_buf, len));
         ip_tx(src_ip, IP_PROTO_ICMP, reply_buf, len);
     } else if (hdr->type == ICMP_ECHO_REPLY) {
         if (net_ntohs(hdr->id) == (u16)g_icmp_reply_id) {
@@ -168,7 +168,7 @@ u32 icmp_ping(u32 dst_ip)
     hdr->seq      = net_htons(seq);
     /* 32-byte payload filled with 'A' */
     for (int i = 8; i < 40; i++) pkt[i] = 'A';
-    hdr->checksum = ip_checksum(pkt, 40u);
+    hdr->checksum = net_htons(ip_checksum(pkt, 40u));
 
     g_icmp_reply_id       = id;
     g_icmp_reply_received = 0;
