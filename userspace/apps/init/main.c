@@ -268,11 +268,214 @@ static void draw_dock(void)
         draw_dock_item(i);
 }
 
+/* ── Wallpaper: "Lumina Drift" ──────────────────────────────────────────── */
+/*
+ * Procedurally generated — no image assets required.
+ * Composition (drawn in order, each layer blends into the previous):
+ *   1. Deep-space vertical gradient            (768 fills)
+ *   2. Purple nebula orb — left-centre         (~1 500 fills)
+ *   3. Cyan accent orb  — right-centre         (~1 050 fills)
+ *   4. Wavy aurora band, purple→cyan sweep     (~850 fills)
+ *   5. Warm horizon glow near the dock         (~80 fills)
+ *   6. 130 deterministic stars                 (~200 fills)
+ */
+
+/* Active clip rect for partial repaints; default = full screen */
+static int s_wc_x0 = 0, s_wc_y0 = 0, s_wc_x1 = 1024, s_wc_y1 = 768;
+
+/* Internal fill that is silently clipped to s_wc_* — used by all wp_draw_* stages. */
+static void wp_fill(int x, int y, int w, int h, unsigned color)
+{
+    int ax = x < s_wc_x0 ? s_wc_x0 : x;
+    int ay = y < s_wc_y0 ? s_wc_y0 : y;
+    int bx = x + w > s_wc_x1 ? s_wc_x1 : x + w;
+    int by = y + h > s_wc_y1 ? s_wc_y1 : y + h;
+    if (bx > ax && by > ay)
+        gfx_fill((unsigned)ax, (unsigned)ay,
+                 (unsigned)(bx - ax), (unsigned)(by - ay), color);
+}
+
+static int wp_isqrt(int n)
+{
+    if (n <= 0) return 0;
+    int x = n, y = (x + 1) / 2;
+    while (y < x) { x = y; y = (x + n / x) / 2; }
+    return x;
+}
+
+static unsigned wp_blend(unsigned dst, unsigned src, int t)
+{
+    if (t <= 0)   return dst;
+    if (t >= 255) return src;
+    int dr = (int)((dst >> 16) & 0xff), dg = (int)((dst >> 8) & 0xff), db = (int)(dst & 0xff);
+    int sr = (int)((src >> 16) & 0xff), sg = (int)((src >> 8) & 0xff), sb = (int)(src & 0xff);
+    return GFX_RGB((unsigned)(dr + (sr - dr) * t / 255),
+                   (unsigned)(dg + (sg - dg) * t / 255),
+                   (unsigned)(db + (sb - db) * t / 255));
+}
+
+/* Gradient formula — must match wp_draw_gradient exactly so orb blending is correct. */
+static unsigned wp_bg_at(int y)
+{
+    int r, g, b;
+    if (y < 280) {
+        r =  4 + y *  8 / 280;
+        g =  4 + y *  4 / 280;
+        b = 14 + y * 14 / 280;
+    } else {
+        int dy = y - 280, span = 488;
+        r = 12 - dy * 6  / span;
+        g =  8 - dy * 3  / span;
+        b = 28 - dy * 10 / span;
+    }
+    return GFX_RGB((unsigned)r, (unsigned)g, (unsigned)b);
+}
+
+/* Stage 1 — deep-space two-stop gradient: near-black → deep navy → near-black */
+static void wp_draw_gradient(void)
+{
+    for (int y = 0; y < 768; y++)
+        wp_fill(0, y, 1024, 1, wp_bg_at(y));
+}
+
+/*
+ * Stage 2/3 — soft elliptical nebula orb.
+ * Each scanline is split into three horizontal zones for radial falloff:
+ *   outer strips (40 % of half-width each) — half intensity
+ *   centre strip (60 % of half-width)      — full intensity
+ * This approximates a smooth radial gradient with only 3 fills per row.
+ */
+static void wp_draw_orb(int cx, int cy, int rx, int ry,
+                        unsigned color, int max_t)
+{
+    for (int y = cy - ry; y <= cy + ry; y++) {
+        if (y < ACCENT_Y + ACCENT_H || y >= DOCK_Y) continue;
+        int dy  = y - cy;
+        int ry2 = ry * ry, dy2 = dy * dy;
+        if (dy2 > ry2) continue;
+        int hw = rx * wp_isqrt(ry2 - dy2) / ry;
+        if (hw < 1) continue;
+
+        int ty       = max_t * (ry2 - dy2) / ry2;  /* quadratic Y intensity */
+        int inner_hw = hw * 6 / 10;
+        unsigned bg  = wp_bg_at(y);
+        int x0, x1;
+
+        x0 = cx - hw;
+        x1 = cx - inner_hw;
+        if (x0 < 0)    x0 = 0;
+        if (x1 > 1023) x1 = 1023;
+        if (x1 > x0)   wp_fill(x0, y, x1 - x0, 1, wp_blend(bg, color, ty / 2));
+
+        x0 = cx - inner_hw;
+        x1 = cx + inner_hw;
+        if (x0 < 0)    x0 = 0;
+        if (x1 > 1023) x1 = 1023;
+        if (x1 > x0)   wp_fill(x0, y, x1 - x0, 1, wp_blend(bg, color, ty));
+
+        x0 = cx + inner_hw;
+        x1 = cx + hw;
+        if (x0 < 0)    x0 = 0;
+        if (x1 > 1023) x1 = 1023;
+        if (x1 > x0)   wp_fill(x0, y, x1 - x0, 1, wp_blend(bg, color, ty / 2));
+    }
+}
+
+/* Stage 4 — wavy aurora band sweeping purple→cyan from left to right */
+static void wp_draw_aurora(void)
+{
+    /* One-period sine approximation (amplitude ±30 px), 16 samples */
+    static const int sine16[16] = {
+         0, 11, 21, 28, 30, 28, 21, 11,
+         0,-11,-21,-28,-30,-28,-21,-11
+    };
+    const int segs  = 32;           /* 32-px segments across 1024 px */
+    const int seg_w = 1024 / segs;
+    const int band_h = 26;
+
+    for (int s = 0; s < segs; s++) {
+        int bx = s * seg_w;
+        int bw = (s == segs - 1) ? 1024 - bx : seg_w;
+        int cy = 550 + sine16[s % 16];              /* oscillating centre  */
+
+        int tc       = s * 255 / (segs - 1);        /* purple→cyan colour  */
+        unsigned ac  = GFX_RGB((unsigned)(124 - tc * 124 / 255),
+                               (unsigned)(106 + tc *  94 / 255),
+                               (unsigned)(247 - tc *  27 / 255));
+
+        for (int y = cy - band_h / 2; y <= cy + band_h / 2; y++) {
+            if (y < ACCENT_Y + ACCENT_H || y >= DOCK_Y) continue;
+            int apos = y - cy; if (apos < 0) apos = -apos;
+            int t    = 60 * (band_h / 2 - apos) / (band_h / 2 + 1);
+            wp_fill(bx, y, bw, 1, wp_blend(wp_bg_at(y), ac, t));
+        }
+    }
+}
+
+/* Stage 5 — warm-purple horizon glow that grounds the scene near the dock */
+static void wp_draw_horizon(void)
+{
+    for (int y = 608; y < DOCK_Y; y++) {
+        int t = 24 * (DOCK_Y - y) / (DOCK_Y - 608);
+        wp_fill(0, y, 1024, 1, wp_blend(wp_bg_at(y), GFX_RGB(52, 18, 72), t));
+    }
+}
+
+/* Stage 6 — deterministic star field (fixed LCG seed → same stars every boot) */
+static void wp_draw_stars(void)
+{
+    unsigned st     = 0xCAFEF00Du;
+    int      desk_h = DOCK_Y - (ACCENT_Y + ACCENT_H);   /* 650 px */
+
+    for (int i = 0; i < 130; i++) {
+        st = st * 1664525u + 1013904223u;
+        int x  = (int)((st >> 1) % 1024u);
+        st = st * 1664525u + 1013904223u;
+        int y  = (ACCENT_Y + ACCENT_H) + (int)((st >> 1) % (unsigned)desk_h);
+        st = st * 1664525u + 1013904223u;
+        int br = 80 + (int)((st >> 1) % 150u);           /* brightness 80-229 */
+        st = st * 1664525u + 1013904223u;
+        int sz = (int)((st >> 1) % 3u);                  /* 0=tiny 1=small 2=bright */
+
+        int      b2 = br + 20 < 255 ? br + 20 : 255;
+        unsigned sc = GFX_RGB((unsigned)br, (unsigned)br, (unsigned)b2);
+
+        if (sz == 2) {
+            wp_fill(x, y, 2, 2, sc);
+        } else {
+            wp_fill(x, y, 1, 1, sc);
+            if (sz == 1 && x + 1 < 1024)
+                wp_fill(x + 1, y, 1, 1,
+                        GFX_RGB((unsigned)(br / 2), (unsigned)(br / 2),
+                                (unsigned)(b2 / 2)));
+        }
+    }
+}
+
+/* Repaint the wallpaper for any sub-region (window close, drag ghost erase, icon cell). */
+static void wp_repaint_region(int rx, int ry, int rw, int rh)
+{
+    s_wc_x0 = rx;       s_wc_y0 = ry;
+    s_wc_x1 = rx + rw;  s_wc_y1 = ry + rh;
+    wp_draw_gradient();
+    wp_draw_orb(375, 325, 295, 250, C_ACCENT,  170);
+    wp_draw_orb(765, 468, 220, 178, C_ACCENT2, 148);
+    wp_draw_aurora();
+    wp_draw_horizon();
+    wp_draw_stars();
+    s_wc_x0 = 0;  s_wc_y0 = 0;  s_wc_x1 = 1024;  s_wc_y1 = 768;
+}
+
 /* ── Chrome drawing ──────────────────────────────────────────────────────── */
 
 static void draw_desktop(void)
 {
-    gfx_fill(0, 0, 1024, 768, C_DESKTOP);
+    wp_draw_gradient();
+    wp_draw_orb(375, 325, 295, 250, C_ACCENT,  170);   /* purple nebula  */
+    wp_draw_orb(765, 468, 220, 178, C_ACCENT2, 148);   /* cyan highlight */
+    wp_draw_aurora();
+    wp_draw_horizon();
+    wp_draw_stars();
 }
 
 static void draw_top_bar(long ticks)
@@ -406,10 +609,16 @@ static void desktop_icons_draw_one(int idx)
     int cx = ic->cell_x;
     int cy = ic->cell_y;
 
-    unsigned bg = ic->selected ? GFX_RGB(35, 30, 65) : C_DESKTOP;
-    gfx_fill(cx, cy, DESKTOP_CELL_W, DESKTOP_CELL_H, bg);
-    if (ic->selected)
+    unsigned bg;
+    if (ic->selected) {
+        bg = GFX_RGB(35, 30, 65);
+        gfx_fill(cx, cy, DESKTOP_CELL_W, DESKTOP_CELL_H, bg);
         gfx_rect(cx, cy, DESKTOP_CELL_W, DESKTOP_CELL_H, C_ACCENT);
+    } else {
+        wp_repaint_region(cx, cy, DESKTOP_CELL_W, DESKTOP_CELL_H);
+        /* Approximate bg for the text row — gradient color at label y */
+        bg = wp_bg_at(cy + 4 + DESKTOP_ICON_SIZE + 4);
+    }
 
     int ix = cx + (DESKTOP_CELL_W - DESKTOP_ICON_SIZE) / 2;
     int iy = cy + 4;
@@ -509,8 +718,7 @@ static void on_window_closed(unsigned long long ev)
     int clear_h = ch + 4;
     if (cx + clear_w > 1024) clear_w = 1024 - cx;
     if (cy + clear_h > DOCK_Y) clear_h = DOCK_Y - cy;
-    sys_fb_fill((unsigned)cx, (unsigned)cy,
-                (unsigned)clear_w, (unsigned)clear_h, C_DESKTOP);
+    wp_repaint_region(cx, cy, clear_w, clear_h);
 
     desktop_icons_draw_region(cx, cy, clear_w, clear_h);
 
@@ -640,7 +848,7 @@ static void draw_drag_ghost(int x, int y, int w)
 
 static void erase_drag_ghost(int x, int y, int w)
 {
-    sys_fb_fill(x, y, w, APP_TITLE_H + 2, C_DESKTOP);
+    wp_repaint_region(x, y, w, APP_TITLE_H + 2);
 }
 
 /* ── Main ────────────────────────────────────────────────────────────────── */
