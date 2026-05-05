@@ -53,6 +53,51 @@ static inline u32 pages_for(u32 bytes)
     return (bytes + (u32)PMM_PAGE_SIZE - 1u) / (u32)PMM_PAGE_SIZE;
 }
 
+/* ── Software bilinear upsample ───────────────────────────────────────── */
+/*
+ * Bilinear upsample from src (src_w × src_h) to dst (dst_w × dst_h).
+ * Used after TFU downsampling to reconstruct the blur result at full size.
+ * Fixed-point 8-bit fractional coordinates (256 = 1.0).
+ */
+static void __attribute__((unused))
+sw_bilinear_upsample(const volatile u32 *src, volatile u32 *dst,
+                                  u32 src_w, u32 src_h,
+                                  u32 dst_w, u32 dst_h)
+{
+    if (dst_w < 2u || dst_h < 2u) return;
+
+    for (u32 dy = 0; dy < dst_h; dy++) {
+        u32 sy_fxp = (dy * (src_h - 1u) * 256u) / (dst_h - 1u);
+        u32 sy0 = sy_fxp >> 8;
+        u32 fy  = sy_fxp & 0xFFu;
+        u32 sy1 = (sy0 + 1u < src_h) ? sy0 + 1u : sy0;
+
+        for (u32 dx = 0; dx < dst_w; dx++) {
+            u32 sx_fxp = (dx * (src_w - 1u) * 256u) / (dst_w - 1u);
+            u32 sx0 = sx_fxp >> 8;
+            u32 fx  = sx_fxp & 0xFFu;
+            u32 sx1 = (sx0 + 1u < src_w) ? sx0 + 1u : sx0;
+
+            u32 p00 = src[sy0 * src_w + sx0];
+            u32 p10 = src[sy0 * src_w + sx1];
+            u32 p01 = src[sy1 * src_w + sx0];
+            u32 p11 = src[sy1 * src_w + sx1];
+
+#define BLERP(p00, p10, p01, p11, sh, mask) \
+    ((((((p00)>>(sh))&(mask)) * (256u-fx) * (256u-fy) + \
+       (((p10)>>(sh))&(mask)) * fx        * (256u-fy) + \
+       (((p01)>>(sh))&(mask)) * (256u-fx) * fy        + \
+       (((p11)>>(sh))&(mask)) * fx        * fy) + (1u << 15)) >> 16)
+
+            dst[dy * dst_w + dx] =
+                (BLERP(p00, p10, p01, p11, 16u, 0xFFu) << 16) |
+                (BLERP(p00, p10, p01, p11,  8u, 0xFFu) <<  8) |
+                 BLERP(p00, p10, p01, p11,  0u, 0xFFu);
+#undef BLERP
+        }
+    }
+}
+
 /* ── Software blur (horizontal pass) ─────────────────────────────────── */
 /*
  * Box-blur each row of src into dst.  Using a sliding-window running sum
@@ -149,6 +194,140 @@ static void sw_vblur(const volatile u32 *src, volatile u32 *dst,
         }
     }
 }
+
+/* ── TFU hardware downsample (Pi 4 only) ──────────────────────────────── */
+/*
+ * tfu_downsample_2x — use the V3D Texture Formatting Unit to generate
+ * a 2× downsampled copy of src_phys into dst_phys using bilinear filtering.
+ *
+ * Register sequence (from raspberrypi/linux v3d_sched.c):
+ *   IIA, ICA, IIS, IUA, IOA, IOS, COEF0-3, then ICFG (kicks the job).
+ * Completion: poll V3D_HUB_INTSTS for V3D_HUB_INT_TFUC (bit 1).
+ *
+ * Returns 0 on success, -1 on timeout or invalid dimensions.
+ */
+#ifdef AETHER_TARGET_PI4
+static int tfu_downsample_2x(uintptr_t src_phys, uintptr_t dst_phys,
+                              u32 src_w, u32 src_h)
+{
+    u32 dst_w = src_w / 2u;
+    u32 dst_h = src_h / 2u;
+    if (!dst_w || !dst_h) return -1;
+
+    /* Clear any stale TFU-complete flag */
+    HUB_WR(V3D_HUB_INTCLR, V3D_HUB_INT_TFUC);
+
+    /* Input: row-major XRGB8888, stride = src_w * 4 bytes */
+    HUB_WR(V3D_TFU_IIA,   (u32)(src_phys & 0xFFFFFFFFu));
+    HUB_WR(V3D_TFU_ICA,   src_w * 4u);
+    HUB_WR(V3D_TFU_IIS,   (src_w << 16) | src_h);
+    HUB_WR(V3D_TFU_IUA,   0u);              /* no YUV UV plane */
+
+    /* Output: half-size buffer */
+    HUB_WR(V3D_TFU_IOA,   (u32)(dst_phys & 0xFFFFFFFFu));
+    HUB_WR(V3D_TFU_IOS,   (dst_w << 16) | dst_h);
+
+    /* Default box filter (0 = use hardware default) */
+    HUB_WR(V3D_TFU_COEF0, 0u);
+    HUB_WR(V3D_TFU_COEF1, 0u);
+    HUB_WR(V3D_TFU_COEF2, 0u);
+    HUB_WR(V3D_TFU_COEF3, 0u);
+
+    /* ICFG: raster linear (TTYPE=0), RGBA8 format, 0 levels field = 1 output level.
+     * Writing this register kicks the job. */
+    u32 icfg = (TFU_ICFG_TTYPE_RASTER  << TFU_ICFG_TTYPE_SHIFT)  |
+               (TFU_ICFG_FORMAT_RGBA8  << TFU_ICFG_FORMAT_SHIFT)  |
+               (0u                     << TFU_ICFG_NLEVELS_SHIFT);
+    __asm__ volatile("dsb sy" ::: "memory");  /* ensure all writes visible before kick */
+    HUB_WR(V3D_TFU_ICFG, icfg);
+
+    /* Poll for completion: TFUC bit set when done */
+    u32 timeout = 0x200000u;
+    while (!(HUB_RD(V3D_HUB_INTSTS) & V3D_HUB_INT_TFUC) && --timeout)
+        __asm__ volatile("nop" ::: "memory");
+
+    HUB_WR(V3D_HUB_INTCLR, V3D_HUB_INT_TFUC);
+
+    if (!timeout) {
+        kwarn("[V3D] TFU timeout — falling back to software blur\n");
+        return -1;
+    }
+    return 0;
+}
+
+/*
+ * v3d_tfu_blur — GPU-accelerated blur via iterative TFU downsampling.
+ *
+ * Strategy:
+ *   Blur radius determines how many 2× downsample passes to chain.
+ *   Each pass halves both dimensions; the final bilinear upsample back
+ *   to full size creates a progressively stronger blur effect.
+ *
+ *   radius  1–3  → 1 pass  (approx. Gaussian σ ≈ 1–2 px)
+ *   radius  4–7  → 2 passes (approx. σ ≈ 3–5 px)
+ *   radius  8+   → 3 passes (approx. σ ≈ 6–10 px)
+ *
+ * Falls back gracefully if PMM allocation fails.
+ */
+static int v3d_tfu_blur(uintptr_t src_phys, uintptr_t dst_phys,
+                         u32 width, u32 height, u32 radius)
+{
+    u32 passes = (radius <= 3u) ? 1u : (radius <= 7u) ? 2u : 3u;
+
+    /* Don't let the image shrink below 8×8 */
+    u32 min_dim = (width < height) ? width : height;
+    while (passes > 1u && (min_dim >> passes) < 8u)
+        passes--;
+
+    /* Allocate intermediate level buffers: level[i] is (w>>i+1) × (h>>i+1) */
+    uintptr_t level[3]       = {0, 0, 0};
+    u32       level_pages[3] = {0, 0, 0};
+
+    for (u32 i = 0; i < passes; i++) {
+        u32 lw      = width  >> (i + 1u);
+        u32 lh      = height >> (i + 1u);
+        u32 nbytes  = lw * lh * 4u;
+        level_pages[i] = pages_for(nbytes);
+        level[i]       = pmm_alloc_pages(level_pages[i]);
+        if (!level[i]) {
+            for (u32 j = 0; j < i; j++)
+                for (u32 k = 0; k < level_pages[j]; k++)
+                    pmm_free_page(level[j] + k * (u32)PMM_PAGE_SIZE);
+            return -1;
+        }
+    }
+
+    /* Downsample chain: src → level[0] → level[1] → ... */
+    uintptr_t cur_src = src_phys;
+    u32 cur_w = width, cur_h = height;
+
+    for (u32 i = 0; i < passes; i++) {
+        if (tfu_downsample_2x(cur_src, level[i], cur_w, cur_h) != 0) {
+            for (u32 j = 0; j < passes; j++)
+                if (level[j])
+                    for (u32 k = 0; k < level_pages[j]; k++)
+                        pmm_free_page(level[j] + k * (u32)PMM_PAGE_SIZE);
+            return -1;
+        }
+        cur_src = level[i];
+        cur_w >>= 1u;
+        cur_h >>= 1u;
+    }
+
+    /* Bilinear upsample from smallest level directly back to full size */
+    sw_bilinear_upsample(
+        (const volatile u32 *)level[passes - 1u],
+        (volatile u32 *)dst_phys,
+        cur_w, cur_h,
+        width, height);
+
+    for (u32 i = 0; i < passes; i++)
+        for (u32 k = 0; k < level_pages[i]; k++)
+            pmm_free_page(level[i] + k * (u32)PMM_PAGE_SIZE);
+
+    return 0;
+}
+#endif /* AETHER_TARGET_PI4 */
 
 /* ── Initialisation ───────────────────────────────────────────────────── */
 
@@ -297,12 +476,10 @@ int v3d_blur(uintptr_t src_phys, uintptr_t dst_phys,
 
 #ifdef AETHER_TARGET_PI4
     if (g_present) {
-        /*
-         * Hardware path (Phase 6.1.5 TODO):
-         *   Drive TFU with bilinear-sampled passes to approximate Gaussian blur.
-         *   Multi-pass approach: blit with fractional offsets, accumulate with
-         *   additive blending into dst.  For now fall through to software.
-         */
+        /* Hardware path (Phase 6.1.5): TFU iterative downsample + bilinear upsample. */
+        if (v3d_tfu_blur(src_phys, dst_phys, width, height, radius) == 0)
+            return 0;
+        /* Fall through to software on TFU failure */
     }
 #endif
 

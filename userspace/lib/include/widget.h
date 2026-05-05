@@ -16,8 +16,8 @@
 #include <gfx.h>
 
 /* ── Font metrics (shared with gfx.c) ───────────────────────────────────── */
-#define WGT_FONT_W  8
-#define WGT_FONT_H  8
+#define WGT_FONT_W   8
+#define WGT_FONT_H  16
 
 /* ── Text alignment ─────────────────────────────────────────────────────── */
 #define WGT_ALIGN_LEFT   0

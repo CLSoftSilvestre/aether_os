@@ -706,6 +706,9 @@ long syscall_dispatch(trap_frame_t *frame)
     case SYS_CURSOR_MOVE: return do_sys_cursor_move(arg0);
     case SYS_CURSOR_SHOW: return do_sys_cursor_show(arg0);
 
+    case SYS_FB_INFO:
+        return ((long)fb_width << 32) | (long)fb_height;
+
     case SYS_FB_FILL:
         return do_sys_fb_fill(arg0, arg1, arg2);
 

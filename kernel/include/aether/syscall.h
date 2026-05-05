@@ -94,6 +94,7 @@
 #define SYS_FB_CLAIM    604   /* user owns FB: disable kernel fb_console      */
 #define SYS_CURSOR_MOVE 605   /* (x<<32|y) — kernel moves + redraws cursor   */
 #define SYS_CURSOR_SHOW 606   /* (visible) — show (1) or hide (0) cursor      */
+#define SYS_FB_INFO     607   /* () → (fb_width << 32) | fb_height            */
 
 /* Filesystem syscalls (Phase 5.2 + write) */
 #define SYS_FS_OPEN      800  /* (path_ptr) → vfd (>=200) or -1                 */

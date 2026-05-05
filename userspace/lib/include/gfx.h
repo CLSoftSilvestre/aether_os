@@ -42,7 +42,7 @@ void gfx_hline(unsigned x, unsigned y, unsigned w, unsigned color);
 void gfx_vline(unsigned x, unsigned y, unsigned h, unsigned color);
 void gfx_rect(unsigned x, unsigned y, unsigned w, unsigned h, unsigned color);
 
-/* Draw one character (8×8) at pixel (x, y) */
+/* Draw one character (8×16 Lumina Mono) at pixel (x, y) */
 void gfx_char(unsigned x, unsigned y, char ch, unsigned fg, unsigned bg);
 
 /* Draw a null-terminated string on a single line */

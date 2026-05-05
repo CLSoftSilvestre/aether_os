@@ -9,18 +9,24 @@
 #include <string.h>
 #include <sys.h>
 
-#define FONT_W  8
-#define FONT_H  8
+#define FONT_W   8
+#define FONT_H  16
 
 static unsigned g_width;
 static unsigned g_height;
 
+#define SYS_FB_INFO  607   /* () → (fb_width << 32) | fb_height */
+
 void gfx_init(void)
 {
-    /* QEMU ramfb is fixed 1024×768 — hardcode for now.
-     * Phase 4.2 will expose sys_fb_info for dynamic query. */
-    g_width  = 1024;
-    g_height = 768;
+    long dims = _sys0(SYS_FB_INFO);
+    if (dims > 0) {
+        g_width  = (unsigned)((unsigned long long)dims >> 32);
+        g_height = (unsigned)((unsigned long long)dims & 0xFFFFFFFFu);
+    } else {
+        g_width  = 1280;
+        g_height = 720;
+    }
 }
 
 unsigned gfx_width(void)  { return g_width;  }

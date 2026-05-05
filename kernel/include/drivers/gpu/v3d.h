@@ -38,23 +38,39 @@
 
 /*
  * Texture Formatting Unit (TFU) — hub register offsets.
- * TFU performs texture format conversions and can blit + filter
- * between two buffers; used for hardware-accelerated blur.
+ * TFU performs hardware-accelerated texture format conversion and bilinear
+ * downsampling (mipmap generation).  Used for GPU-accelerated blur:
+ *   downsample 2× via TFU → software bilinear upsample back to full size.
+ *
+ * Register offsets from Linux kernel drivers/gpu/drm/v3d/v3d_regs.h
+ * (raspberrypi/linux, BCM2711 V3D 4.2).
+ *
+ * Writing TFU_ICFG last starts the job.  Completion is signalled by
+ * the V3D_HUB_INT_TFUC bit in V3D_HUB_INTSTS (poll or use interrupt).
  */
-#define V3D_TFU_CS        0x400   /* control / status */
-#define V3D_TFU_INBASE0   0x404   /* input base PA */
-#define V3D_TFU_ICFG      0x414   /* input config: width/height/format */
-#define V3D_TFU_OUTBASE   0x418   /* output base PA */
-#define V3D_TFU_OUTNUM    0x41C   /* number of output levels */
-#define V3D_TFU_OUTCFG    0x420   /* output config */
-#define V3D_TFU_COEF0     0x424   /* filter coefficients (4 registers) */
-#define V3D_TFU_COEF1     0x428
-#define V3D_TFU_COEF2     0x42C
-#define V3D_TFU_COEF3     0x430
+#define V3D_TFU_CS    0xe00   /* control / status (r=1 when ready) */
+#define V3D_TFU_IIA   0xe04   /* input image address (physical) */
+#define V3D_TFU_ICA   0xe08   /* input config A: linear stride in bytes */
+#define V3D_TFU_IIS   0xe0c   /* input image size: (width<<16)|height */
+#define V3D_TFU_IUA   0xe10   /* input UV address (YUV formats, else 0) */
+#define V3D_TFU_IOA   0xe14   /* output image address (physical) */
+#define V3D_TFU_IOS   0xe18   /* output image size: (width<<16)|height */
+#define V3D_TFU_ICFG  0xe1c   /* format/tiling config — write LAST to kick job */
+#define V3D_TFU_COEF0 0xe20   /* filter coefficient 0 (0 = default box filter) */
+#define V3D_TFU_COEF1 0xe24
+#define V3D_TFU_COEF2 0xe28
+#define V3D_TFU_COEF3 0xe2c
 
-/* TFU_CS bits */
-#define TFU_CS_ACTIVE  (1u << 0)   /* job in progress */
-#define TFU_CS_RESET   (1u << 15)  /* software reset */
+/* TFU_ICFG bit fields (V3D 4.2 / BCM2711) */
+#define TFU_ICFG_TTYPE_SHIFT    0         /* [2:0] tiling type */
+#define TFU_ICFG_TTYPE_RASTER   0u        /*   0 = plain row-major (raster) */
+#define TFU_ICFG_FORMAT_SHIFT   4         /* [8:4] pixel format */
+#define TFU_ICFG_FORMAT_RGBA8   12u       /*   12 = XRGB8888 / RGBA8 (V3D 4.x) */
+#define TFU_ICFG_NLEVELS_SHIFT  12        /* [15:12] mip levels to generate - 1 */
+/*   0 in field = generate 1 level (half size from input); matches Mesa usage */
+
+/* Hub interrupt bits (in V3D_HUB_INTSTS / V3D_HUB_INTCLR) */
+#define V3D_HUB_INT_TFUC  (1u << 1)       /* TFU job complete */
 
 /* V3D IDENT0 magic — lower 24 bits spell "V3D" */
 #define V3D_IDENT0_MAGIC  0x02443356u   /* 'V','3','D', rev=2 */

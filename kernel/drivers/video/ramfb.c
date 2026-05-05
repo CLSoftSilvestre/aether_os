@@ -19,8 +19,8 @@
 
 /* ── ramfb configuration struct (all fields big-endian) ─────────────── */
 
-#define RAMFB_WIDTH   1024U
-#define RAMFB_HEIGHT   768U
+#define RAMFB_WIDTH   1280U
+#define RAMFB_HEIGHT   720U
 
 /*
  * DRM_FORMAT_XRGB8888 = fourcc('X','R','2','4') = 0x34325258

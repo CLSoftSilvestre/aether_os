@@ -21,13 +21,13 @@
 
 #define TOPBAR_H   36
 #define ACCENT_H    2
-#define BOTBAR_Y  744
+#define BOTBAR_Y  696   /* 720 - BOTBAR_H(24) */
 
-#define FONT_W  8
-#define FONT_H  8
+#define FONT_W   8
+#define FONT_H  16
 
 #define TERM_COLS  80
-#define TERM_ROWS  70
+#define TERM_ROWS  34   /* (BOTBAR_Y - TOPBAR_H - ACCENT_H - TITLE_H - 16) / FONT_H */
 #define WIN_W     (TERM_COLS * FONT_W + 16)
 #define TITLE_H    28
 #define WIN_H     (TITLE_H + 8 + TERM_ROWS * FONT_H + 8)

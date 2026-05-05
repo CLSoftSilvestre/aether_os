@@ -147,16 +147,37 @@ static const u8 font8x8[256][8] = {
 
 /* Remaining entries (0x80–0xFF) default to zero (all-black glyph) */
 
+/*
+ * Lumina Mono 8×16 render: each 8×8 glyph is stretched to 8×16.
+ *
+ * Row mapping (drow = display row 0-15, vrow = VGA glyph row 0-7):
+ *   drow  0   → vrow 0  (single row — top peak / dot row)
+ *   drow  1-2 → vrow 1  (doubled)
+ *   drow  3-4 → vrow 2
+ *   drow  5-6 → vrow 3
+ *   drow  7-8 → vrow 4
+ *   drow  9-10→ vrow 5
+ *   drow 11-12→ vrow 6
+ *   drow 13-14→ vrow 7  (descenders land here, doubled)
+ *   drow 15   → 0x00    (blank bottom — breathing room between lines)
+ */
 void font_draw_char(u32 x, u32 y, unsigned char ch, u32 fg, u32 bg)
 {
     if (!fb_base) return;
     u32 pitch = fb_stride / 4;
     const u8 *glyph = font8x8[ch];
-    for (u32 row = 0; row < FONT_H; row++) {
-        u8 bits = glyph[row];
-        volatile u32 *dst = fb_base + (y + row) * pitch + x;
-        for (u32 col = 0; col < FONT_W; col++) {
+
+    for (u32 drow = 0; drow < FONT_H; drow++) {
+        u8 bits;
+        if (drow == 15)
+            bits = 0;
+        else if (drow == 0)
+            bits = glyph[0];
+        else
+            bits = glyph[(drow + 1) >> 1];   /* vrow = (drow+1)/2 */
+
+        volatile u32 *dst = fb_base + (y + drow) * pitch + x;
+        for (u32 col = 0; col < FONT_W; col++)
             dst[col] = (bits & (0x80u >> col)) ? fg : bg;
-        }
     }
 }

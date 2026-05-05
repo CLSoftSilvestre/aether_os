@@ -2,12 +2,12 @@
  * AetherOS — Desktop Manager (PID 1)
  * File: userspace/apps/init/main.c
  *
- * Desktop layout (1024×768):
- *   [0]   Top bar    1024×36
- *   [36]  Accent     1024×2
- *   [38]  Main area  1024×650
- *   [688] Dock       1024×56
- *   [744] Bot bar    1024×24
+ * Desktop layout (dynamic — queried from kernel via SYS_FB_INFO):
+ *   [0]         Top bar    SCR_W × 36
+ *   [36]        Accent     SCR_W × 2
+ *   [38]        Main area  SCR_W × (SCR_H - 36 - 2 - 56 - 24)
+ *   [SCR_H-80]  Dock       SCR_W × 56
+ *   [SCR_H-24]  Bot bar    SCR_W × 24
  */
 
 #include <gfx.h>
@@ -17,18 +17,25 @@
 #include <sys.h>
 #include <input.h>
 
-/* ── Layout constants ────────────────────────────────────────────────────── */
+/* ── Layout constants (size-invariant) ───────────────────────────────────── */
 
 #define TOPBAR_Y    0
 #define TOPBAR_H   36
 #define ACCENT_Y   36
 #define ACCENT_H    2
-#define BOTBAR_Y  744
 #define BOTBAR_H   24
 #define DOCK_H     56
-#define DOCK_Y    688        /* BOTBAR_Y - DOCK_H */
-#define FONT_W      8
-#define FONT_H      8
+#define FONT_W       8
+#define FONT_H      16
+
+/*
+ * Position variables derived from screen size — set in main() after gfx_init().
+ * Upper-case names kept for minimal diff against previous hard-coded usage.
+ */
+static int SCR_W;
+static int SCR_H;
+static int BOTBAR_Y;   /* SCR_H - BOTBAR_H         */
+static int DOCK_Y;     /* SCR_H - BOTBAR_H - DOCK_H */
 
 /* Title-bar height used by all windows — must match apps */
 #define APP_TITLE_H  28
@@ -44,8 +51,9 @@
 #define DESKTOP_ICON_SIZE  48
 #define DESKTOP_ICON_X0    16
 #define DESKTOP_ICON_Y0    (ACCENT_Y + ACCENT_H + 16)   /* = 54 */
-#define DESKTOP_ICON_COLS  ((1024 - DESKTOP_ICON_X0 * 2) / DESKTOP_CELL_W)
 #define DESKTOP_DBLCLICK_TICKS  50   /* 500 ms at 100 Hz */
+
+static int DESKTOP_ICON_COLS;   /* set in main(): (SCR_W - DESKTOP_ICON_X0*2) / DESKTOP_CELL_W */
 
 typedef struct {
     int         cell_x, cell_y;
@@ -62,8 +70,9 @@ static int            g_icon_count = 0;
 
 #define DOCK_ITEM_COUNT   7
 #define DOCK_SLOT_W      80    /* width of each icon slot */
-#define DOCK_START_X    232    /* (1024 - 7*80) / 2 */
 #define DOCK_ICON_SIZE   40    /* 40x40 icon */
+
+static int DOCK_START_X;      /* set in main(): (SCR_W - DOCK_ITEM_COUNT*DOCK_SLOT_W) / 2 */
 
 typedef struct {
     const char *path;
@@ -292,8 +301,8 @@ static void draw_dock_item(int idx)
 
 static void draw_dock(void)
 {
-    gfx_fill(0, DOCK_Y, 1024, DOCK_H, C_PANEL);
-    gfx_hline(0, DOCK_Y, 1024, C_SEP);
+    gfx_fill(0, DOCK_Y, SCR_W, DOCK_H, C_PANEL);
+    gfx_hline(0, DOCK_Y, SCR_W, C_SEP);
     for (int i = 0; i < DOCK_ITEM_COUNT; i++)
         draw_dock_item(i);
 }
@@ -310,8 +319,8 @@ static void draw_dock(void)
  *   6. 130 deterministic stars                 (~200 fills)
  */
 
-/* Active clip rect for partial repaints; default = full screen */
-static int s_wc_x0 = 0, s_wc_y0 = 0, s_wc_x1 = 1024, s_wc_y1 = 768;
+/* Active clip rect for partial repaints; reset to full screen after each repaint */
+static int s_wc_x0 = 0, s_wc_y0 = 0, s_wc_x1 = 0, s_wc_y1 = 0;
 
 /* Internal fill that is silently clipped to s_wc_* — used by all wp_draw_* stages. */
 static void wp_fill(int x, int y, int w, int h, unsigned color)
@@ -364,8 +373,8 @@ static unsigned wp_bg_at(int y)
 /* Stage 1 — deep-space two-stop gradient: near-black → deep navy → near-black */
 static void wp_draw_gradient(void)
 {
-    for (int y = 0; y < 768; y++)
-        wp_fill(0, y, 1024, 1, wp_bg_at(y));
+    for (int y = 0; y < SCR_H; y++)
+        wp_fill(0, y, SCR_W, 1, wp_bg_at(y));
 }
 
 /*
@@ -394,19 +403,19 @@ static void wp_draw_orb(int cx, int cy, int rx, int ry,
         x0 = cx - hw;
         x1 = cx - inner_hw;
         if (x0 < 0)    x0 = 0;
-        if (x1 > 1023) x1 = 1023;
+        if (x1 > SCR_W - 1) x1 = SCR_W - 1;
         if (x1 > x0)   wp_fill(x0, y, x1 - x0, 1, wp_blend(bg, color, ty / 2));
 
         x0 = cx - inner_hw;
         x1 = cx + inner_hw;
         if (x0 < 0)    x0 = 0;
-        if (x1 > 1023) x1 = 1023;
+        if (x1 > SCR_W - 1) x1 = SCR_W - 1;
         if (x1 > x0)   wp_fill(x0, y, x1 - x0, 1, wp_blend(bg, color, ty));
 
         x0 = cx + inner_hw;
         x1 = cx + hw;
         if (x0 < 0)    x0 = 0;
-        if (x1 > 1023) x1 = 1023;
+        if (x1 > SCR_W - 1) x1 = SCR_W - 1;
         if (x1 > x0)   wp_fill(x0, y, x1 - x0, 1, wp_blend(bg, color, ty / 2));
     }
 }
@@ -419,13 +428,13 @@ static void wp_draw_aurora(void)
          0, 11, 21, 28, 30, 28, 21, 11,
          0,-11,-21,-28,-30,-28,-21,-11
     };
-    const int segs  = 32;           /* 32-px segments across 1024 px */
-    const int seg_w = 1024 / segs;
+    const int segs  = 32;
+    const int seg_w = SCR_W / segs;
     const int band_h = 26;
 
     for (int s = 0; s < segs; s++) {
         int bx = s * seg_w;
-        int bw = (s == segs - 1) ? 1024 - bx : seg_w;
+        int bw = (s == segs - 1) ? SCR_W - bx : seg_w;
         int cy = 550 + sine16[s % 16];              /* oscillating centre  */
 
         int tc       = s * 255 / (segs - 1);        /* purple→cyan colour  */
@@ -445,9 +454,10 @@ static void wp_draw_aurora(void)
 /* Stage 5 — warm-purple horizon glow that grounds the scene near the dock */
 static void wp_draw_horizon(void)
 {
-    for (int y = 608; y < DOCK_Y; y++) {
-        int t = 24 * (DOCK_Y - y) / (DOCK_Y - 608);
-        wp_fill(0, y, 1024, 1, wp_blend(wp_bg_at(y), GFX_RGB(52, 18, 72), t));
+    int horizon_start = DOCK_Y - 80;
+    for (int y = horizon_start; y < DOCK_Y; y++) {
+        int t = 24 * (DOCK_Y - y) / (DOCK_Y - horizon_start);
+        wp_fill(0, y, SCR_W, 1, wp_blend(wp_bg_at(y), GFX_RGB(52, 18, 72), t));
     }
 }
 
@@ -459,7 +469,7 @@ static void wp_draw_stars(void)
 
     for (int i = 0; i < 130; i++) {
         st = st * 1664525u + 1013904223u;
-        int x  = (int)((st >> 1) % 1024u);
+        int x  = (int)((st >> 1) % (unsigned)SCR_W);
         st = st * 1664525u + 1013904223u;
         int y  = (ACCENT_Y + ACCENT_H) + (int)((st >> 1) % (unsigned)desk_h);
         st = st * 1664525u + 1013904223u;
@@ -474,7 +484,7 @@ static void wp_draw_stars(void)
             wp_fill(x, y, 2, 2, sc);
         } else {
             wp_fill(x, y, 1, 1, sc);
-            if (sz == 1 && x + 1 < 1024)
+            if (sz == 1 && x + 1 < SCR_W)
                 wp_fill(x + 1, y, 1, 1,
                         GFX_RGB((unsigned)(br / 2), (unsigned)(br / 2),
                                 (unsigned)(b2 / 2)));
@@ -488,12 +498,12 @@ static void wp_repaint_region(int rx, int ry, int rw, int rh)
     s_wc_x0 = rx;       s_wc_y0 = ry;
     s_wc_x1 = rx + rw;  s_wc_y1 = ry + rh;
     wp_draw_gradient();
-    wp_draw_orb(375, 325, 295, 250, C_ACCENT,  170);
-    wp_draw_orb(765, 468, 220, 178, C_ACCENT2, 148);
+    wp_draw_orb(SCR_W * 37 / 100, SCR_H * 42 / 100, 295, 250, C_ACCENT,  170);
+    wp_draw_orb(SCR_W * 74 / 100, SCR_H * 60 / 100, 220, 178, C_ACCENT2, 148);
     wp_draw_aurora();
     wp_draw_horizon();
     wp_draw_stars();
-    s_wc_x0 = 0;  s_wc_y0 = 0;  s_wc_x1 = 1024;  s_wc_y1 = 768;
+    s_wc_x0 = 0;  s_wc_y0 = 0;  s_wc_x1 = SCR_W;  s_wc_y1 = SCR_H;
 }
 
 /* ── Chrome drawing ──────────────────────────────────────────────────────── */
@@ -501,8 +511,8 @@ static void wp_repaint_region(int rx, int ry, int rw, int rh)
 static void draw_desktop(void)
 {
     wp_draw_gradient();
-    wp_draw_orb(375, 325, 295, 250, C_ACCENT,  170);   /* purple nebula  */
-    wp_draw_orb(765, 468, 220, 178, C_ACCENT2, 148);   /* cyan highlight */
+    wp_draw_orb(SCR_W * 37 / 100, SCR_H * 42 / 100, 295, 250, C_ACCENT,  170);
+    wp_draw_orb(SCR_W * 74 / 100, SCR_H * 60 / 100, 220, 178, C_ACCENT2, 148);
     wp_draw_aurora();
     wp_draw_horizon();
     wp_draw_stars();
@@ -510,34 +520,34 @@ static void draw_desktop(void)
 
 static void draw_top_bar(long ticks)
 {
-    gfx_fill(0, TOPBAR_Y, 1024, TOPBAR_H, C_PANEL);
+    gfx_fill(0, TOPBAR_Y, SCR_W, TOPBAR_H, C_PANEL);
     gfx_text(14, TOPBAR_Y + 10, "AetherOS", C_TEXT, C_PANEL);
     gfx_text(14 + 8 * FONT_W + 8, TOPBAR_Y + 10, "v0.0.7", C_TEXT_DIM, C_PANEL);
-    gfx_text_center(0, 1024, TOPBAR_Y + 10,
-                    "Phase 4.7  --  Lumina Desktop", C_TEXT_DIM, C_PANEL);
+    gfx_text_center(0, SCR_W, TOPBAR_Y + 10,
+                    "Phase 6.1  --  Lumina Desktop", C_TEXT_DIM, C_PANEL);
     char ubuf[20], tbuf[16];
     fmt_uptime(tbuf, ticks);
     snprintf(ubuf, sizeof(ubuf), "up %s", tbuf);
     int len = (int)strlen(ubuf);
-    gfx_text(1024 - len * FONT_W - 14, TOPBAR_Y + 10,
+    gfx_text(SCR_W - len * FONT_W - 14, TOPBAR_Y + 10,
              ubuf, C_TEXT_DIM, C_PANEL);
-    gfx_fill(0, ACCENT_Y, 1024, ACCENT_H, C_ACCENT);
+    gfx_fill(0, ACCENT_Y, SCR_W, ACCENT_H, C_ACCENT);
 }
 
 static void draw_bot_bar(void)
 {
-    gfx_fill(0, BOTBAR_Y, 1024, BOTBAR_H, C_PANEL);
-    gfx_hline(0, BOTBAR_Y, 1024, C_SEP);
-    gfx_text(14, BOTBAR_Y + 6,
-             "AetherOS 0.0.7  |  QEMU virt  |  Cortex-A76  |  1024x768",
-             C_TEXT_DIM, C_PANEL);
+    gfx_fill(0, BOTBAR_Y, SCR_W, BOTBAR_H, C_PANEL);
+    gfx_hline(0, BOTBAR_Y, SCR_W, C_SEP);
+    char resbuf[32];
+    snprintf(resbuf, sizeof(resbuf), "AetherOS  |  QEMU  |  %dx%d", SCR_W, SCR_H);
+    gfx_text(14, BOTBAR_Y + 6, resbuf, C_TEXT_DIM, C_PANEL);
     long v = sys_pmm_stats();
     unsigned long free_pages = (unsigned long)((unsigned long long)v >> 32);
     unsigned long free_mb    = free_pages * 4 / 1024;
     char mbuf[24];
     snprintf(mbuf, sizeof(mbuf), "Free: %lu MB", free_mb);
     int mlen = (int)strlen(mbuf);
-    gfx_text(1024 - mlen * FONT_W - 14, BOTBAR_Y + 6,
+    gfx_text(SCR_W - mlen * FONT_W - 14, BOTBAR_Y + 6,
              mbuf, C_TEXT_DIM, C_PANEL);
 }
 
@@ -547,12 +557,12 @@ static void refresh_top_bar(long ticks)
     fmt_uptime(tbuf, ticks);
     snprintf(ubuf, sizeof(ubuf), "up %s", tbuf);
     int len = (int)strlen(ubuf);
-    int x = 1024 - len * FONT_W - 14;
-    gfx_fill(x - 2, TOPBAR_Y, 1024 - (x - 2), TOPBAR_H, C_PANEL);
+    int x = SCR_W - len * FONT_W - 14;
+    gfx_fill(x - 2, TOPBAR_Y, SCR_W - (x - 2), TOPBAR_H, C_PANEL);
     gfx_text(x, TOPBAR_Y + 10, ubuf, C_TEXT_DIM, C_PANEL);
 }
 
-static void refresh_bot_bar(void)
+static void __attribute__((unused)) refresh_bot_bar(void)
 {
     long v = sys_pmm_stats();
     unsigned long free_pages = (unsigned long)((unsigned long long)v >> 32);
@@ -560,8 +570,8 @@ static void refresh_bot_bar(void)
     char mbuf[24];
     snprintf(mbuf, sizeof(mbuf), "Free: %lu MB", free_mb);
     int mlen = (int)strlen(mbuf);
-    int x = 1024 - mlen * FONT_W - 14;
-    gfx_fill(x - 2, BOTBAR_Y, 1024 - (x - 2), BOTBAR_H, C_PANEL);
+    int x = SCR_W - mlen * FONT_W - 14;
+    gfx_fill(x - 2, BOTBAR_Y, SCR_W - (x - 2), BOTBAR_H, C_PANEL);
     gfx_text(x, BOTBAR_Y + 6, mbuf, C_TEXT_DIM, C_PANEL);
 }
 
@@ -747,7 +757,7 @@ static void on_window_closed(unsigned long long ev)
      */
     int clear_w = cw + 4;
     int clear_h = ch + 4;
-    if (cx + clear_w > 1024) clear_w = 1024 - cx;
+    if (cx + clear_w > SCR_W) clear_w = SCR_W - cx;
     if (cy + clear_h > DOCK_Y) clear_h = DOCK_Y - cy;
     wp_repaint_region(cx, cy, clear_w, clear_h);
 
@@ -889,6 +899,18 @@ int main(void)
     sys_fb_claim();
     gfx_init();
 
+    /* Compute layout from actual screen dimensions */
+    SCR_W          = (int)gfx_width();
+    SCR_H          = (int)gfx_height();
+    BOTBAR_Y       = SCR_H - BOTBAR_H;
+    DOCK_Y         = SCR_H - BOTBAR_H - DOCK_H;
+    DOCK_START_X   = (SCR_W - DOCK_ITEM_COUNT * DOCK_SLOT_W) / 2;
+    DESKTOP_ICON_COLS = (SCR_W - DESKTOP_ICON_X0 * 2) / DESKTOP_CELL_W;
+
+    /* Initialise full-screen clip rect now that SCR_W/H are known */
+    s_wc_x1 = SCR_W;
+    s_wc_y1 = SCR_H;
+
     draw_desktop();
     draw_top_bar(gfx_ticks());
     draw_bot_bar();
@@ -1001,7 +1023,7 @@ int main(void)
 
                 if (nx < 0) nx = 0;
                 if (ny < TOPBAR_H + ACCENT_H) ny = TOPBAR_H + ACCENT_H;
-                if (nx + g_drag_ghost_w > 1024) nx = 1024 - g_drag_ghost_w;
+                if (nx + g_drag_ghost_w > SCR_W) nx = SCR_W - g_drag_ghost_w;
                 if (ny + APP_TITLE_H > DOCK_Y) ny = DOCK_Y - APP_TITLE_H;
 
                 if (nx != g_drag_ghost_x || ny != g_drag_ghost_y) {
@@ -1020,7 +1042,7 @@ int main(void)
 
                 /* Restore dock separator if ghost grazed it */
                 if (g_drag_ghost_y + APP_TITLE_H + 2 >= DOCK_Y)
-                    gfx_hline(0, DOCK_Y, 1024, C_SEP);
+                    gfx_hline(0, DOCK_Y, SCR_W, C_SEP);
 
                 sys_wm_move(g_drag_win_id,
                             g_drag_ghost_x, g_drag_ghost_y);

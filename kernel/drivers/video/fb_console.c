@@ -3,7 +3,7 @@
  * File: kernel/drivers/video/fb_console.c
  *
  * Scrolling text console rendered on the framebuffer.
- * Character grid: 1024/8 × 768/8 = 128 columns × 96 rows.
+ * Character grid: 1280/8 × 720/8 = 160 columns × 90 rows.
  *
  * Call fb_console_init() after ramfb_init().
  * Hook fb_console_putc() into the printk output path for dual UART+FB output.
@@ -21,8 +21,8 @@
 
 /* ── Console geometry ────────────────────────────────────────────────── */
 
-#define CON_COLS  128   /* fb_width  / FONT_W */
-#define CON_ROWS   96   /* fb_height / FONT_H */
+#define CON_COLS  160   /* fb_width  / FONT_W  (1280 /  8) */
+#define CON_ROWS   45   /* fb_height / FONT_H  ( 720 / 16) */
 
 #define CON_FG  FB_RGB(216, 216, 232)   /* #D8D8E8 — soft white         */
 #define CON_BG  FB_RGB( 18,  18,  24)   /* #121218 — near-black         */

@@ -17,26 +17,28 @@
 
 #define TOPBAR_H   36
 #define ACCENT_H    2
-#define BOTBAR_Y  744
+#define BOTBAR_Y  696   /* 720 - BOTBAR_H(24) */
 
-#define FONT_W  8
-#define FONT_H  8
+#define FONT_W   8
+#define FONT_H  16
 
 /* Terminal window geometry — needed to align the sidebar */
 #define TERM_COLS  80
+#define TERM_ROWS  34
 #define WIN_W     (TERM_COLS * FONT_W + 16)   /* 656 */
 #define TITLE_H    28
-#define WIN_H     (TITLE_H + 8 + 70 * FONT_H + 8)
+#define WIN_H     (TITLE_H + 8 + TERM_ROWS * FONT_H + 8)   /* 588 */
 #define WIN_X      8
 #define WIN_Y     (TOPBAR_H + ACCENT_H + \
                    (BOTBAR_Y - TOPBAR_H - ACCENT_H - WIN_H) / 2)
 
-/* Sidebar */
+/* Sidebar — SIDE_W computed at runtime from gfx_width() */
 #define SIDE_X    (WIN_X + WIN_W + 8)    /* 672 */
-#define SIDE_W    (1024 - SIDE_X - 8)    /* 344 */
 #define SIDE_Y     WIN_Y
+
+static int SIDE_W;   /* set in main(): gfx_width() - SIDE_X - 8 */
 #define SIDE_TH    24
-#define SIDE_H     280
+#define SIDE_H     360   /* sized for 16px font content */
 
 /* ── Helpers ─────────────────────────────────────────────────────────────── */
 
@@ -123,6 +125,7 @@ static void draw_sidebar(long ticks)
 int main(void)
 {
     gfx_init();
+    SIDE_W = (int)gfx_width() - SIDE_X - 8;
 
     for (;;) {
         draw_sidebar(gfx_ticks());
