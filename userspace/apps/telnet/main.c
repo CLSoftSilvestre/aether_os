@@ -10,7 +10,7 @@
  *   [  0.. 33]  Connection bar: Host, Port, Connect/Disconnect
  *   [ 36.. 55]  Status label
  *   [ 57.. 57]  Separator (accent line)
- *   [ 60..391]  Terminal textarea (332 px, ~33 visible lines)
+ *   [ 60..391]  Terminal textarea (332 px, ~40 visible lines) + 10 px scrollbar
  *   [393..393]  Separator (accent line)
  *   [396..423]  Input bar: command input + Send button
  */
@@ -34,8 +34,11 @@
 #define WIN_X_INIT  180
 #define WIN_Y_INIT   80
 
-#define CONT_W  (WIN_W - 2 * SIDE_PAD)                    /* 624 */
-#define CONT_H  (WIN_H - TITLE_H - 2 * CONT_PAD)          /* 440 */
+#define CONT_W       (WIN_W - 2 * SIDE_PAD)               /* 624 */
+#define CONT_H       (WIN_H - TITLE_H - 2 * CONT_PAD)     /* 440 */
+#define TERM_H       332
+#define SCROLLBAR_W  10
+#define TERM_W       (CONT_W - SCROLLBAR_W)               /* 614 */
 
 /* ── Connection state ────────────────────────────────────────────── */
 
@@ -71,6 +74,7 @@ static widget_t g_lbl_status;    /* status line below bar       */
 
 static widget_t g_sep1;          /* thin separator              */
 static widget_t g_term;          /* terminal textarea           */
+static widget_t g_scrollbar_term;/* scrollbar for g_term        */
 static widget_t g_sep2;          /* thin separator              */
 
 static widget_t g_inp_cmd;       /* command / text input        */
@@ -168,6 +172,16 @@ static void term_append(const char *text)
         memcpy(g_term_buf + blen, text, (unsigned)(tlen + 1));
 
     textarea_set_text(&g_term, g_term_buf);
+    textarea_scroll_to_bottom(&g_term);
+
+    /* Keep scrollbar thumb in sync */
+    wdata_textarea_t    *td = &g_term.data.textarea;
+    wdata_scrollbar_t   *sb = &g_scrollbar_term.data.scrollbar;
+    int visible = (TERM_H - 8) / WGT_FONT_H;  /* 8 = 2 × TA_PAD_Y(4) */
+    sb->max   = (td->n_lines > visible) ? (td->n_lines - visible) : 0;
+    sb->page  = visible;
+    sb->value = td->scroll_top;
+    widget_invalidate(&g_scrollbar_term);
 }
 
 /* ── Network receive (one blocking call) ─────────────────────────── */
@@ -398,7 +412,9 @@ static void build_ui(void)
     widget_init_panel(&g_sep1, 0, 57, CONT_W, 1, C_SEP);
 
     /* ── Terminal output area (y = 60..391) ── */
-    widget_init_textarea(&g_term, 0, 60, CONT_W, 332, 256);
+    widget_init_textarea(&g_term, 0, 60, TERM_W, TERM_H, 256);
+    widget_init_scrollbar_v(&g_scrollbar_term, TERM_W, 60, SCROLLBAR_W, TERM_H,
+                            0, (TERM_H - 8) / WGT_FONT_H);
 
     /* ── Separator line (y = 393) ── */
     widget_init_panel(&g_sep2, 0, 393, CONT_W, 1, C_ACCENT);
@@ -420,6 +436,7 @@ static void build_ui(void)
     widget_add_child(&g_root, &g_lbl_status);
     widget_add_child(&g_root, &g_sep1);
     widget_add_child(&g_root, &g_term);
+    widget_add_child(&g_root, &g_scrollbar_term);
     widget_add_child(&g_root, &g_sep2);
     widget_add_child(&g_root, &g_inp_cmd);
     widget_add_child(&g_root, &g_btn_send);

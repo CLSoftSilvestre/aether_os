@@ -270,6 +270,11 @@ void widget_init_checkbox(widget_t *w, int x, int y, int width, int height,
                           const char *text,
                           void (*on_toggle)(widget_t *w, int checked));
 
+void widget_init_scrollbar_v(widget_t *w, int x, int y, int width, int height,
+                             int max, int page);
+void widget_init_scrollbar_h(widget_t *w, int x, int y, int width, int height,
+                             int max, int page);
+
 /* ── Widget helpers ─────────────────────────────────────────────────────── */
 
 /* Label */
@@ -283,6 +288,7 @@ void        textinput_clear(widget_t *w);
 /* Textarea */
 void textarea_set_text(widget_t *w, const char *text);
 void textarea_get_text(widget_t *w, char *buf, int max);
+void textarea_scroll_to_bottom(widget_t *w);
 
 /* ListView */
 void listview_add_item(widget_t *w, const char *label, void *userdata);

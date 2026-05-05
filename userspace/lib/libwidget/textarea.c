@@ -487,3 +487,13 @@ void textarea_get_text(widget_t *w, char *buf, int max)
     }
     buf[pos] = '\0';
 }
+
+void textarea_scroll_to_bottom(widget_t *w)
+{
+    wdata_textarea_t *d = &w->data.textarea;
+    int rows = visible_rows(w);
+    d->scroll_top = d->n_lines - rows;
+    if (d->scroll_top < 0) d->scroll_top = 0;
+    d->cur_row = (d->n_lines > 0) ? d->n_lines - 1 : 0;
+    w->dirty = 1;
+}
