@@ -69,6 +69,7 @@ void gfx_icon_files(int x, int y);
 void gfx_icon_editor(int x, int y);
 void gfx_icon_generic(int x, int y, const char *label);
 void gfx_icon_tictactoe(int x, int y);
+void gfx_icon_telnet(int x, int y);
 
 /* ── Scalable file/drive icons (Phase 5.6) ─────────────────────────────── *
  * Each function draws a sz×sz icon at pixel (x, y).

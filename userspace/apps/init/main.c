@@ -60,9 +60,9 @@ static int            g_icon_count = 0;
 
 /* ── Dock layout ─────────────────────────────────────────────────────────── */
 
-#define DOCK_ITEM_COUNT   6
+#define DOCK_ITEM_COUNT   7
 #define DOCK_SLOT_W      80    /* width of each icon slot */
-#define DOCK_START_X    272    /* (1024 - 6*80) / 2 */
+#define DOCK_START_X    232    /* (1024 - 7*80) / 2 */
 #define DOCK_ICON_SIZE   40    /* 40x40 icon */
 
 typedef struct {
@@ -77,6 +77,7 @@ static dock_item_t g_dock[DOCK_ITEM_COUNT] = {
     { "/widget_demo", 0 },
     { "/files",       0 },
     { "/textviewer",  0 },
+    { "/telnet",      0 },
 };
 
 /* ── Helpers ─────────────────────────────────────────────────────────────── */
@@ -234,6 +235,34 @@ static void draw_icon_text(int ix, int iy)
     gfx_fill(ix+4, iy+33, 20, 2, line);
 }
 
+/* Telnet: navy background, terminal screen + three signal bars */
+static void draw_icon_telnet(int ix, int iy)
+{
+    unsigned nav = GFX_RGB( 8, 12, 30);
+    unsigned bar = GFX_RGB(22, 32, 68);
+    unsigned scr = GFX_RGB( 4,  8, 22);
+
+    gfx_fill(ix, iy, 40, 40, nav);
+    gfx_fill(ix, iy, 40, 8, bar);
+    gfx_fill(ix+3, iy+2, 4, 4, C_RED);
+
+    /* Terminal screen */
+    gfx_fill(ix+2, iy+9, 26, 18, scr);
+    gfx_char(ix+3, iy+10, '>', C_ACCENT2, scr);
+    gfx_char(ix+11, iy+10, '_', C_TEXT, scr);
+    gfx_fill(ix+3, iy+19, 18, 2, C_TEXT_DIM);
+    gfx_fill(ix+3, iy+23, 12, 2, C_TEXT_DIM);
+
+    /* Signal bars (bottom-right, three ascending) */
+    gfx_fill(ix+28, iy+32, 4,  4, C_ACCENT2);   /* small  */
+    gfx_fill(ix+33, iy+28, 4,  8, C_ACCENT2);   /* medium */
+    gfx_fill(ix+36, iy+24, 3, 12, C_ACCENT2);   /* large  */
+    /* Base connector */
+    gfx_fill(ix+28, iy+36, 11, 2, C_ACCENT2);
+
+    icon_round_corners(ix, iy);
+}
+
 /* ── Dock drawing ─────────────────────────────────────────────────────────── */
 
 static void draw_dock_item(int idx)
@@ -251,6 +280,7 @@ static void draw_dock_item(int idx)
     case 3: draw_icon_widget(ix, iy);     break;
     case 4: draw_icon_files(ix, iy);      break;
     case 5: draw_icon_text(ix, iy);       break;
+    case 6: draw_icon_telnet(ix, iy);     break;
     }
 
     /* Running indicator: cyan bar below icon when app has an active window */
@@ -628,6 +658,7 @@ static void desktop_icons_draw_one(int idx)
     else if (strcmp(key, "icon_files")      == 0) gfx_icon_files(ix, iy);
     else if (strcmp(key, "icon_editor")     == 0) gfx_icon_editor(ix, iy);
     else if (strcmp(key, "icon_tictactoe")  == 0) gfx_icon_tictactoe(ix, iy);
+    else if (strcmp(key, "icon_telnet")     == 0) gfx_icon_telnet(ix, iy);
     else                                           gfx_icon_generic(ix, iy, ic->manifest.name);
 
     gfx_text_center(cx, DESKTOP_CELL_W, cy + 4 + DESKTOP_ICON_SIZE + 4,

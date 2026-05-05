@@ -367,6 +367,44 @@ void gfx_icon_file_generic(int x, int y, int sz)
 
 #undef S
 
+/* ── 48×48 Telnet desktop icon ─────────────────────────────────────────── */
+/*
+ * Design: navy background, terminal screen on the left with ">_" prompt,
+ * three ascending signal bars on the right representing the network link.
+ * Colour scheme is distinctly blue (not purple) to differ from icon_term.
+ */
+void gfx_icon_telnet(int x, int y)
+{
+    unsigned nav = GFX_RGB( 8, 12, 30);   /* deep navy background    */
+    unsigned bar = GFX_RGB(22, 32, 68);   /* title-bar tint          */
+    unsigned scr = GFX_RGB( 4,  8, 22);   /* screen area             */
+
+    gfx_fill(x, y, 48, 48, nav);
+    gfx_fill(x, y, 48, 11, bar);
+    gfx_fill(x + 3, y + 3, 5, 5, C_RED);
+
+    /* Terminal screen (left side): x+3..x+32, y+13..y+37 */
+    gfx_fill(x + 3, y + 13, 30, 25, scr);
+    gfx_char(x + 4, y + 15, '>', C_ACCENT2, scr);
+    gfx_char(x + 13, y + 15, '_', C_TEXT, scr);
+    gfx_fill(x + 4, y + 25, 22, 2, C_TEXT_DIM);
+    gfx_fill(x + 4, y + 29, 18, 2, C_TEXT_DIM);
+    gfx_fill(x + 4, y + 33, 14, 2, C_TEXT_DIM);
+
+    /* Signal bars (bottom-right): three ascending bars */
+    gfx_fill(x + 35, y + 36, 4, 4,  C_ACCENT2);   /* small  */
+    gfx_fill(x + 40, y + 31, 4, 9,  C_ACCENT2);   /* medium */
+    gfx_fill(x + 45, y + 25, 3, 15, C_ACCENT2);   /* large  */
+    /* Base connector */
+    gfx_fill(x + 35, y + 40, 13, 2, C_ACCENT2);
+
+    /* Round corners */
+    gfx_fill(x,      y,      2, 2, nav);
+    gfx_fill(x + 46, y,      2, 2, nav);
+    gfx_fill(x,      y + 46, 2, 2, nav);
+    gfx_fill(x + 46, y + 46, 2, 2, nav);
+}
+
 /* ── 48×48 Tic-Tac-Toe desktop icon ───────────────────────────────────── */
 /*
  * Draws a stylised 3×3 board with pre-filled X and O marks so the icon is
