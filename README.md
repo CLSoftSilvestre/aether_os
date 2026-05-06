@@ -1,7 +1,7 @@
 # AetherOS
 AetherOS is an experimental hobby operating system built from scratch, specifically designed for the Raspberry Pi 5 (AArch64) architecture. It emphasizes a modern development workflow using QEMU for emulation and testing.
 
-![Alttext](./screenshots/lumina_desktop.png)
+![Alttext](./screenshots/Aetheros.png)
 
 ## Table of Contents
 [Why AetherOS](#why-aetheros)
@@ -114,14 +114,14 @@ Default application for viewing and editing text files. It has the basic text ed
 
 ### Scripts Editor
 AetherOS supports LUA 5.4 scripting. This is the basic IDE for developing applications and running inside AetherOS.
-![Alttext](./screenshots/Lua_code_editor.png)
+![Alttext](./screenshots/script_editor.png)
 
 ### Calculator
 Self-explanatory application, however a fundamental piece of every operative system. The calculator allow users to make basic math calculations.
 ![Alttext](./screenshots/calculator.png)
 
 ### Telnet
-Telnet client application. Allows the connection to external resources and test connectivity to serevral services.
+Telnet client application. Allows the connection to external resources and test connectivity to several services.
 ![Alttext](./screenshots/telnet.png)
 
 ### Tic Tac Toe
@@ -129,7 +129,7 @@ Because all OS should have at least one game ;) AetherOS comes with the well kno
 ![Alttext](./screenshots/tic_tac_toe.png)
 
 ### Widget Demo
-Application to demonstrate the several widgets available in the libwidget library. Currently therar are available the following widgets:
+Application to demonstrate the several widgets available in the libwidget library. Currently are available the following widgets:
 - Button
 - Checkbox
 - Label
