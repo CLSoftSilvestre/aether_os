@@ -85,4 +85,24 @@ void gfx_icon_file_as(int x, int y, int sz);
 void gfx_icon_file_exec(int x, int y, int sz);
 void gfx_icon_file_generic(int x, int y, int sz);
 
+/* ── BMP wallpaper support ──────────────────────────────────────────────── */
+
+/*
+ * Load a 32-bpp uncompressed BMP from VFS into pixels[] (XRGB8888,
+ * row-major, top-to-bottom).  buf_bytes must be >= width*height*4.
+ * out_w / out_h receive BMP dimensions (may be NULL).
+ * Returns 0 on success, -1 on error (file not found, wrong format, etc.)
+ */
+int gfx_bmp_load(const char *path, unsigned *pixels, unsigned buf_bytes,
+                  unsigned *out_w, unsigned *out_h);
+
+/*
+ * Blit a center-cropped sub-region of a loaded BMP pixel buffer to the
+ * framebuffer at (dst_x, dst_y) with size (dst_w, dst_h).
+ * The BMP is center-cropped when larger than the screen.
+ */
+void gfx_bmp_blit_region(const unsigned *pixels, unsigned bmp_w, unsigned bmp_h,
+                           unsigned dst_x, unsigned dst_y,
+                           unsigned dst_w, unsigned dst_h);
+
 #endif /* _GFX_H */

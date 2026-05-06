@@ -487,3 +487,112 @@ void gfx_icon_tictactoe(int x, int y)
     gfx_fill(x,      y + 46, 2, 2, cbg);
     gfx_fill(x + 46, y + 46, 2, 2, cbg);
 }
+
+/* ── BMP loader ──────────────────────────────────────────────────────────── */
+
+static int bmp_read_exact(long vfd, void *dst, long n)
+{
+    char *p = (char *)dst;
+    while (n > 0) {
+        long r = sys_fs_read(vfd, p, n);
+        if (r <= 0) return -1;
+        p += r;
+        n -= r;
+    }
+    return 0;
+}
+
+int gfx_bmp_load(const char *path, unsigned *pixels, unsigned buf_bytes,
+                  unsigned *out_w, unsigned *out_h)
+{
+    long vfd = sys_fs_open(path);
+    if (vfd < 0) return -1;
+
+    unsigned char hdr[54];
+    if (bmp_read_exact(vfd, hdr, 54) != 0 ||
+        hdr[0] != 'B' || hdr[1] != 'M') {
+        sys_fs_close(vfd); return -1;
+    }
+
+    unsigned pix_off = (unsigned)hdr[10] | ((unsigned)hdr[11] << 8) |
+                       ((unsigned)hdr[12] << 16) | ((unsigned)hdr[13] << 24);
+    unsigned width   = (unsigned)hdr[18] | ((unsigned)hdr[19] << 8) |
+                       ((unsigned)hdr[20] << 16) | ((unsigned)hdr[21] << 24);
+    int      h_raw   = (int)((unsigned)hdr[22] | ((unsigned)hdr[23] << 8) |
+                             ((unsigned)hdr[24] << 16) | ((unsigned)hdr[25] << 24));
+    unsigned bpp     = (unsigned)hdr[28] | ((unsigned)hdr[29] << 8);
+    unsigned compr   = (unsigned)hdr[30] | ((unsigned)hdr[31] << 8) |
+                       ((unsigned)hdr[32] << 16) | ((unsigned)hdr[33] << 24);
+
+    if (bpp != 32 || compr != 0 || h_raw == 0 || width == 0) {
+        sys_fs_close(vfd); return -1;
+    }
+
+    int flipped = (h_raw > 0);   /* positive height = rows stored bottom-to-top */
+    unsigned height = flipped ? (unsigned)h_raw : (unsigned)(-h_raw);
+
+    if (width * height * 4 > buf_bytes) {
+        sys_fs_close(vfd); return -1;
+    }
+
+    /* Skip extra header bytes between offset 54 and the pixel data */
+    if (pix_off > 54) {
+        unsigned char tmp[64];
+        unsigned extra = pix_off - 54;
+        while (extra > 0) {
+            unsigned chunk = extra < 64 ? extra : 64;
+            if (bmp_read_exact(vfd, tmp, (long)chunk) != 0) {
+                sys_fs_close(vfd); return -1;
+            }
+            extra -= chunk;
+        }
+    }
+
+    /*
+     * Read pixel rows sequentially from the file.
+     * BMP row 0 in the file = bottom row of the image (when flipped=1).
+     * Store into pixels[] top-to-bottom: file row i → buffer row (height-1-i).
+     * 32-bpp BMP stores [B][G][R][X] per pixel — identical to XRGB8888 u32.
+     */
+    unsigned row_bytes = width * 4;
+    for (unsigned i = 0; i < height; i++) {
+        unsigned dst_row = flipped ? (height - 1 - i) : i;
+        unsigned char *dst = (unsigned char *)(pixels + dst_row * width);
+        if (bmp_read_exact(vfd, dst, (long)row_bytes) != 0) {
+            sys_fs_close(vfd); return -1;
+        }
+    }
+
+    sys_fs_close(vfd);
+    if (out_w) *out_w = width;
+    if (out_h) *out_h = height;
+    return 0;
+}
+
+void gfx_bmp_blit_region(const unsigned *pixels, unsigned bmp_w, unsigned bmp_h,
+                           unsigned dst_x, unsigned dst_y,
+                           unsigned dst_w, unsigned dst_h)
+{
+    unsigned scr_w = g_width;
+    unsigned scr_h = g_height;
+
+    /* Center-crop the BMP onto the screen */
+    unsigned crop_x = (bmp_w > scr_w) ? (bmp_w - scr_w) / 2 : 0;
+    unsigned crop_y = (bmp_h > scr_h) ? (bmp_h - scr_h) / 2 : 0;
+
+    /* Clamp destination to screen */
+    if (dst_x + dst_w > scr_w) dst_w = scr_w - dst_x;
+    if (dst_y + dst_h > scr_h) dst_h = scr_h - dst_y;
+    if (dst_w == 0 || dst_h == 0) return;
+
+    /* Map destination position back to source position in the BMP */
+    unsigned src_x = dst_x + crop_x;
+    unsigned src_y = dst_y + crop_y;
+
+    if (src_x >= bmp_w || src_y >= bmp_h) return;
+    if (src_x + dst_w > bmp_w) dst_w = bmp_w - src_x;
+    if (src_y + dst_h > bmp_h) dst_h = bmp_h - src_y;
+
+    const unsigned *src = pixels + src_y * bmp_w + src_x;
+    sys_fb_blit(src, dst_x, dst_y, dst_w, dst_h, bmp_w * 4);
+}

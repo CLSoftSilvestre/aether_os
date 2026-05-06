@@ -17,6 +17,15 @@
 #include <sys.h>
 #include <input.h>
 
+/* ── Wallpaper BMP ───────────────────────────────────────────────────────── */
+/* lumina_bg.bmp on the FAT32 disk (/lumina_bg.bmp).  32-bpp, 1376×768.
+ * Buffer lives in BSS (~4 MB); loaded once at startup via gfx_bmp_load(). */
+#define LUMINA_BG_W  1376
+#define LUMINA_BG_H   768
+
+static unsigned g_wp_buf[LUMINA_BG_W * LUMINA_BG_H];
+static int      g_wp_ok = 0;   /* 1 once the BMP is loaded successfully */
+
 /* ── Layout constants (size-invariant) ───────────────────────────────────── */
 
 #define TOPBAR_Y    0
@@ -495,6 +504,12 @@ static void wp_draw_stars(void)
 /* Repaint the wallpaper for any sub-region (window close, drag ghost erase, icon cell). */
 static void wp_repaint_region(int rx, int ry, int rw, int rh)
 {
+    if (g_wp_ok) {
+        gfx_bmp_blit_region(g_wp_buf, LUMINA_BG_W, LUMINA_BG_H,
+                             (unsigned)rx, (unsigned)ry,
+                             (unsigned)rw, (unsigned)rh);
+        return;
+    }
     s_wc_x0 = rx;       s_wc_y0 = ry;
     s_wc_x1 = rx + rw;  s_wc_y1 = ry + rh;
     wp_draw_gradient();
@@ -510,6 +525,11 @@ static void wp_repaint_region(int rx, int ry, int rw, int rh)
 
 static void draw_desktop(void)
 {
+    if (g_wp_ok) {
+        gfx_bmp_blit_region(g_wp_buf, LUMINA_BG_W, LUMINA_BG_H,
+                             0, 0, (unsigned)SCR_W, (unsigned)SCR_H);
+        return;
+    }
     wp_draw_gradient();
     wp_draw_orb(SCR_W * 37 / 100, SCR_H * 42 / 100, 295, 250, C_ACCENT,  170);
     wp_draw_orb(SCR_W * 74 / 100, SCR_H * 60 / 100, 220, 178, C_ACCENT2, 148);
@@ -656,8 +676,7 @@ static void desktop_icons_draw_one(int idx)
         gfx_rect(cx, cy, DESKTOP_CELL_W, DESKTOP_CELL_H, C_ACCENT);
     } else {
         wp_repaint_region(cx, cy, DESKTOP_CELL_W, DESKTOP_CELL_H);
-        /* Approximate bg for the text row — gradient color at label y */
-        bg = wp_bg_at(cy + 4 + DESKTOP_ICON_SIZE + 4);
+        bg = g_wp_ok ? C_DESKTOP : wp_bg_at(cy + 4 + DESKTOP_ICON_SIZE + 4);
     }
 
     int ix = cx + (DESKTOP_CELL_W - DESKTOP_ICON_SIZE) / 2;
@@ -910,6 +929,11 @@ int main(void)
     /* Initialise full-screen clip rect now that SCR_W/H are known */
     s_wc_x1 = SCR_W;
     s_wc_y1 = SCR_H;
+
+    /* Load BMP wallpaper from FAT32 — falls back to procedural on failure */
+    g_wp_ok = (gfx_bmp_load("/lumina_bg.bmp",
+                              g_wp_buf, sizeof(g_wp_buf),
+                              (void *)0, (void *)0) == 0);
 
     draw_desktop();
     draw_top_bar(gfx_ticks());

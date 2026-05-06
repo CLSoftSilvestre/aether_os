@@ -40,6 +40,7 @@
 #define SYS_FB_CLAIM    604
 #define SYS_CURSOR_MOVE 605
 #define SYS_CURSOR_SHOW 606
+#define SYS_FB_BLIT     608   /* (buf, dst_x<<32|dst_y, w<<32|h, stride) → 0 */
 
 /* Window Manager syscalls (Phase 4.6) */
 #define SYS_WM_REGISTER   12
@@ -106,6 +107,18 @@ static inline long _sys3(long nr, long a0, long a1, long a2)
     register long x2 asm("x2") = a2;
     register long x8 asm("x8") = nr;
     __asm__ volatile("svc #0" : "+r"(x0) : "r"(x1), "r"(x2), "r"(x8)
+                     : "memory", "cc");
+    return x0;
+}
+
+static inline long _sys4(long nr, long a0, long a1, long a2, long a3)
+{
+    register long x0 asm("x0") = a0;
+    register long x1 asm("x1") = a1;
+    register long x2 asm("x2") = a2;
+    register long x3 asm("x3") = a3;
+    register long x8 asm("x8") = nr;
+    __asm__ volatile("svc #0" : "+r"(x0) : "r"(x1), "r"(x2), "r"(x3), "r"(x8)
                      : "memory", "cc");
     return x0;
 }
@@ -293,6 +306,19 @@ static inline void sys_cursor_show(int visible)
     _sys1(SYS_CURSOR_SHOW, (long)visible);
 }
 
+/* Blit a w×h region from a user XRGB8888 pixel buffer to the framebuffer.
+ * src_stride_bytes = bytes per row in the source buffer (typically bmp_w*4). */
+static inline void sys_fb_blit(const unsigned *pixels,
+                                unsigned dst_x, unsigned dst_y,
+                                unsigned w, unsigned h,
+                                unsigned src_stride_bytes)
+{
+    long xy = ((long)dst_x << 32) | (long)dst_y;
+    long wh = ((long)w     << 32) | (long)h;
+    _sys4(SYS_FB_BLIT, (long)(const void *)pixels, xy, wh,
+          (long)src_stride_bytes);
+}
+
 /* ── Window Manager syscall wrappers (Phase 4.6) ───────────────────────── */
 
 /*
@@ -406,18 +432,6 @@ static inline void wm_decode_closed(unsigned long long ev,
 
 #define SOCK_TCP  0
 #define SOCK_UDP  1
-
-static inline long _sys4(long nr, long a0, long a1, long a2, long a3)
-{
-    register long x0 asm("x0") = a0;
-    register long x1 asm("x1") = a1;
-    register long x2 asm("x2") = a2;
-    register long x3 asm("x3") = a3;
-    register long x8 asm("x8") = nr;
-    __asm__ volatile("svc #0" : "+r"(x0) : "r"(x1), "r"(x2), "r"(x3), "r"(x8)
-                     : "memory", "cc");
-    return x0;
-}
 
 typedef struct {
     unsigned int ip, mask, gateway, dns;

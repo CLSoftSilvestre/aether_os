@@ -332,6 +332,21 @@ static long do_sys_fb_claim(void)
     return 0;
 }
 
+/* SYS_FB_BLIT — copy a user XRGB8888 pixel buffer to the framebuffer.
+ * arg0 = src pointer, arg1 = dst_x<<32|dst_y, arg2 = w<<32|h,
+ * arg3 = src_stride_bytes (bytes per row in the source buffer). */
+static long do_sys_fb_blit(u64 buf_ptr, u64 xy, u64 wh, u64 stride_bytes)
+{
+    const u32 *src = (const u32 *)buf_ptr;
+    u32 dx = (u32)(xy >> 32), dy = (u32)(xy & 0xFFFFFFFFu);
+    u32 w  = (u32)(wh >> 32), h  = (u32)(wh & 0xFFFFFFFFu);
+    if (!src || !fb_base) return -1;
+    cursor_hide();
+    fb_blit(src, dx, dy, w, h, (u32)stride_bytes);
+    cursor_show();
+    return 0;
+}
+
 /* ── UART → key_event fallback (used when PL050 KMI is absent) ─────────── */
 
 /*
@@ -720,6 +735,11 @@ long syscall_dispatch(trap_frame_t *frame)
 
     case SYS_FB_CLAIM:
         return do_sys_fb_claim();
+
+    case SYS_FB_BLIT: {
+        u64 arg3 = frame->x[3];
+        return do_sys_fb_blit(arg0, arg1, arg2, arg3);
+    }
 
     case SYS_WM_REGISTER:
         return do_sys_wm_register(arg0, arg1, (const char *)arg2);

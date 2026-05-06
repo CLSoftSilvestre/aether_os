@@ -65,6 +65,15 @@ mmd -i "${DISK}" ::tmp
 # /apps/ — app manifests for desktop icon launcher (Phase 5.4)
 mmd -i "${DISK}" ::apps
 
+# Wallpaper — lumina_bg.bmp (Phase 6.1)
+BMP_SRC="${SCRIPT_DIR}/../assets/lumina_bg.bmp"
+if [ -f "${BMP_SRC}" ]; then
+    mcopy -i "${DISK}" "${BMP_SRC}" ::lumina_bg.bmp
+    echo "[DISK] Copied lumina_bg.bmp ($(du -sh "${BMP_SRC}" | cut -f1))"
+else
+    echo "[DISK] Warning: assets/lumina_bg.bmp not found — wallpaper will use procedural fallback"
+fi
+
 printf "name=Terminal\nicon=icon_term\nexec=/aether_term\ndescription=Terminal emulator\n" \
     | mcopy -i "${DISK}" - ::apps/aether_term.app
 
