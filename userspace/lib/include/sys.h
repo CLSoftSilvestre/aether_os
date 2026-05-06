@@ -41,7 +41,7 @@
 #define SYS_CURSOR_MOVE 605
 #define SYS_CURSOR_SHOW 606
 #define SYS_FB_BLIT      608  /* (buf, dst_x<<32|dst_y, w<<32|h, stride) → 0 */
-#define SYS_FB_CHAR_NOBG 609  /* ((x<<32)|y, (ch<<16)|fg) → 0              */
+#define SYS_FB_CHAR_NOBG 609  /* ((x<<32)|y, (ch<<32)|fg) → 0              */
 #define SYS_VSYNC_WAIT   905  /* () → 0; blocks until next 60Hz boundary   */
 
 /* Window Manager syscalls (Phase 4.6) */
@@ -327,7 +327,7 @@ static inline void sys_fb_char_nobg(unsigned x, unsigned y,
                                     unsigned char ch, unsigned fg)
 {
     long xy    = ((long)x  << 32) | (long)y;
-    long ch_fg = ((long)ch << 16) | (long)fg;
+    long ch_fg = ((long)ch << 32) | (long)fg;
     _sys2(SYS_FB_CHAR_NOBG, xy, ch_fg);
 }
 

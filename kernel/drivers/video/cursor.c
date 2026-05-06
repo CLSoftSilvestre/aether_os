@@ -82,8 +82,8 @@ static void draw_sprite(unsigned int x, unsigned int y)
 
 void cursor_init(void)
 {
-    cur_x       = 512;
-    cur_y       = 384;
+    cur_x       = fb_width  ? fb_width  / 2u : 640u;
+    cur_y       = fb_height ? fb_height / 2u : 360u;
     cur_visible = 0;
 }
 
@@ -109,8 +109,10 @@ void cursor_move(unsigned int x, unsigned int y)
         kinfo("[cursor_move] x=%u y=%u vis=%d\n", x, y, cur_visible);
 
     /* Clamp to screen */
-    if (x + CURSOR_W > 1024) x = 1024 - CURSOR_W;
-    if (y + CURSOR_H >  768) y =  768 - CURSOR_H;
+    unsigned sw = fb_width  ? fb_width  : 1280u;
+    unsigned sh = fb_height ? fb_height :  720u;
+    if (x + CURSOR_W > sw) x = sw - CURSOR_W;
+    if (y + CURSOR_H > sh) y = sh - CURSOR_H;
 
     if (x == cur_x && y == cur_y) return;
 

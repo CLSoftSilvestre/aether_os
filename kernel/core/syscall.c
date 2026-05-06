@@ -733,8 +733,8 @@ long syscall_dispatch(trap_frame_t *frame)
     case SYS_FB_CHAR_NOBG: {
         u32 x  = (u32)((u64)arg0 >> 32);
         u32 y  = (u32)((u64)arg0 & 0xFFFFFFFFu);
-        u32 ch = (u32)((u64)arg1 >> 16) & 0xFFu;
-        u32 fg = (u32)((u64)arg1 & 0xFFFFFFFFu);
+        u32 ch = (u32)((u64)arg1 >> 32) & 0xFFu;
+        u32 fg = (u32)((u64)arg1 & 0x00FFFFFFu);
         font_draw_char_nobg(x, y, (unsigned char)ch, fg);
         return 0;
     }

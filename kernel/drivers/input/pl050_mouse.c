@@ -11,11 +11,12 @@
  *   Byte 2: ΔY     (8-bit magnitude; sign bit in flags[5]; Y positive = upward on screen)
  *
  * Initialization sends 0xF4 (Enable Data Reporting) to start movement packets.
- * Absolute position is clamped to the screen bounds (1024×768).
+ * Absolute position is clamped to the framebuffer dimensions.
  */
 
 #include "drivers/input/pl050_mouse.h"
 #include "drivers/input/keycodes.h"
+#include "drivers/video/fb.h"
 #include "aether/types.h"
 #include "aether/printk.h"
 #include "drivers/irq/gic_v2.h"
@@ -37,15 +38,10 @@
 
 #define REG32(base, off) (*((volatile u32 *)((uintptr_t)(base) + (off))))
 
-/* ── Screen bounds ──────────────────────────────────────────────────────── */
-
-#define SCREEN_W 1024
-#define SCREEN_H  768
-
 /* ── Absolute cursor state ──────────────────────────────────────────────── */
 
-static int cursor_x = SCREEN_W / 2;
-static int cursor_y = SCREEN_H / 2;
+static int cursor_x;
+static int cursor_y;
 
 void mouse_get_pos(unsigned int *x, unsigned int *y)
 {
@@ -105,10 +101,12 @@ static void process_packet(void)
     cursor_x += dx;
     cursor_y -= dy;
 
+    int sw = (int)(fb_width  ? fb_width  : 1280);
+    int sh = (int)(fb_height ? fb_height :  720);
     if (cursor_x < 0) cursor_x = 0;
-    if (cursor_x >= SCREEN_W) cursor_x = SCREEN_W - 1;
+    if (cursor_x >= sw) cursor_x = sw - 1;
     if (cursor_y < 0) cursor_y = 0;
-    if (cursor_y >= SCREEN_H) cursor_y = SCREEN_H - 1;
+    if (cursor_y >= sh) cursor_y = sh - 1;
 
     unsigned int buttons =
         ((flags >> 0) & 1) |        /* left   → bit 0 */
@@ -155,8 +153,8 @@ void pl050_mouse_irq_handler(void)
 
 void pl050_mouse_init(void)
 {
-    cursor_x   = SCREEN_W / 2;
-    cursor_y   = SCREEN_H / 2;
+    cursor_x   = (int)(fb_width  ? fb_width  / 2u : 640u);
+    cursor_y   = (int)(fb_height ? fb_height / 2u : 360u);
     pkt_idx    = 0;
     mouse_head = 0;
     mouse_tail = 0;

@@ -18,6 +18,7 @@
 #include "drivers/pci/pci_ecam.h"
 #include "aether/printk.h"
 #include "aether/types.h"
+#include "drivers/video/fb.h"
 
 /* ── VirtIO MMIO register offsets (all 32-bit) ───────────────────────────── */
 
@@ -134,8 +135,8 @@ typedef struct { u16 type; u16 code; u32 value; } virtio_input_event_t;
 #define BTN_MIDDLE 0x112u
 
 #define TABLET_MAX  32767u
-#define SCREEN_W     1024u
-#define SCREEN_H      768u
+#define SCREEN_W()  (fb_width  ? fb_width  : 1280u)
+#define SCREEN_H()  (fb_height ? fb_height :  720u)
 
 /* ── Per-device state ────────────────────────────────────────────────────── */
 
@@ -239,21 +240,21 @@ static void service_device(vi_dev_t *dev)
             if (ev->code == REL_X) {
                 int nx = (int)dev->cur_x + (int)(s32)ev->value;
                 if (nx < 0) nx = 0;
-                if (nx >= (int)SCREEN_W) nx = (int)SCREEN_W - 1;
+                if (nx >= (int)SCREEN_W()) nx = (int)SCREEN_W() - 1;
                 dev->cur_x = (u32)nx;
                 dev->has_pos = 1;
             } else if (ev->code == REL_Y) {
                 int ny = (int)dev->cur_y + (int)(s32)ev->value;
                 if (ny < 0) ny = 0;
-                if (ny >= (int)SCREEN_H) ny = (int)SCREEN_H - 1;
+                if (ny >= (int)SCREEN_H()) ny = (int)SCREEN_H() - 1;
                 dev->cur_y = (u32)ny;
                 dev->has_pos = 1;
             }
         } else if (ev->type == EV_ABS) {
             if (ev->code == ABS_X)
-                dev->cur_x = (u32)ev->value * SCREEN_W / (TABLET_MAX + 1u);
+                dev->cur_x = (u32)ev->value * SCREEN_W() / (TABLET_MAX + 1u);
             else if (ev->code == ABS_Y)
-                dev->cur_y = (u32)ev->value * SCREEN_H / (TABLET_MAX + 1u);
+                dev->cur_y = (u32)ev->value * SCREEN_H() / (TABLET_MAX + 1u);
             /* Post on every ABS event — EV_SYN may be absent */
             {
                 mouse_event_t me;
@@ -307,8 +308,8 @@ void virtio_input_poll(void)
 
     if (tick == 5u) {
         mouse_event_t test_ev;
-        test_ev.x = SCREEN_W / 2u;
-        test_ev.y = SCREEN_H / 2u;
+        test_ev.x = SCREEN_W() / 2u;
+        test_ev.y = SCREEN_H() / 2u;
         test_ev.buttons = 0;
         mouse_post_event(mouse_event_pack(test_ev));
         kinfo("vi: software-path test — injected cursor→(%u,%u)\n",
@@ -353,8 +354,8 @@ static void init_device(int idx, volatile u32 *base)
     dev->used        = (virtq_used_t  *)(mem + QUEUE_ALIGN);
     dev->bufs        = vi_bufs[idx];
     dev->last_used   = 0;
-    dev->cur_x       = SCREEN_W / 2u;
-    dev->cur_y       = SCREEN_H / 2u;
+    dev->cur_x       = SCREEN_W() / 2u;
+    dev->cur_y       = SCREEN_H() / 2u;
     dev->cur_btns    = 0;
     dev->has_pos     = 0;
     dev->dbg_count   = 0;
@@ -437,8 +438,8 @@ static void init_device_v1(int idx, volatile u32 *base)
     dev->used        = (virtq_used_t  *)(mem + QUEUE_ALIGN);
     dev->bufs        = vi_bufs[idx];
     dev->last_used   = 0;
-    dev->cur_x       = SCREEN_W / 2u;
-    dev->cur_y       = SCREEN_H / 2u;
+    dev->cur_x       = SCREEN_W() / 2u;
+    dev->cur_y       = SCREEN_H() / 2u;
     dev->cur_btns    = 0;
     dev->has_pos     = 0;
     dev->dbg_count   = 0;
@@ -573,8 +574,8 @@ static void init_device_pci(int idx, const pci_dev_t *pdev)
     dev->used        = (virtq_used_t  *)(mem + QUEUE_ALIGN);
     dev->bufs        = vi_bufs[idx];
     dev->last_used   = 0;
-    dev->cur_x       = SCREEN_W / 2u;
-    dev->cur_y       = SCREEN_H / 2u;
+    dev->cur_x       = SCREEN_W() / 2u;
+    dev->cur_y       = SCREEN_H() / 2u;
     dev->cur_btns    = 0;
     dev->has_pos     = 0;
     dev->dbg_count   = 0;
