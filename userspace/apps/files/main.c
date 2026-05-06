@@ -187,12 +187,14 @@ static void set_fs_label(const char *path)
 static unsigned char detect_icon(const char *name)
 {
     int n = (int)strlen(name);
-    if (n>=4 && name[n-4]=='.' && name[n-3]=='t' && name[n-2]=='x' && name[n-1]=='t')
+    if (n>=4 && name[n-4]=='.' && (name[n-3]=='t' || name[n-3]=='T') && (name[n-2]=='x' || name[n-2]=='X') && (name[n-1]=='t' || name[n-1]=='T'))
         return FICON_TXT;
-    if (n>=3 && name[n-3]=='.' && name[n-2]=='a' &&
+    if (n>=3 && name[n-3]=='.' && (name[n-2]=='a' || name[n-2]=='A') &&
         (name[n-1]=='s' || name[n-1]=='S'))
         return FICON_AS;
     if (n>=4 && name[n-4]=='.' && name[n-3]=='e' && name[n-2]=='l' && name[n-1]=='f')
+        return FICON_EXEC;
+    if (n>=4 && name[n-4]=='.' && (name[n-3]=='a' || name[n-3]=='A') && (name[n-2]=='p' || name[n-2]=='P') && (name[n-1]=='p' || name[n-1]=='P'))
         return FICON_EXEC;
     return FICON_GENERIC;
 }
