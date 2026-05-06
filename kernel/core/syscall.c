@@ -45,6 +45,12 @@
 #include "aether/vfs.h"
 #include "drivers/gpu/v3d.h"
 
+/* ── Wallpaper sharing globals (Phase 6.1.x) ────────────────────────────── */
+static uintptr_t g_wp_ptr   = 0;   /* PMM physical address (kernel range) */
+static u32       g_wp_bmpw  = 0;
+static u32       g_wp_bmph  = 0;
+static u32       g_wp_pages = 0;   /* number of PMM pages owned */
+
 /* ── Individual syscall implementations ─────────────────────────────────── */
 
 /* Network status struct (written into user buffer at arg0) */
@@ -848,6 +854,98 @@ long syscall_dispatch(trap_frame_t *frame)
         uintptr_t dst_phys = v3d_bo_phys(dst_h);
         if (!src_phys || !dst_phys) return -1;
         return (long)v3d_blur(src_phys, dst_phys, width, height, radius);
+    }
+
+    /* Wallpaper sharing (Phase 6.1.x) */
+    case SYS_WP_REGISTER: {
+        uintptr_t user_va  = (uintptr_t)arg0;
+        u32 bw = (u32)((u64)arg1 >> 32);
+        u32 bh = (u32)((u64)arg1 & 0xFFFFFFFFu);
+        u32 byte_size = bw * bh * sizeof(u32);
+        u32 n_pages   = (byte_size + PMM_PAGE_SIZE - 1) / PMM_PAGE_SIZE;
+
+        /* Free a previous registration if any */
+        if (g_wp_ptr && g_wp_pages) {
+            for (u32 _i = 0; _i < g_wp_pages; _i++)
+                pmm_free_page(g_wp_ptr + (uintptr_t)_i * PMM_PAGE_SIZE);
+        }
+
+        /* Allocate a kernel-range buffer (PA in 0x40000000–0x6FFFFFFF,
+         * always EL1-accessible regardless of which process's PT is loaded) */
+        uintptr_t kbuf = pmm_alloc_pages(n_pages);
+        if (!kbuf) { g_wp_ptr = 0; return -1; }
+
+        /* Copy from user VA (init's global PT is active here — EL1 can read
+         * through AP=BOTH_RW 2MB blocks covering 0x70000000+) */
+        const u8 *src = (const u8 *)user_va;
+        u8       *dst = (u8 *)kbuf;
+        for (u32 _i = 0; _i < byte_size; _i++) dst[_i] = src[_i];
+
+        g_wp_ptr   = kbuf;
+        g_wp_bmpw  = bw;
+        g_wp_bmph  = bh;
+        g_wp_pages = n_pages;
+        return 0;
+    }
+
+    case SYS_WP_GET:
+        return (long)g_wp_ptr;
+
+    case SYS_WP_SIZE:
+        return (long)(((u64)g_wp_bmpw << 32) | (u64)g_wp_bmph);
+
+    case SYS_WP_BLEND_FILL: {
+        u32 bx    = (u32)((u64)arg0 >> 32);
+        u32 by    = (u32)((u64)arg0 & 0xFFFFFFFFu);
+        u32 bw    = (u32)((u64)arg1 >> 32);
+        u32 bh    = (u32)((u64)arg1 & 0xFFFFFFFFu);
+        u32 color = (u32)arg2;
+
+        if (bx >= fb_width || by >= fb_height) return 0;
+        if (bx + bw > fb_width)  bw = fb_width  - bx;
+        if (by + bh > fb_height) bh = fb_height - by;
+        if (!bw || !bh) return 0;
+
+        if (!g_wp_ptr) {
+            fb_fill_rect(bx, by, bw, bh, color);
+            return 0;
+        }
+
+        u32 tr = (color >> 16) & 0xFFu;
+        u32 tg = (color >>  8) & 0xFFu;
+        u32 tb =  color        & 0xFFu;
+        u32 crop_x = (g_wp_bmpw > fb_width)  ? (g_wp_bmpw - fb_width)  / 2u : 0u;
+        u32 crop_y = (g_wp_bmph > fb_height) ? (g_wp_bmph - fb_height) / 2u : 0u;
+        const u32 *wp = (const u32 *)g_wp_ptr;
+        u32 stride_px = fb_stride / 4u;
+
+        for (u32 row = 0; row < bh; row++) {
+            u32 sy    = by + row;
+            u32 src_y = sy + crop_y;
+            volatile u32 *dst = fb_base + sy * stride_px + bx;
+
+            if (src_y >= g_wp_bmph) {
+                for (u32 c = 0; c < bw; c++) dst[c] = color;
+                continue;
+            }
+            const u32 *wp_row = wp + src_y * g_wp_bmpw;
+            u32 src_x0 = bx + crop_x;
+            for (u32 c = 0; c < bw; c++) {
+                u32 src_x = src_x0 + c;
+                if (src_x < g_wp_bmpw) {
+                    u32 p  = wp_row[src_x];
+                    u32 wr = (p >> 16) & 0xFFu;
+                    u32 wg = (p >>  8) & 0xFFu;
+                    u32 wb =  p        & 0xFFu;
+                    dst[c] = (((tr*4u+wr)/5u) << 16)
+                           | (((tg*4u+wg)/5u) <<  8)
+                           |  ((tb*4u+wb)/5u);
+                } else {
+                    dst[c] = color;
+                }
+            }
+        }
+        return 0;
     }
 
     default:

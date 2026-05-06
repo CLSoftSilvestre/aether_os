@@ -112,38 +112,44 @@ static void set_status(const char *msg)
     label_set_text(&g_statusbar, msg);
 }
 
-/* ── Title bar text only (preserves traffic-light buttons on incremental update) */
+/* ── Title bar text only (incremental update — repaints center glass strip) */
 
 static void draw_title_text(void)
 {
     int wx = g_win_x, wy = g_win_y;
     char title[160];
     if (g_filename[0])
-        snprintf(title, sizeof(title), "TextEdit  --  %s%s",
+        snprintf(title, sizeof(title), "TextEdit  \xe2\x80\x94  %s%s",
                  g_filename, g_modified ? " [*]" : "");
     else
-        snprintf(title, sizeof(title), "TextEdit  --  untitled%s",
+        snprintf(title, sizeof(title), "TextEdit  \xe2\x80\x94  untitled%s",
                  g_modified ? " [*]" : "");
-    gfx_fill((unsigned)(wx + 60), (unsigned)wy,
-             (unsigned)(WIN_W - 70), TITLE_H, C_TITLEBAR);
-    gfx_text_center((unsigned)wx, WIN_W, (unsigned)(wy + 10),
-                    title, C_TEXT, C_TITLEBAR);
+    /* Repaint the glass titlebar strip (center, excluding close button) */
+    int tx = wx + 34;
+    int tw = WIN_W - 44;
+    gfx_fill((unsigned)tx, (unsigned)wy, (unsigned)tw, TITLE_H, C_TITLEBAR);
+    /* Restore specular + highlight lines */
+    gfx_hline((unsigned)tx, (unsigned)wy, (unsigned)tw, GFX_RGB(90, 84, 148));
+    gfx_fill((unsigned)tx, (unsigned)(wy + 1), (unsigned)tw, 2u, GFX_RGB(60, 56, 100));
+    /* Draw title text transparent over repainted glass */
+    gfx_text_center_transparent((unsigned)wx, WIN_W,
+                                (unsigned)(wy + (TITLE_H - 16) / 2),
+                                title, C_TEXT);
 }
 
 /* ── Full window chrome ──────────────────────────────────────────────────── */
 
 static void draw_frame(void)
 {
-    int wx = g_win_x, wy = g_win_y;
-    gfx_fill((unsigned)(wx + 4), (unsigned)(wy + 4), WIN_W, WIN_H, GFX_RGB(6, 6, 10));
-    gfx_fill((unsigned)wx, (unsigned)wy, WIN_W, WIN_H, C_WIN_BG);
-    gfx_fill((unsigned)wx, (unsigned)wy, WIN_W, TITLE_H, C_TITLEBAR);
-    gfx_draw_close_button((unsigned)(wx + 10), (unsigned)(wy + 8), 0);
-    // gfx_fill((unsigned)(wx + 26), (unsigned)(wy + 8), 12, 12, C_YELLOW);
-    // gfx_fill((unsigned)(wx + 42), (unsigned)(wy + 8), 12, 12, C_GREEN);
-    draw_title_text();
-    gfx_hline((unsigned)wx, (unsigned)(wy + TITLE_H), WIN_W, C_ACCENT);
-    gfx_rect((unsigned)wx, (unsigned)wy, WIN_W, WIN_H, C_SEP);
+    char title[160];
+    if (g_filename[0])
+        snprintf(title, sizeof(title), "TextEdit  \xe2\x80\x94  %s%s",
+                 g_filename, g_modified ? " [*]" : "");
+    else
+        snprintf(title, sizeof(title), "TextEdit  \xe2\x80\x94  untitled%s",
+                 g_modified ? " [*]" : "");
+    gfx_glass_window_frame(g_win_x, g_win_y, WIN_W, WIN_H,
+                            TITLE_H, title, 0);
 }
 
 /* ── Reposition callback ─────────────────────────────────────────────────── */

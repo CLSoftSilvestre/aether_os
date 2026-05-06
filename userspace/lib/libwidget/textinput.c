@@ -84,10 +84,14 @@ static void textinput_draw(widget_t *w, int ax, int ay)
     wdata_textinput_t *d = &w->data.textinput;
     int focused = (w->state == WS_FOCUSED || w->state == WS_PRESSED);
 
-    /* Background + border */
-    gfx_fill(ax, ay, w->bounds.w, w->bounds.h, C_INPUT_BG);
-    gfx_rect(ax, ay, w->bounds.w, w->bounds.h,
-             focused ? C_INPUT_BDF : C_INPUT_BDR);
+    /* Background (flat — same color as window body, corners blend in) */
+    gfx_fill((unsigned)ax, (unsigned)ay,
+             (unsigned)w->bounds.w, (unsigned)w->bounds.h, C_INPUT_BG);
+
+    /* Rounded glass border — accent when focused, dim when idle */
+    gfx_rect_rounded((unsigned)ax, (unsigned)ay,
+                     (unsigned)w->bounds.w, (unsigned)w->bounds.h,
+                     GFX_INPUT_R, focused ? C_INPUT_BDF : C_INPUT_BDR);
 
     int tx   = ax + INPUT_PAD_X;
     int ty   = ay + INPUT_PAD_Y;

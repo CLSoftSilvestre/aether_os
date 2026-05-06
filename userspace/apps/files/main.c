@@ -779,49 +779,27 @@ static void draw_title_text(void)
 {
     int wx = g_win_x, wy = g_win_y;
     char title[96];
-    snprintf(title, sizeof(title), "Files  —  %s",
+    snprintf(title, sizeof(title), "Files  \xe2\x80\x94  %s",
              g_current_path[0] ? g_current_path : "/");
 
-    /* Refresh only the text area, preserving the glass gradient */
-    gfx_fill((unsigned)(wx+36), (unsigned)(wy+3),
-              WIN_W-72, TITLE_H-6, C_GLASS_TITLE);
-    gfx_text_center((unsigned)wx, WIN_W,
-                    (unsigned)(wy + (TITLE_H-8)/2),
-                    title, C_TEXT, C_GLASS_TITLE);
+    /* Repaint center strip of glass titlebar then redraw title transparent */
+    int tx = wx + 34;
+    int tw = WIN_W - 44;
+    gfx_fill((unsigned)tx, (unsigned)wy, (unsigned)tw, TITLE_H, C_TITLEBAR);
+    gfx_hline((unsigned)tx, (unsigned)wy, (unsigned)tw, GFX_RGB(90, 84, 148));
+    gfx_fill((unsigned)tx, (unsigned)(wy + 1), (unsigned)tw, 2u, GFX_RGB(60, 56, 100));
+    gfx_text_center_transparent((unsigned)wx, WIN_W,
+                                (unsigned)(wy + (TITLE_H - 16) / 2),
+                                title, C_TEXT);
 }
 
 static void draw_frame(void)
 {
-    int wx = g_win_x, wy = g_win_y;
-
-    /* Drop shadow */
-    gfx_fill((unsigned)(wx+4), (unsigned)(wy+4), WIN_W+2, WIN_H+2, GFX_RGB(4,4,8));
-
-    /* Window base */
-    gfx_fill((unsigned)wx, (unsigned)wy, WIN_W, WIN_H, C_WIN_BG);
-
-    /* ── Glass titlebar gradient ──────────────────────────────────────── */
-    gfx_fill((unsigned)wx, (unsigned)wy, WIN_W, TITLE_H, C_GLASS_TITLE);
-    /* Top specular (1px) */
-    gfx_hline((unsigned)wx, (unsigned)wy, WIN_W, C_GLASS_SPEC);
-    /* Soft highlight band (px 1–2) */
-    gfx_fill((unsigned)wx, (unsigned)(wy+1), WIN_W, 2u, C_GLASS_HIGH);
-    /* Bottom shadow edge */
-    gfx_hline((unsigned)wx, (unsigned)(wy+TITLE_H-1), WIN_W, C_GLASS_EDGE);
-
-    /* Traffic light — vertically centred */
-    gfx_draw_close_button((unsigned)(wx+10), (unsigned)(wy+(TITLE_H-12)/2), 0);
-
-    /* Title text */
-    draw_title_text();
-
-    /* Accent underline below titlebar */
-    gfx_hline((unsigned)wx, (unsigned)(wy+TITLE_H), WIN_W, C_ACCENT);
-
-    /* Outer border */
-    gfx_rect((unsigned)wx, (unsigned)wy, WIN_W, WIN_H, C_SEP);
-    /* Inner top highlight */
-    gfx_hline((unsigned)(wx+1), (unsigned)(wy+1), WIN_W-2, C_GLASS_HIGH);
+    char title[96];
+    snprintf(title, sizeof(title), "Files  \xe2\x80\x94  %s",
+             g_current_path[0] ? g_current_path : "/");
+    gfx_glass_window_frame(g_win_x, g_win_y, WIN_W, WIN_H,
+                            TITLE_H, title, 0);
 }
 
 static void on_reposition(void *ud)

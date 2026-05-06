@@ -56,6 +56,31 @@ static char t_buf[TERM_ROWS][TERM_COLS];
 static int  t_col;
 static int  t_row;
 
+/* ── Transparent background (kernel-blended) ──────────────────────────────
+ * SYS_WP_BLEND_FILL runs entirely in the kernel: reads init's wallpaper
+ * buffer (registered via SYS_WP_REGISTER) and writes 80% C_TERM_BG +
+ * 20% wallpaper directly into the framebuffer.  No cross-process pointer
+ * access needed — the kernel has access to all physical memory. */
+#define CONTENT_H  (WIN_H - TITLE_H - 1)
+
+static void blit_term_bg(void)
+{
+    sys_wp_blend_fill((unsigned)WX, (unsigned)(WY + TITLE_H + 1),
+                      (unsigned)WIN_W, (unsigned)CONTENT_H, C_TERM_BG);
+}
+
+static void blit_term_bg_row(int row)
+{
+    sys_wp_blend_fill((unsigned)WX, (unsigned)(TY + row * FONT_H),
+                      (unsigned)WIN_W, (unsigned)FONT_H, C_TERM_BG);
+}
+
+static void blit_term_bg_cell(int row, int col)
+{
+    sys_wp_blend_fill((unsigned)(TX + col * FONT_W), (unsigned)(TY + row * FONT_H),
+                      (unsigned)FONT_W, (unsigned)FONT_H, C_TERM_BG);
+}
+
 static void term_clear_row(int row)
 {
     for (int c = 0; c < TERM_COLS; c++) t_buf[row][c] = ' ';
@@ -70,10 +95,11 @@ static void term_init(void)
 
 static void term_render_row(int row)
 {
+    blit_term_bg_row(row);
     for (int c = 0; c < TERM_COLS; c++) {
-        gfx_char(TX + c * FONT_W,
-                 TY + row * FONT_H,
-                 t_buf[row][c], C_TEXT, C_TERM_BG);
+        if (t_buf[row][c] != ' ')
+            gfx_char_transparent(TX + c * FONT_W, TY + row * FONT_H,
+                                 t_buf[row][c], C_TEXT);
     }
 }
 
@@ -96,9 +122,10 @@ static void term_scroll(void)
 
 static void term_erase_cursor(void)
 {
-    gfx_char(TX + t_col * FONT_W,
-             TY + t_row * FONT_H,
-             t_buf[t_row][t_col], C_TEXT, C_TERM_BG);
+    blit_term_bg_cell(t_row, t_col);
+    if (t_buf[t_row][t_col] != ' ')
+        gfx_char_transparent(TX + t_col * FONT_W, TY + t_row * FONT_H,
+                             t_buf[t_row][t_col], C_TEXT);
 }
 
 static void term_draw_cursor(void)
@@ -124,17 +151,15 @@ static void term_putc(char c)
     if ((c == '\b' || c == 127) && t_col > 0) {
         t_col--;
         t_buf[t_row][t_col] = ' ';
-        gfx_char(TX + t_col * FONT_W,
-                 TY + t_row * FONT_H,
-                 ' ', C_TEXT, C_TERM_BG);
+        blit_term_bg_cell(t_row, t_col);
         return;
     }
     if ((unsigned char)c < 32) return;
 
     t_buf[t_row][t_col] = c;
-    gfx_char(TX + t_col * FONT_W,
-             TY + t_row * FONT_H,
-             c, C_TEXT, C_TERM_BG);
+    blit_term_bg_cell(t_row, t_col);
+    gfx_char_transparent(TX + t_col * FONT_W, TY + t_row * FONT_H,
+                         c, C_TEXT);
     t_col++;
     if (t_col >= TERM_COLS) {
         t_col = 0;
@@ -199,21 +224,9 @@ static char term_key_to_char(key_event_t ev)
 
 static void draw_window(void)
 {
-    gfx_fill(WX + 4, WY + 4, WIN_W, WIN_H, GFX_RGB(8, 8, 14));
-    gfx_fill(WX, WY, WIN_W, WIN_H, C_WIN_BG);
-    gfx_fill(WX, WY, WIN_W, TITLE_H, C_TITLEBAR);
-
-    gfx_draw_close_button(WX + 10, WY + 8, 0);
-    // gfx_fill(WX + 26, WY + 8, 12, 12, C_YELLOW);
-    // gfx_fill(WX + 42, WY + 8, 12, 12, C_GREEN);
-
-    gfx_text_center(WX, WIN_W, WY + 8,
-                    "AetherTerm  --  aesh", C_TEXT, C_TITLEBAR);
-
-    gfx_hline(WX, WY + TITLE_H, WIN_W, C_ACCENT);
-    gfx_fill(WX, WY + TITLE_H + 1,
-             WIN_W, WIN_H - TITLE_H - 1, C_TERM_BG);
-    gfx_rect(WX, WY, WIN_W, WIN_H, C_SEP);
+    gfx_glass_window_frame(WX, WY, WIN_W, WIN_H,
+                            TITLE_H, "AetherTerm  \xe2\x80\x94  aesh", 0);
+    blit_term_bg();
 }
 
 static void redraw_after_child(void)
@@ -250,13 +263,12 @@ static int term_readline(char *buf, int max)
     while (n < max - 1) {
         unsigned long long raw = sys_wm_key_recv();
 
-        /* WM_EV_REDRAW: window was dragged — update position and repaint */
+        /* WM_EV_REDRAW: window was dragged — repaint at new position */
         if (wm_event_is_redraw(raw)) {
             g_win_x = wm_event_redraw_x(raw);
             g_win_y = wm_event_redraw_y(raw);
             draw_window();
             term_redraw_all();
-            /* Restore cursor at updated position */
             term_draw_cursor();
             continue;
         }
@@ -656,8 +668,7 @@ static void cmd_time(long ticks)
 
 static void cmd_clear(void)
 {
-    gfx_fill(WX + 1, WY + TITLE_H + 1,
-             WIN_W - 2, WIN_H - TITLE_H - 2, C_TERM_BG);
+    blit_term_bg();
     for (int r = 0; r < TERM_ROWS; r++) term_clear_row(r);
     t_col = 0;
     t_row = 0;

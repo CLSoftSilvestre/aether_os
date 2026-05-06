@@ -754,10 +754,13 @@ static void draw_focus_border(long win_id, int focused)
 
     unsigned color = focused ? C_ACCENT : C_SEP;
 
-    sys_fb_fill(x,         y,         w, 2, color);
-    sys_fb_fill(x,         y + h - 2, w, 2, color);
-    sys_fb_fill(x,         y,         2, h, color);
-    sys_fb_fill(x + w - 2, y,         2, h, color);
+    /* Rounded 2-px border — matches GFX_WINDOW_R corner radius of the window */
+    gfx_rect_rounded((unsigned)x,       (unsigned)y,
+                     (unsigned)w,       (unsigned)h,
+                     GFX_WINDOW_R, color);
+    gfx_rect_rounded((unsigned)(x + 1), (unsigned)(y + 1),
+                     (unsigned)(w - 2), (unsigned)(h - 2),
+                     (unsigned)(GFX_WINDOW_R > 1 ? GFX_WINDOW_R - 1 : 0), color);
 }
 
 /* ── WM helper: close button hit-test ───────────────────────────────────── */
@@ -1077,6 +1080,8 @@ int main(void)
     g_wp_ok = (gfx_bmp_load("/lumina_bg.bmp",
                               g_wp_buf, sizeof(g_wp_buf),
                               (void *)0, (void *)0) == 0);
+    if (g_wp_ok)
+        sys_wp_register(g_wp_buf, LUMINA_BG_W, LUMINA_BG_H);
 
     draw_desktop();
     init_glass_panels();   /* must run after draw_desktop so wallpaper is ready */

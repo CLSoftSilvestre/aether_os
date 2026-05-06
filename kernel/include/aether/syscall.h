@@ -129,6 +129,13 @@
                               *   wh_packed      = (width<<32|height)         */
 #define SYS_VSYNC_WAIT  905  /* () → 0; blocks until next 60Hz frame boundary */
 
+/* Wallpaper sharing — transparent window backgrounds (Phase 6.1.x) */
+#define SYS_WP_REGISTER   906  /* (buf_ptr, (w<<32)|h) → 0; init registers WP buf */
+#define SYS_WP_GET        907  /* () → raw uintptr_t of WP buffer, or 0            */
+#define SYS_WP_SIZE       908  /* () → (bmp_w<<32)|bmp_h                           */
+#define SYS_WP_BLEND_FILL 909  /* (x<<32|y, w<<32|h, color) → 0; kernel blends
+                                *   80% color + 20% wallpaper into the framebuffer */
+
 /* File descriptor numbers */
 #define FD_STDIN   0
 #define FD_STDOUT  1

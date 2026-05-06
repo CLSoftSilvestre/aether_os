@@ -507,15 +507,8 @@ static void build_ui(void)
 
 static void draw_frame(void)
 {
-    int wx = g_win_x, wy = g_win_y;
-    gfx_fill(wx + 4, wy + 4, WIN_W, WIN_H, GFX_RGB(6, 6, 10));
-    gfx_fill(wx, wy, WIN_W, WIN_H, C_WIN_BG);
-    gfx_fill(wx, wy, WIN_W, TITLE_H, C_TITLEBAR);
-    gfx_draw_close_button(wx + 10, wy + 8, 0);
-    gfx_text_center((unsigned)wx, WIN_W, (unsigned)(wy + 10),
-                    "Tic-Tac-Toe", C_TEXT, C_TITLEBAR);
-    gfx_hline((unsigned)wx, (unsigned)(wy + TITLE_H), WIN_W, C_ACCENT);
-    gfx_rect((unsigned)wx, (unsigned)wy, WIN_W, WIN_H, C_SEP);
+    gfx_glass_window_frame(g_win_x, g_win_y, WIN_W, WIN_H,
+                            TITLE_H, "Tic-Tac-Toe", 0);
 }
 
 static void on_reposition(void *ud) { (void)ud; draw_frame(); }

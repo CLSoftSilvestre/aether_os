@@ -376,15 +376,8 @@ static void on_cmd_submit(widget_t *inp)  { (void)inp; do_send(); }
 
 static void draw_frame(void)
 {
-    int wx = g_win_x, wy = g_win_y;
-
-    gfx_fill(wx + 4, wy + 4, WIN_W, WIN_H, GFX_RGB(4, 4, 8));  /* shadow */
-    gfx_fill(wx, wy, WIN_W, WIN_H, C_WIN_BG);
-    gfx_fill(wx, wy, WIN_W, TITLE_H, C_TITLEBAR);
-    gfx_draw_close_button(wx + 10, wy + 8, 0);
-    gfx_text_center(wx, WIN_W, wy + 10, "AetherTelnet", C_TEXT, C_TITLEBAR);
-    gfx_hline(wx, wy + TITLE_H, WIN_W, C_ACCENT);
-    gfx_rect(wx, wy, WIN_W, WIN_H, C_SEP);
+    gfx_glass_window_frame(g_win_x, g_win_y, WIN_W, WIN_H,
+                            TITLE_H, "AetherTelnet", 0);
 }
 
 static void on_reposition(void *ud) { (void)ud; draw_frame(); }

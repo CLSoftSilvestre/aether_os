@@ -42,6 +42,22 @@ void gfx_hline(unsigned x, unsigned y, unsigned w, unsigned color);
 void gfx_vline(unsigned x, unsigned y, unsigned h, unsigned color);
 void gfx_rect(unsigned x, unsigned y, unsigned w, unsigned h, unsigned color);
 
+/* ── Rounded rectangle primitives ──────────────────────────────────────────── */
+
+/* Standard window corner radius — used by gfx_glass_window_frame and widgets */
+#define GFX_WINDOW_R   10
+#define GFX_WIDGET_R    5
+#define GFX_INPUT_R     4
+
+/* Fill a rounded rectangle.  Corner pixels outside the arc are left untouched,
+ * revealing whatever was drawn behind the window (wallpaper / desktop). */
+void gfx_fill_rounded(unsigned x, unsigned y, unsigned w, unsigned h,
+                       unsigned r, unsigned color);
+
+/* Draw a 1-pixel rounded rectangle outline. */
+void gfx_rect_rounded(unsigned x, unsigned y, unsigned w, unsigned h,
+                       unsigned r, unsigned color);
+
 /* Draw one character (8×16 Lumina Mono) at pixel (x, y) */
 void gfx_char(unsigned x, unsigned y, char ch, unsigned fg, unsigned bg);
 
@@ -69,6 +85,31 @@ void gfx_printf(unsigned x, unsigned y, unsigned fg, unsigned bg,
  * Corners are clipped with C_TITLEBAR to approximate a circle.
  */
 void gfx_draw_close_button(unsigned x, unsigned y, int hovered);
+
+/* ── Glass window chrome ────────────────────────────────────────────────────── */
+
+/*
+ * gfx_glass_window_frame — draw a complete Lumina glassmorphism window frame.
+ *
+ *   Renders (in order):
+ *     1. Soft drop shadow  (4 px right / 6 px down, near-black, rounded)
+ *     2. Window body fill  (C_WIN_BG, corner radius = GFX_WINDOW_R)
+ *     3. Titlebar glass    (C_TITLEBAR with specular top-edge highlight,
+ *                           top corners rounded, straight bottom edge)
+ *     4. Outer glass rim   (1 px rounded rect in C_ACCENT — the visible "edge")
+ *     5. Inner border line (1 px rounded rect, darker — adds depth)
+ *     6. Accent separator  (C_ACCENT, 1 px, under titlebar)
+ *     7. Traffic-light close button
+ *     8. Title text        (centered, transparent over glass)
+ *
+ *   hovered_close: pass 1 when the cursor is over the close button.
+ *
+ *   The caller is responsible for filling the content area below the titlebar
+ *   (e.g. with C_TERM_BG for a terminal, or letting the widget system draw it).
+ */
+void gfx_glass_window_frame(int wx, int wy, int ww, int wh,
+                              int title_h, const char *title,
+                              int hovered_close);
 
 /* ── Desktop icon primitives (48×48, Phase 5.4) ────────────────────────── */
 void gfx_icon_term(int x, int y);

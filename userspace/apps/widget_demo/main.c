@@ -105,30 +105,8 @@ static void on_checkbox_toggle(widget_t *cb, int checked)
 
 static void draw_frame(void)
 {
-    int wx = g_win_x, wy = g_win_y;
-
-    /* Drop shadow */
-    gfx_fill(wx + 4, wy + 4, WIN_W, WIN_H, GFX_RGB(6, 6, 10));
-
-    /* Window body */
-    gfx_fill(wx, wy, WIN_W, WIN_H, C_WIN_BG);
-
-    /* Title bar */
-    gfx_fill(wx, wy, WIN_W, TITLE_H, C_TITLEBAR);
-
-    /* Traffic lights */
-    gfx_draw_close_button(wx + 10, wy + 8, 0);
-    // gfx_fill(wx + 26, wy + 8, 12, 12, C_YELLOW);
-    // gfx_fill(wx + 42, wy + 8, 12, 12, C_GREEN);
-
-    /* Title text */
-    gfx_text_center(wx, WIN_W, wy + 10, "Widget Demo", C_TEXT, C_TITLEBAR);
-
-    /* Accent line under title */
-    gfx_hline(wx, wy + TITLE_H, WIN_W, C_ACCENT);
-
-    /* Window border */
-    gfx_rect(wx, wy, WIN_W, WIN_H, C_SEP);
+    gfx_glass_window_frame(g_win_x, g_win_y, WIN_W, WIN_H,
+                            TITLE_H, "Widget Demo", 0);
 }
 
 /* ── Reposition callback (called by widget_run on WM_EV_REDRAW) ──────────── */

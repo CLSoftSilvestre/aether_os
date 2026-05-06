@@ -563,6 +563,37 @@ static inline long sys_fs_readdir(const char *path, char *buf, long len)
 #define SYS_GPU_INFO   903
 #define SYS_GPU_BLUR   904
 
+/* Wallpaper sharing (Phase 6.1.x) */
+#define SYS_WP_REGISTER   906  /* (buf_ptr, (w<<32)|h) → 0 */
+#define SYS_WP_GET        907  /* () → raw pointer or 0    */
+#define SYS_WP_SIZE       908  /* () → (bmp_w<<32)|bmp_h   */
+#define SYS_WP_BLEND_FILL 909  /* (x<<32|y, w<<32|h, color) → 0 */
+
+static inline long sys_wp_register(const unsigned *buf, unsigned w, unsigned h)
+{
+    long wh = ((long)w << 32) | (long)h;
+    return _sys2(SYS_WP_REGISTER, (long)(const void *)buf, wh);
+}
+
+static inline long sys_wp_get(void)
+{
+    return _sys0(SYS_WP_GET);
+}
+
+static inline long sys_wp_size(void)
+{
+    return _sys0(SYS_WP_SIZE);
+}
+
+static inline long sys_wp_blend_fill(unsigned x, unsigned y,
+                                      unsigned w, unsigned h,
+                                      unsigned color)
+{
+    long xy = ((long)x << 32) | (long)y;
+    long wh = ((long)w << 32) | (long)h;
+    return _sys3(SYS_WP_BLEND_FILL, xy, wh, (long)color);
+}
+
 /* ── AetherFS write syscalls (Phase 5.5) ────────────────────────── */
 
 #define SYS_FS_WRITE  804

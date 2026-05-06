@@ -19,7 +19,7 @@
 
 static void button_draw(widget_t *w, int ax, int ay)
 {
-    unsigned int bg;
+    unsigned bg;
     switch (w->state) {
     case WS_HOVERED:  bg = C_BTN_HOVER; break;
     case WS_PRESSED:  bg = C_BTN_PRESS; break;
@@ -27,14 +27,24 @@ static void button_draw(widget_t *w, int ax, int ay)
     default:          bg = C_BTN_NORMAL; break;
     }
 
-    /* Fill + thin border */
-    gfx_fill(ax, ay, w->bounds.w, w->bounds.h, bg);
-    gfx_rect(ax, ay, w->bounds.w, w->bounds.h,
-             GFX_RGB(200, 185, 255));
+    /* Rounded glass fill */
+    gfx_fill_rounded((unsigned)ax, (unsigned)ay,
+                     (unsigned)w->bounds.w, (unsigned)w->bounds.h,
+                     GFX_WIDGET_R, bg);
 
-    /* Centred label */
-    gfx_text_center(ax, w->bounds.w,
-                    ay + (w->bounds.h - WGT_FONT_H) / 2,
+    /* Glass specular — 1-px bright line on top edge of button */
+    gfx_hline((unsigned)(ax + GFX_WIDGET_R), (unsigned)ay,
+              (unsigned)(w->bounds.w - 2 * GFX_WIDGET_R),
+              GFX_RGB(200, 185, 255));
+
+    /* Rounded glass border rim */
+    gfx_rect_rounded((unsigned)ax, (unsigned)ay,
+                     (unsigned)w->bounds.w, (unsigned)w->bounds.h,
+                     GFX_WIDGET_R, GFX_RGB(160, 145, 230));
+
+    /* Centred label — uses the fill bg so char backgrounds match */
+    gfx_text_center((unsigned)ax, (unsigned)w->bounds.w,
+                    (unsigned)(ay + (w->bounds.h - WGT_FONT_H) / 2),
                     w->data.button.text, C_BTN_TEXT, bg);
 }
 

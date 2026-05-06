@@ -513,6 +513,133 @@ void gfx_icon_tictactoe(int x, int y)
     gfx_fill(x + 46, y + 46, 2, 2, cbg);
 }
 
+/* ── Rounded rectangle primitives ───────────────────────────────────────────── */
+
+/* Integer square root (Newton's method) */
+static unsigned gfx_isqrt_u(unsigned n)
+{
+    if (!n) return 0;
+    unsigned x = n, y = (x + 1u) >> 1u;
+    while (y < x) { x = y; y = (x + n / x) >> 1u; }
+    return x;
+}
+
+void gfx_fill_rounded(unsigned x, unsigned y, unsigned w, unsigned h,
+                       unsigned r, unsigned color)
+{
+    if (!r || r * 2u > w || r * 2u > h) {
+        gfx_fill(x, y, w, h, color);
+        return;
+    }
+    /* Middle rows — full width */
+    gfx_fill(x, y + r, w, h - 2u * r, color);
+    /* Top and bottom corner rows — arc-clipped scanlines */
+    unsigned r2 = r * r;
+    for (unsigned dr = 0; dr < r; dr++) {
+        unsigned dy = r - dr;
+        unsigned dx = gfx_isqrt_u(r2 - dy * dy);
+        unsigned x0  = r - dx;
+        unsigned len = w - 2u * x0;
+        gfx_fill(x + x0, y + dr,          len, 1u, color); /* top    */
+        gfx_fill(x + x0, y + h - 1u - dr, len, 1u, color); /* bottom */
+    }
+}
+
+void gfx_rect_rounded(unsigned x, unsigned y, unsigned w, unsigned h,
+                       unsigned r, unsigned color)
+{
+    if (!r || r * 2u > w || r * 2u > h) {
+        gfx_rect(x, y, w, h, color);
+        return;
+    }
+    /* Straight segments */
+    if (w > 2u * r) {
+        gfx_hline(x + r, y,           w - 2u * r, color); /* top    */
+        gfx_hline(x + r, y + h - 1u,  w - 2u * r, color); /* bottom */
+    }
+    if (h > 2u * r) {
+        gfx_vline(x,           y + r, h - 2u * r, color); /* left   */
+        gfx_vline(x + w - 1u,  y + r, h - 2u * r, color); /* right  */
+    }
+    /* Corner arcs — one pixel per scanline along the arc */
+    unsigned r2 = r * r;
+    for (unsigned dr = 0; dr < r; dr++) {
+        unsigned dy      = r - dr;
+        unsigned dx      = gfx_isqrt_u(r2 - dy * dy);
+        unsigned col_l   = x + r - dx;
+        unsigned col_r   = x + w - 1u - r + dx;
+        unsigned row_top = y + dr;
+        unsigned row_bot = y + h - 1u - dr;
+        gfx_fill(col_l, row_top, 1u, 1u, color);
+        gfx_fill(col_r, row_top, 1u, 1u, color);
+        gfx_fill(col_l, row_bot, 1u, 1u, color);
+        gfx_fill(col_r, row_bot, 1u, 1u, color);
+    }
+}
+
+/* ── Glass window chrome ─────────────────────────────────────────────────────── */
+
+void gfx_glass_window_frame(int wx, int wy, int ww, int wh,
+                              int title_h, const char *title,
+                              int hovered_close)
+{
+    unsigned r  = GFX_WINDOW_R;
+    unsigned r2 = r * r;
+
+    /* 1. Drop shadow — offset (4 right, 6 down), near-black, rounded */
+    gfx_fill_rounded((unsigned)(wx + 4), (unsigned)(wy + 6),
+                     (unsigned)ww, (unsigned)wh, r, GFX_RGB(4, 4, 8));
+
+    /* 2. Window body — C_WIN_BG, rounded corners */
+    gfx_fill_rounded((unsigned)wx, (unsigned)wy,
+                     (unsigned)ww, (unsigned)wh, r, C_WIN_BG);
+
+    /* 3. Titlebar glass — C_TITLEBAR, rounded top corners, straight bottom.
+     *    Drawn in two passes to avoid re-squaring the top corners:
+     *      Pass A: arc-clipped scanlines (rows 0..r-1)
+     *      Pass B: straight rows (rows r..title_h-1) */
+    for (unsigned dr = 0; dr < r; dr++) {
+        unsigned dy  = r - dr;
+        unsigned dx  = gfx_isqrt_u(r2 - dy * dy);
+        unsigned x0  = r - dx;
+        unsigned len = (unsigned)ww - 2u * x0;
+        gfx_fill((unsigned)wx + x0, (unsigned)wy + dr, len, 1u, C_TITLEBAR);
+    }
+    gfx_fill((unsigned)wx, (unsigned)(wy + (int)r),
+             (unsigned)ww, (unsigned)(title_h - (int)r), C_TITLEBAR);
+
+    /* 4. Glass specular — 1-px bright line on top edge (simulates light on glass rim) */
+    gfx_hline((unsigned)(wx + (int)r), (unsigned)wy,
+              (unsigned)(ww - 2 * (int)r), GFX_RGB(90, 84, 148));
+
+    /* 5. Soft highlight band — 2-px slightly lighter strip just below specular */
+    gfx_fill((unsigned)wx, (unsigned)(wy + 1), (unsigned)ww, 2u,
+             GFX_RGB(60, 56, 100));
+
+    /* 6. Outer glass rim border — 1-px rounded, C_ACCENT (the purple edge glow) */
+    gfx_rect_rounded((unsigned)wx, (unsigned)wy,
+                     (unsigned)ww, (unsigned)wh, r, C_ACCENT);
+
+    /* 7. Inner border depth line — 1-px rounded, darker purple (adds depth) */
+    unsigned ri = (r > 1u) ? r - 1u : 0u;
+    gfx_rect_rounded((unsigned)(wx + 1), (unsigned)(wy + 1),
+                     (unsigned)(ww - 2), (unsigned)(wh - 2), ri,
+                     GFX_RGB(55, 50, 88));
+
+    /* 8. Accent separator under titlebar */
+    gfx_hline((unsigned)wx, (unsigned)(wy + title_h), (unsigned)ww, C_ACCENT);
+
+    /* 9. Traffic-light close button */
+    gfx_draw_close_button((unsigned)(wx + 10),
+                          (unsigned)(wy + (title_h - 12) / 2),
+                          hovered_close);
+
+    /* 10. Window title — transparent over glass so the tinted surface shows through */
+    gfx_text_center_transparent((unsigned)wx, (unsigned)ww,
+                                (unsigned)(wy + (title_h - FONT_H) / 2),
+                                title, C_TEXT);
+}
+
 /* ── BMP loader ──────────────────────────────────────────────────────────── */
 
 static int bmp_read_exact(long vfd, void *dst, long n)

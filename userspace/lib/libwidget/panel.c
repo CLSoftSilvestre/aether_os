@@ -12,8 +12,23 @@
 
 static void panel_draw(widget_t *w, int ax, int ay)
 {
-    gfx_fill(ax, ay, w->bounds.w, w->bounds.h,
-             w->data.panel.bg_color);
+    unsigned bg = w->data.panel.bg_color;
+
+    /* Rounded glass panel — r=6 for inner widgets, stays small enough for
+     * narrow panels while giving a clearly rounded glass look. */
+    gfx_fill_rounded((unsigned)ax, (unsigned)ay,
+                     (unsigned)w->bounds.w, (unsigned)w->bounds.h,
+                     GFX_WIDGET_R, bg);
+
+    /* Subtle glass border — dim accent so the panel edge is softly visible */
+    gfx_rect_rounded((unsigned)ax, (unsigned)ay,
+                     (unsigned)w->bounds.w, (unsigned)w->bounds.h,
+                     GFX_WIDGET_R, C_SEP);
+
+    /* 1-px inner highlight on top edge — simulates glass catching light */
+    gfx_hline((unsigned)(ax + GFX_WIDGET_R), (unsigned)ay,
+              (unsigned)(w->bounds.w - 2 * GFX_WIDGET_R),
+              GFX_RGB(55, 52, 85));
 }
 
 void widget_init_panel(widget_t *w, int x, int y, int width, int height,
