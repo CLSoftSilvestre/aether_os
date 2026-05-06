@@ -40,7 +40,9 @@
 #define SYS_FB_CLAIM    604
 #define SYS_CURSOR_MOVE 605
 #define SYS_CURSOR_SHOW 606
-#define SYS_FB_BLIT     608   /* (buf, dst_x<<32|dst_y, w<<32|h, stride) → 0 */
+#define SYS_FB_BLIT      608  /* (buf, dst_x<<32|dst_y, w<<32|h, stride) → 0 */
+#define SYS_FB_CHAR_NOBG 609  /* ((x<<32)|y, (ch<<16)|fg) → 0              */
+#define SYS_VSYNC_WAIT   905  /* () → 0; blocks until next 60Hz boundary   */
 
 /* Window Manager syscalls (Phase 4.6) */
 #define SYS_WM_REGISTER   12
@@ -317,6 +319,22 @@ static inline void sys_fb_blit(const unsigned *pixels,
     long wh = ((long)w     << 32) | (long)h;
     _sys4(SYS_FB_BLIT, (long)(const void *)pixels, xy, wh,
           (long)src_stride_bytes);
+}
+
+/* Draw a character without filling background pixels — foreground only.
+ * Use over glass/translucent surfaces to avoid overwriting the glass bg. */
+static inline void sys_fb_char_nobg(unsigned x, unsigned y,
+                                    unsigned char ch, unsigned fg)
+{
+    long xy    = ((long)x  << 32) | (long)y;
+    long ch_fg = ((long)ch << 16) | (long)fg;
+    _sys2(SYS_FB_CHAR_NOBG, xy, ch_fg);
+}
+
+/* Block until the next 60Hz vsync boundary (~16.67ms cadence). */
+static inline void sys_vsync_wait(void)
+{
+    _sys0(SYS_VSYNC_WAIT);
 }
 
 /* ── Window Manager syscall wrappers (Phase 4.6) ───────────────────────── */

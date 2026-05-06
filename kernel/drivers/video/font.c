@@ -181,3 +181,26 @@ void font_draw_char(u32 x, u32 y, unsigned char ch, u32 fg, u32 bg)
             dst[col] = (bits & (0x80u >> col)) ? fg : bg;
     }
 }
+
+void font_draw_char_nobg(u32 x, u32 y, unsigned char ch, u32 fg)
+{
+    if (!fb_base) return;
+    u32 pitch = fb_stride / 4;
+    const u8 *glyph = font8x8[ch];
+
+    for (u32 drow = 0; drow < FONT_H; drow++) {
+        u8 bits;
+        if (drow == 15)
+            bits = 0;
+        else if (drow == 0)
+            bits = glyph[0];
+        else
+            bits = glyph[(drow + 1) >> 1];
+
+        volatile u32 *dst = fb_base + (y + drow) * pitch + x;
+        for (u32 col = 0; col < FONT_W; col++)
+            if (bits & (0x80u >> col))
+                dst[col] = fg;
+        /* background pixels left unchanged */
+    }
+}

@@ -79,6 +79,31 @@ void gfx_text_center(unsigned cx, unsigned cw, unsigned y,
     gfx_text(x, y, s, fg, bg);
 }
 
+/* Transparent text — foreground pixels only, no background rectangle.
+ * Use over glass or image backgrounds so the glass shows through. */
+void gfx_char_transparent(unsigned x, unsigned y, char ch, unsigned fg)
+{
+    sys_fb_char_nobg(x, y, (unsigned char)ch, fg);
+}
+
+void gfx_text_transparent(unsigned x, unsigned y, const char *s, unsigned fg)
+{
+    unsigned cx = x;
+    for (; *s; s++) {
+        gfx_char_transparent(cx, y, *s, fg);
+        cx += FONT_W;
+    }
+}
+
+void gfx_text_center_transparent(unsigned cx, unsigned cw, unsigned y,
+                                  const char *s, unsigned fg)
+{
+    unsigned len    = (unsigned)strlen(s);
+    unsigned text_w = len * FONT_W;
+    unsigned x      = cx + (cw > text_w ? (cw - text_w) / 2u : 0u);
+    gfx_text_transparent(x, y, s, fg);
+}
+
 void gfx_printf(unsigned x, unsigned y, unsigned fg, unsigned bg,
                 const char *fmt, ...)
 {

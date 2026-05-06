@@ -116,6 +116,9 @@
 #define SYS_NET_RECV     706  /* (fd, buf_ptr, len) → bytes recv or -1          */
 #define SYS_NET_CLOSE    707  /* (fd) → 0 or -1                                  */
 
+/* FB character without background (Phase 6.2 — glassmorphism) */
+#define SYS_FB_CHAR_NOBG  609  /* ((x<<32)|y, (ch<<16)|fg) → 0 */
+
 /* GPU / V3D syscalls (Phase 6.1) */
 #define SYS_GPU_ALLOC   900  /* (size_bytes) → bo_handle ≥1 or -1           */
 #define SYS_GPU_FREE    901  /* (bo_handle) → 0 or -1                        */
@@ -124,6 +127,7 @@
 #define SYS_GPU_BLUR    904  /* (handles_packed, wh_packed, radius) → 0/-1   *
                               *   handles_packed = (src_handle<<32|dst_handle)*
                               *   wh_packed      = (width<<32|height)         */
+#define SYS_VSYNC_WAIT  905  /* () → 0; blocks until next 60Hz frame boundary */
 
 /* File descriptor numbers */
 #define FD_STDIN   0

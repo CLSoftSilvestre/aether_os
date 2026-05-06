@@ -11,6 +11,7 @@
  */
 
 #include <gfx.h>
+#include <gpu.h>
 #include <manifest.h>
 #include <stdio.h>
 #include <string.h>
@@ -51,6 +52,19 @@ static int DOCK_Y;     /* SCR_H - BOTBAR_H - DOCK_H */
 
 /* Maximum number of WM window slots to query */
 #define WM_WIN_MAX   16
+
+/* ── Glass panel pixel buffers ───────────────────────────────────────────── */
+/* Pre-computed frosted-glass backgrounds for the topbar and dock.
+ * Filled once in init_glass_panels() after the wallpaper is drawn.
+ * SCR_W is set at runtime; arrays sized for GLASS_W_MAX (max expected width). */
+#define GLASS_W_MAX   1280
+#define GLASS_BLUR_R    10   /* blur radius in pixels                      */
+#define TOPBAR_TINT_A   60   /* topbar tint opacity (0-255)                */
+#define DOCK_TINT_A     70   /* dock tint — slightly more opaque           */
+
+static unsigned int g_topbar_glass[GLASS_W_MAX * TOPBAR_H];  /* ~180 KB BSS */
+static unsigned int g_dock_glass[GLASS_W_MAX * DOCK_H];      /* ~280 KB BSS */
+static int          g_glass_ok = 0;
 
 /* ── Desktop icon grid ───────────────────────────────────────────────────── */
 
@@ -119,13 +133,29 @@ static long find_win_for_pid(long pid)
 
 /* ── Dock icon drawing ────────────────────────────────────────────────────── */
 
-/* Clip the 4 corner pixels of a 40x40 icon to match the dock background */
+/* Clip the 4 corner pixels of a 40×40 icon.
+ * When glass is active, restores the glass texture at the corners.
+ * When not, fills with the flat C_PANEL color. */
 static void icon_round_corners(int ix, int iy)
 {
-    sys_fb_fill(ix,    iy,    2, 2, C_PANEL);
-    sys_fb_fill(ix+38, iy,    2, 2, C_PANEL);
-    sys_fb_fill(ix,    iy+38, 2, 2, C_PANEL);
-    sys_fb_fill(ix+38, iy+38, 2, 2, C_PANEL);
+    if (g_glass_ok) {
+        unsigned gw  = (unsigned)SCR_W;
+        unsigned row0 = (unsigned)(iy - DOCK_Y);
+        unsigned row1 = row0 + 38u;
+        sys_fb_blit(g_dock_glass + row0 * gw + (unsigned)ix,
+                    (unsigned)ix, (unsigned)iy, 2, 2, gw * 4);
+        sys_fb_blit(g_dock_glass + row0 * gw + (unsigned)(ix + 38),
+                    (unsigned)(ix+38), (unsigned)iy, 2, 2, gw * 4);
+        sys_fb_blit(g_dock_glass + row1 * gw + (unsigned)ix,
+                    (unsigned)ix, (unsigned)(iy+38), 2, 2, gw * 4);
+        sys_fb_blit(g_dock_glass + row1 * gw + (unsigned)(ix + 38),
+                    (unsigned)(ix+38), (unsigned)(iy+38), 2, 2, gw * 4);
+    } else {
+        sys_fb_fill((unsigned)ix,    (unsigned)iy,    2, 2, C_PANEL);
+        sys_fb_fill((unsigned)(ix+38), (unsigned)iy,    2, 2, C_PANEL);
+        sys_fb_fill((unsigned)ix,    (unsigned)(iy+38), 2, 2, C_PANEL);
+        sys_fb_fill((unsigned)(ix+38), (unsigned)(iy+38), 2, 2, C_PANEL);
+    }
 }
 
 /* Terminal: dark shell window with ">_" prompt */
@@ -289,7 +319,9 @@ static void draw_dock_item(int idx)
     int ix = sx + (DOCK_SLOT_W - DOCK_ICON_SIZE) / 2;
     int iy = DOCK_Y + 4;
 
-    gfx_fill(sx, DOCK_Y, DOCK_SLOT_W, DOCK_H, C_PANEL);
+    if (!g_glass_ok)
+        gfx_fill((unsigned)sx, (unsigned)DOCK_Y,
+                 (unsigned)DOCK_SLOT_W, DOCK_H, C_PANEL);
 
     switch (idx) {
     case 0: draw_icon_term(ix, iy);       break;
@@ -301,17 +333,33 @@ static void draw_dock_item(int idx)
     case 6: draw_icon_telnet(ix, iy);     break;
     }
 
-    /* Running indicator: cyan bar below icon when app has an active window */
+    /* Running indicator: accent bar when running, glass restored when not */
     int running = g_dock[idx].pid && (find_win_for_pid(g_dock[idx].pid) >= 0);
     int dx = sx + (DOCK_SLOT_W - 16) / 2;
     int dy = DOCK_Y + DOCK_H - 8;
-    gfx_fill(dx, dy, 16, 4, running ? C_ACCENT2 : C_PANEL);
+    if (running) {
+        gfx_fill((unsigned)dx, (unsigned)dy, 16, 4, C_ACCENT2);
+    } else if (g_glass_ok) {
+        unsigned gw  = (unsigned)SCR_W;
+        unsigned row = (unsigned)(dy - DOCK_Y);
+        sys_fb_blit(g_dock_glass + row * gw + (unsigned)dx,
+                    (unsigned)dx, (unsigned)dy, 16, 4, gw * 4u);
+    } else {
+        gfx_fill((unsigned)dx, (unsigned)dy, 16, 4, C_PANEL);
+    }
 }
 
 static void draw_dock(void)
 {
-    gfx_fill(0, DOCK_Y, SCR_W, DOCK_H, C_PANEL);
-    gfx_hline(0, DOCK_Y, SCR_W, C_SEP);
+    if (g_glass_ok) {
+        sys_fb_blit((const unsigned *)g_dock_glass,
+                    0, (unsigned)DOCK_Y,
+                    (unsigned)SCR_W, DOCK_H,
+                    (unsigned)SCR_W * 4u);
+    } else {
+        gfx_fill(0, (unsigned)DOCK_Y, (unsigned)SCR_W, DOCK_H, C_PANEL);
+    }
+    gfx_hline(0, (unsigned)DOCK_Y, (unsigned)SCR_W, C_SEP);
     for (int i = 0; i < DOCK_ITEM_COUNT; i++)
         draw_dock_item(i);
 }
@@ -538,20 +586,103 @@ static void draw_desktop(void)
     wp_draw_stars();
 }
 
+/*
+ * init_glass_panels — compute frosted-glass backgrounds for topbar and dock.
+ * Called once after the wallpaper is drawn.  Uses the BMP buffer when
+ * available (scaled sample), or the procedural gradient as fallback.
+ * Results stored in g_topbar_glass / g_dock_glass and blitted each frame.
+ */
+static void init_glass_panels(void)
+{
+    gpu_init(NULL);
+
+    if (g_wp_ok) {
+        /* BMP path: sample BMP rows that map to topbar and dock screen rows.
+         * The BMP (LUMINA_BG_W × LUMINA_BG_H) is stretch-blitted to the
+         * screen, so BMP row for screen row sy = sy * LUMINA_BG_H / SCR_H. */
+        int topbar_bmp_y = 0;
+        int dock_bmp_y   = DOCK_Y * LUMINA_BG_H / SCR_H;
+
+        gpu_glass_panel(
+            (const unsigned int *)(g_wp_buf
+                + (unsigned)topbar_bmp_y * LUMINA_BG_W),
+            LUMINA_BG_W,
+            g_topbar_glass, (unsigned)SCR_W, TOPBAR_H,
+            C_PANEL, TOPBAR_TINT_A, GLASS_BLUR_R);
+
+        gpu_glass_panel(
+            (const unsigned int *)(g_wp_buf
+                + (unsigned)dock_bmp_y * LUMINA_BG_W),
+            LUMINA_BG_W,
+            g_dock_glass, (unsigned)SCR_W, DOCK_H,
+            C_PANEL, DOCK_TINT_A, GLASS_BLUR_R);
+    } else {
+        /* Procedural path: fill a scratch row-buffer from the gradient. */
+        static unsigned int scratch[GLASS_W_MAX];
+
+        /* Topbar */
+        for (int y = 0; y < TOPBAR_H; y++) {
+            unsigned col = wp_bg_at(TOPBAR_Y + y);
+            for (int x = 0; x < SCR_W; x++)
+                scratch[x] = col;
+            for (int x = 0; x < SCR_W; x++)
+                g_topbar_glass[y * GLASS_W_MAX + x] = scratch[x];
+        }
+        gpu_glass_panel(
+            g_topbar_glass, (unsigned)GLASS_W_MAX,
+            g_topbar_glass, (unsigned)SCR_W, TOPBAR_H,
+            C_PANEL, TOPBAR_TINT_A, GLASS_BLUR_R);
+
+        /* Dock */
+        for (int y = 0; y < DOCK_H; y++) {
+            unsigned col = wp_bg_at(DOCK_Y + y);
+            for (int x = 0; x < SCR_W; x++)
+                g_dock_glass[y * GLASS_W_MAX + x] = col;
+        }
+        gpu_glass_panel(
+            g_dock_glass, (unsigned)GLASS_W_MAX,
+            g_dock_glass, (unsigned)SCR_W, DOCK_H,
+            C_PANEL, DOCK_TINT_A, GLASS_BLUR_R);
+    }
+
+    g_glass_ok = 1;
+}
+
 static void draw_top_bar(long ticks)
 {
-    gfx_fill(0, TOPBAR_Y, SCR_W, TOPBAR_H, C_PANEL);
-    gfx_text(14, TOPBAR_Y + 10, "AetherOS", C_TEXT, C_PANEL);
-    gfx_text(14 + 8 * FONT_W + 8, TOPBAR_Y + 10, "v0.0.7", C_TEXT_DIM, C_PANEL);
-    gfx_text_center(0, SCR_W, TOPBAR_Y + 10,
-                    "Phase 6.1  --  Lumina Desktop", C_TEXT_DIM, C_PANEL);
-    char ubuf[20], tbuf[16];
-    fmt_uptime(tbuf, ticks);
-    snprintf(ubuf, sizeof(ubuf), "up %s", tbuf);
-    int len = (int)strlen(ubuf);
-    gfx_text(SCR_W - len * FONT_W - 14, TOPBAR_Y + 10,
-             ubuf, C_TEXT_DIM, C_PANEL);
-    gfx_fill(0, ACCENT_Y, SCR_W, ACCENT_H, C_ACCENT);
+    if (g_glass_ok) {
+        sys_fb_blit((const unsigned *)g_topbar_glass,
+                    0, (unsigned)TOPBAR_Y,
+                    (unsigned)SCR_W, TOPBAR_H,
+                    (unsigned)SCR_W * 4u);
+        gfx_text_transparent(14, TOPBAR_Y + 10, "AetherOS", C_TEXT);
+        gfx_text_transparent(14 + 8 * FONT_W + 8, TOPBAR_Y + 10,
+                             "v0.0.7", C_TEXT_DIM);
+        gfx_text_center_transparent(0, (unsigned)SCR_W, TOPBAR_Y + 10,
+                                    "Lumina Desktop  \xe2\x80\x94  Phase 6.2",
+                                    C_TEXT_DIM);
+        char ubuf[20], tbuf[16];
+        fmt_uptime(tbuf, ticks);
+        snprintf(ubuf, sizeof(ubuf), "up %s", tbuf);
+        int len = (int)strlen(ubuf);
+        gfx_text_transparent((unsigned)(SCR_W - len * FONT_W - 14),
+                              TOPBAR_Y + 10, ubuf, C_TEXT_DIM);
+    } else {
+        gfx_fill(0, TOPBAR_Y, (unsigned)SCR_W, TOPBAR_H, C_PANEL);
+        gfx_text(14, TOPBAR_Y + 10, "AetherOS", C_TEXT, C_PANEL);
+        gfx_text(14 + 8 * FONT_W + 8, TOPBAR_Y + 10,
+                 "v0.0.7", C_TEXT_DIM, C_PANEL);
+        gfx_text_center(0, (unsigned)SCR_W, TOPBAR_Y + 10,
+                        "Lumina Desktop  --  Phase 6.2",
+                        C_TEXT_DIM, C_PANEL);
+        char ubuf[20], tbuf[16];
+        fmt_uptime(tbuf, ticks);
+        snprintf(ubuf, sizeof(ubuf), "up %s", tbuf);
+        int len = (int)strlen(ubuf);
+        gfx_text((unsigned)(SCR_W - len * FONT_W - 14), TOPBAR_Y + 10,
+                 ubuf, C_TEXT_DIM, C_PANEL);
+    }
+    gfx_fill(0, ACCENT_Y, (unsigned)SCR_W, ACCENT_H, C_ACCENT);
 }
 
 static void draw_bot_bar(void)
@@ -578,8 +709,20 @@ static void refresh_top_bar(long ticks)
     snprintf(ubuf, sizeof(ubuf), "up %s", tbuf);
     int len = (int)strlen(ubuf);
     int x = SCR_W - len * FONT_W - 14;
-    gfx_fill(x - 2, TOPBAR_Y, SCR_W - (x - 2), TOPBAR_H, C_PANEL);
-    gfx_text(x, TOPBAR_Y + 10, ubuf, C_TEXT_DIM, C_PANEL);
+
+    /* Restore the right third of the topbar, then redraw uptime text */
+    unsigned erase_x = (unsigned)(SCR_W * 2 / 3);
+    if (g_glass_ok) {
+        sys_fb_blit((const unsigned *)(g_topbar_glass + erase_x),
+                    erase_x, (unsigned)TOPBAR_Y,
+                    (unsigned)SCR_W - erase_x, TOPBAR_H,
+                    (unsigned)SCR_W * 4u);
+        gfx_text_transparent((unsigned)x, TOPBAR_Y + 10, ubuf, C_TEXT_DIM);
+    } else {
+        gfx_fill(erase_x, TOPBAR_Y,
+                 (unsigned)SCR_W - erase_x, TOPBAR_H, C_PANEL);
+        gfx_text((unsigned)x, TOPBAR_Y + 10, ubuf, C_TEXT_DIM, C_PANEL);
+    }
 }
 
 static void __attribute__((unused)) refresh_bot_bar(void)
@@ -936,6 +1079,7 @@ int main(void)
                               (void *)0, (void *)0) == 0);
 
     draw_desktop();
+    init_glass_panels();   /* must run after draw_desktop so wallpaper is ready */
     draw_top_bar(gfx_ticks());
     draw_bot_bar();
     draw_dock();
@@ -955,15 +1099,14 @@ int main(void)
     int  prev_buttons = 0;
 
     for (;;) {
-        if (++bar_counter >= 100) {
+        if (++bar_counter >= 60) {   /* 60 vsync frames ≈ 1 second */
             bar_counter = 0;
             refresh_top_bar(gfx_ticks());
-            //refresh_bot_bar();
             draw_bot_bar();
         }
 
-        /* Refresh dock running indicators every ~500 ms */
-        if (++dock_counter >= 50) {
+        /* Refresh dock running indicators every ~30 frames (~500 ms) */
+        if (++dock_counter >= 30) {
             dock_counter = 0;
             draw_dock();
         }
@@ -1090,7 +1233,7 @@ int main(void)
             }
         }
 
-        sys_sleep(1);
+        sys_vsync_wait();   /* pace the event loop to ~60 fps */
     }
 
     return 0;

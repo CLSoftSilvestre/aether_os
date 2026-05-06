@@ -52,6 +52,13 @@ void gfx_text(unsigned x, unsigned y, const char *s, unsigned fg, unsigned bg);
 void gfx_text_center(unsigned cx, unsigned cw, unsigned y,
                      const char *s, unsigned fg, unsigned bg);
 
+/* Transparent variants — draw only foreground pixels; background unchanged.
+ * Use over glass / image surfaces to preserve the glass effect. */
+void gfx_char_transparent(unsigned x, unsigned y, char ch, unsigned fg);
+void gfx_text_transparent(unsigned x, unsigned y, const char *s, unsigned fg);
+void gfx_text_center_transparent(unsigned cx, unsigned cw, unsigned y,
+                                  const char *s, unsigned fg);
+
 /* Draw a formatted string (printf-style) — uses a 256-byte stack buffer */
 void gfx_printf(unsigned x, unsigned y, unsigned fg, unsigned bg,
                 const char *fmt, ...);

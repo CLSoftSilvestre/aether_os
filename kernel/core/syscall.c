@@ -730,6 +730,15 @@ long syscall_dispatch(trap_frame_t *frame)
     case SYS_FB_CHAR:
         return do_sys_fb_char(arg0, arg1, arg2);
 
+    case SYS_FB_CHAR_NOBG: {
+        u32 x  = (u32)((u64)arg0 >> 32);
+        u32 y  = (u32)((u64)arg0 & 0xFFFFFFFFu);
+        u32 ch = (u32)((u64)arg1 >> 16) & 0xFFu;
+        u32 fg = (u32)((u64)arg1 & 0xFFFFFFFFu);
+        font_draw_char_nobg(x, y, (unsigned char)ch, fg);
+        return 0;
+    }
+
     case SYS_GET_TICKS:
         return do_sys_get_ticks();
 
@@ -790,6 +799,20 @@ long syscall_dispatch(trap_frame_t *frame)
     case SYS_NET_CLOSE:  return do_sys_net_close(arg0);
 
     /* GPU / V3D (Phase 6.1) */
+    case SYS_VSYNC_WAIT: {
+        /* Block until the next 60Hz frame boundary.
+         * 60 vsyncs per 100 timer ticks: boundary N starts at tick floor(N*5/3).
+         * Given current tick `now`, next boundary = floor((gen+1)*5/3)
+         * where gen = floor(now*3/5). */
+        u64 now  = timer_get_ticks();
+        u64 gen  = (now * 3u) / 5u;
+        u64 next = ((gen + 1u) * 5u) / 3u;
+        if (next <= now)
+            next = ((gen + 2u) * 5u) / 3u;
+        task_sleep(next > now ? next - now : 1u);
+        return 0;
+    }
+
     case SYS_GPU_ALLOC:
         return (long)v3d_bo_alloc((u32)arg0);
 

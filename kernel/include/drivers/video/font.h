@@ -20,4 +20,8 @@
 /* Draw one character at pixel position (x, y) on the framebuffer. */
 void font_draw_char(u32 x, u32 y, unsigned char ch, u32 fg, u32 bg);
 
+/* Draw only the foreground pixels of a character; background pixels are
+ * left unchanged — allows text to appear over glass/transparent surfaces. */
+void font_draw_char_nobg(u32 x, u32 y, unsigned char ch, u32 fg);
+
 #endif /* DRIVERS_VIDEO_FONT_H */
