@@ -81,6 +81,17 @@ int gpu_blur_bo(gpu_bo_t src, gpu_bo_t dst,
     return (int)_sys3(SYS_GPU_BLUR, handles, wh, (long)radius);
 }
 
+/* ── Software ping-pong scratch buffer ────────────────────────────────── */
+/*
+ * Sized for the largest glass panel: GLASS_W_MAX × (DOCK_H + margin)
+ * = 1280 × 80 = 102 400 pixels ≈ 400 KB in BSS.
+ * gpu_blur() and gpu_glass_panel() use this instead of GPU BOs because
+ * SYS_GPU_MAP returns a physical address that is EL1-only (kernel AP) and
+ * therefore faults when user code dereferences it.
+ */
+#define SW_TMP_MAX  (1280u * 80u)
+static uint32_t s_blur_tmp[SW_TMP_MAX];
+
 /* ── Software pixel helpers ────────────────────────────────────────────── */
 
 /*
@@ -171,34 +182,16 @@ int gpu_blur(const uint32_t *src, uint32_t *dst,
         for (unsigned i = 0; i < w * h; i++) dst[i] = src[i];
         return 0;
     }
+    if (w * h > SW_TMP_MAX) return -1;
 
-    /*
-     * Try to obtain a GPU BO as temporary buffer for ping-pong.
-     * If unavailable, allocate on the heap via a second GPU BO that maps
-     * to kernel RAM.  If that also fails, do in-place vertical blur which
-     * causes mild artefacts but never crashes.
-     */
-    unsigned buf_bytes = w * h * 4u;
-    gpu_bo_t tmp_bo    = gpu_alloc(buf_bytes);
-    uint32_t *tmp      = (uint32_t *)gpu_map(tmp_bo);
-
-    if (!tmp) {
-        /* Fallback: horizontal-only blur (in-place line buffer) */
-        for (unsigned y = 0; y < h; y++)
-            sw_hblur_row(src + y * w, dst + y * w, w, radius);
-        if (tmp_bo > 0) gpu_free(tmp_bo);
-        return 0;
-    }
-
-    /* Horizontal pass: src → tmp */
+    /* Horizontal pass: src → s_blur_tmp */
     for (unsigned y = 0; y < h; y++)
-        sw_hblur_row(src + y * w, tmp + y * w, w, radius);
+        sw_hblur_row(src + y * w, s_blur_tmp + y * w, w, radius);
 
-    /* Vertical pass: tmp → dst */
+    /* Vertical pass: s_blur_tmp → dst */
     for (unsigned x = 0; x < w; x++)
-        sw_vblur_col(tmp, dst, w, h, x, radius);
+        sw_vblur_col(s_blur_tmp, dst, w, h, x, radius);
 
-    gpu_free(tmp_bo);
     return 0;
 }
 
@@ -258,41 +251,23 @@ int gpu_glass_panel(const uint32_t *bg, unsigned bg_pitch,
                     unsigned blur_r)
 {
     if (!bg || !out || !w || !h) return -1;
+    if (blur_r > 16u) blur_r = 16u;
+    if (w * h > SW_TMP_MAX) return -1;
 
-    /* Step 1: copy the background region into a GPU BO (or out directly) */
-    unsigned buf_bytes = w * h * 4u;
-    gpu_bo_t src_bo    = gpu_alloc(buf_bytes);
-    uint32_t *src_px   = (uint32_t *)gpu_map(src_bo);
-
-    uint32_t *copy_target = src_px ? src_px : out;
-
+    /*
+     * GPU BOs are kernel-physical memory (EL1-only AP) and cannot be safely
+     * dereferenced from EL0.  Use the software path with s_blur_tmp directly.
+     *
+     * Horizontal pass: copy bg strip (respecting bg_pitch) → s_blur_tmp.
+     * Vertical pass:   s_blur_tmp → out.
+     * Tint:            out in-place.
+     */
     for (unsigned y = 0; y < h; y++)
-        for (unsigned x = 0; x < w; x++)
-            copy_target[y * w + x] = bg[y * bg_pitch + x];
+        sw_hblur_row(bg + y * bg_pitch, s_blur_tmp + y * w, w, blur_r);
 
-    /* Step 2: blur */
-    if (src_px) {
-        /* Use GPU BO path — kernel handles hardware vs software fallback */
-        gpu_bo_t dst_bo = gpu_alloc(buf_bytes);
-        if (dst_bo > 0) {
-            gpu_blur_bo(src_bo, dst_bo, w, h, blur_r);
-            uint32_t *dst_px = (uint32_t *)gpu_map(dst_bo);
-            if (dst_px) {
-                /* Step 3: tint */
-                gpu_tint(dst_px, w * h, tint, tint_a);
-                /* Step 4: copy result to out */
-                for (unsigned i = 0; i < w * h; i++) out[i] = dst_px[i];
-                gpu_free(dst_bo);
-                gpu_free(src_bo);
-                return 0;
-            }
-            gpu_free(dst_bo);
-        }
-        gpu_free(src_bo);
-    }
+    for (unsigned x = 0; x < w; x++)
+        sw_vblur_col(s_blur_tmp, out, w, h, x, blur_r);
 
-    /* Fallback: software blur directly on out (already has background copy) */
-    gpu_blur(copy_target, out, w, h, blur_r);
     gpu_tint(out, w * h, tint, tint_a);
     return 0;
 }
