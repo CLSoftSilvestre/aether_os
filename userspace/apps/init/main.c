@@ -59,8 +59,8 @@ static int DOCK_Y;     /* SCR_H - BOTBAR_H - DOCK_H */
  * SCR_W is set at runtime; arrays sized for GLASS_W_MAX (max expected width). */
 #define GLASS_W_MAX   1280
 #define GLASS_BLUR_R    10   /* blur radius in pixels                      */
-#define TOPBAR_TINT_A   60   /* topbar tint opacity (0-255)                */
-#define DOCK_TINT_A     70   /* dock tint — slightly more opaque           */
+#define TOPBAR_TINT_A   80   /* topbar tint opacity (0-255)                */
+#define DOCK_TINT_A    100  /* dock tint — slightly more opaque           */
 
 static unsigned int g_topbar_glass[GLASS_W_MAX * TOPBAR_H];  /* ~180 KB BSS */
 static unsigned int g_dock_glass[GLASS_W_MAX * DOCK_H];      /* ~280 KB BSS */

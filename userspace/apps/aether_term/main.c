@@ -27,15 +27,15 @@
 #define FONT_H  16
 
 #define TERM_COLS  80
-#define TERM_ROWS  34   /* (BOTBAR_Y - TOPBAR_H - ACCENT_H - TITLE_H - 16) / FONT_H */
+#define TERM_ROWS  32   /* (BOTBAR_Y - TOPBAR_H - ACCENT_H - TITLE_H - 16) / FONT_H */
 #define WIN_W     (TERM_COLS * FONT_W + 16)
 #define TITLE_H    28
 #define WIN_H     (TITLE_H + 8 + TERM_ROWS * FONT_H + 8)
 
 /* Initial position (computed once, may change after a drag) */
-#define WIN_X_INIT   8
-#define WIN_Y_INIT   (TOPBAR_H + ACCENT_H + \
-                      (BOTBAR_Y - TOPBAR_H - ACCENT_H - WIN_H) / 2)
+#define WIN_X_INIT   ((1280 / 2) - (WIN_W / 2))
+#define WIN_Y_INIT   ((TOPBAR_H + ACCENT_H + \
+                      (BOTBAR_Y - TOPBAR_H - ACCENT_H - WIN_H) / 2) - 25)
 
 /* Runtime window position — updated via WM_EV_REDRAW */
 static int g_win_x = WIN_X_INIT;
@@ -65,14 +65,14 @@ static int  t_row;
 
 static void blit_term_bg(void)
 {
-    sys_wp_blend_fill((unsigned)WX, (unsigned)(WY + TITLE_H + 1),
-                      (unsigned)WIN_W, (unsigned)CONTENT_H, C_TERM_BG);
+    sys_wp_blend_fill((unsigned)(WX + 2), (unsigned)(WY + TITLE_H + 1),
+                      (unsigned)(WIN_W - 4), (unsigned)(CONTENT_H - 2), C_TERM_BG);
 }
 
 static void blit_term_bg_row(int row)
 {
-    sys_wp_blend_fill((unsigned)WX, (unsigned)(TY + row * FONT_H),
-                      (unsigned)WIN_W, (unsigned)FONT_H, C_TERM_BG);
+    sys_wp_blend_fill((unsigned)(WX + 2), (unsigned)(TY + row * FONT_H),
+                      (unsigned)(WIN_W - 4), (unsigned)FONT_H, C_TERM_BG);
 }
 
 static void blit_term_bg_cell(int row, int col)
@@ -225,7 +225,7 @@ static char term_key_to_char(key_event_t ev)
 static void draw_window(void)
 {
     gfx_glass_window_frame(WX, WY, WIN_W, WIN_H,
-                            TITLE_H, "AetherTerm  \xe2\x80\x94  aesh", 0);
+                            TITLE_H, "Aether Terminal  --  aesh", 0);
     blit_term_bg();
 }
 
@@ -453,7 +453,7 @@ static int parse_args(char *line, char **argv, int maxargs)
 static void cmd_help(void)
 {
     term_puts("Built-in commands:\n");
-    term_puts("  help              show this message\n");
+    /* term_puts("  help              show this message\n");*/
     term_puts("  echo [args]       print arguments\n");
     term_puts("  pwd               print working directory\n");
     term_puts("  cd [path]         change directory (.. goes up, / is root)\n");
@@ -471,17 +471,17 @@ static void cmd_help(void)
     term_puts("  pid               print current process ID\n");
     term_puts("  ps                list all running processes\n");
     term_puts("  kill <pid>        terminate a process by PID\n");
-    term_puts("  files             launch graphical file browser\n");
-    term_puts("  view              launch text viewer\n");
+    /* term_puts("  files             launch graphical file browser\n"); */
+    /* term_puts("  view              launch text viewer\n"); */
     term_puts("  spawn <path>      launch an ELF from initrd (wait)\n");
     term_puts("  spawn <path> &    launch in background (no wait)\n");
-    term_puts("  exit [code]       exit the terminal\n\n");
-    term_puts("Filesystem paths:\n");
+    term_puts("  exit [code]       exit the terminal\n");
+    /* term_puts("Filesystem paths:\n");
     term_puts("  /           FAT32 disk root (when disk.img attached)\n");
     term_puts("  /initrd/    embedded CPIO initrd (always available)\n");
     term_puts("  /afs/       AetherOS Filesystem (virtio-blk hd1)\n");
-    term_puts("  Relative paths are resolved against the current CWD.\n\n");
-    term_puts("Networking:\n");
+    term_puts("  Relative paths are resolved against the current CWD.\n"); */
+    term_puts("\nNetworking:\n");
     term_puts("  net               show IP/MAC/gateway/DNS\n");
     term_puts("  ping <ip>         ICMP echo to IP address\n");
     term_puts("  nslookup <host>   DNS A-record lookup\n");
@@ -676,7 +676,8 @@ static void cmd_clear(void)
 
 static void cmd_uname(void)
 {
-    term_puts("AetherOS  aarch64  Phase 5.1  QEMU virt (Cortex-A76)\n");
+    term_puts("AetherOS kernel aarch64 (Cortex-A76)\n");
+    term_puts("(c) Azordev.pt All rights reserved.\n");
 }
 
 static void cmd_pid(void)
@@ -934,9 +935,9 @@ int main(void)
             term_puts("\n  (c) Azordev.pt All rights reserved.\n");
             term_puts("  AetherTerm  --  type 'help' for commands\n\n");
         }*/
-        term_puts("\n  Welcome to AetherOS");
-        term_puts("\n  (c) Azordev.pt All rights reserved.\n");
-        term_puts("\n  type 'help' for commands list\n\n");
+        term_puts("\nWelcome to AetherOS");
+        term_puts("\n(c) Azordev.pt All rights reserved.\n");
+        term_puts("\ntype 'help' for commands list\n\n");
     }
 
     char line[LINE_MAX];
