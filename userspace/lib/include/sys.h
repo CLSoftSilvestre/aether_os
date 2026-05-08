@@ -599,6 +599,7 @@ static inline long sys_wp_blend_fill(unsigned x, unsigned y,
 #define SYS_FS_WRITE  804
 #define SYS_FS_CREATE 805
 #define SYS_FS_MKDIR  806
+#define SYS_FS_RM     807
 
 /* Create (or truncate) a file by path; returns vfd (>=200) or -1 */
 static inline long sys_fs_create(const char *path)
@@ -616,6 +617,12 @@ static inline long sys_fs_write(long vfd, const void *buf, long len)
 static inline long sys_fs_mkdir(const char *path)
 {
     return _sys1(SYS_FS_MKDIR, (long)(const void *)path);
+}
+
+/* Remove file or directory by path (FAT32 only); returns 0 or -1 */
+static inline long sys_fs_rm(const char *path)
+{
+    return _sys1(SYS_FS_RM, (long)(const void *)path);
 }
 
 /* ── String helpers (no libc) ────────────────────────────────────── */

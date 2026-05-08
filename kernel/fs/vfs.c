@@ -250,6 +250,16 @@ int vfs_mkdir(const char *path)
     return fat32_mkdir(path);
 }
 
+/* ── Public: rm ───────────────────────────────────────────────────────── */
+
+int vfs_rm(const char *path)
+{
+    if (!path) return -1;
+    if (is_initrd_path(path) || is_afs_path(path)) return -1;
+    if (!fat32_ready()) return -1;
+    return fat32_remove(path);
+}
+
 /* ── Public: write ───────────────────────────────────────────────────────── */
 
 int vfs_write(int vfd, const u8 *buf, u32 len)

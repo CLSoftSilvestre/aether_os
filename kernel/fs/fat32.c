@@ -957,6 +957,79 @@ int fat32_write(int fh, const u8 *buf, u32 len)
     return (int)written;
 }
 
+/* ── Public: removedir ─────────────────────────────────────────────────────── */
+
+/* Check if a directory cluster contains any entries other than . and .. */
+static int is_dir_empty(u32 dir_cluster) {
+    // Reuse your iterate_dir logic here.
+    // If iterate_dir calls the callback for anything, the dir isn't empty.
+    // (Note: Your iterate_dir already skips . and ..)
+    lookup_ctx_t ls = { "", 0, 0, 0, 0 };
+    if (iterate_dir(dir_cluster, lookup_cb, &ls)) {
+        return 0; // Found something
+    }
+    return 1; // Empty
+}
+
+int fat32_remove(const char *path) {
+    if (!g_mounted || !path) return -1;
+
+    // 1. Resolve Parent and Target Name
+    // (Logic similar to your fat32_create)
+    const char *last_slash = (void *)0;
+    for (const char *q = path; *q; q++) if (*q == '/') last_slash = q;
+
+    u32 parent_cluster = g_bpb.root_cluster;
+    const char *filename = path;
+
+    if (last_slash) {
+        char parent_path[261];
+        int plen = (int)(last_slash - path);
+        for (int i = 0; i < plen; i++) parent_path[i] = path[i];
+        parent_path[plen] = '\0';
+
+        u8 attr;
+        if (lookup_path(parent_path, &parent_cluster, NULL, &attr) != 0) return -1;
+        filename = last_slash + 1;
+    }
+
+    // 2. Find the entry location and its starting cluster
+    u64 dirent_lba;
+    u32 dirent_off, first_cluster, file_size;
+    if (find_dirent_loc(parent_cluster, filename, &dirent_lba, &dirent_off, &first_cluster, &file_size) != 0) {
+        return -1; // Not found
+    }
+
+    // 3. Safety checks
+    if (read_sector(dirent_lba, g_sector_buf) != 0) return -1;
+    fat32_dirent_t *de = (fat32_dirent_t *)(g_sector_buf + dirent_off);
+
+    if (de->attr & ATTR_DIRECTORY) {
+        if (!is_dir_empty(first_cluster)) return -1; // Cannot delet non-empty dir
+    }
+
+    // 4. Free the FAT chain
+    if (first_cluster >= 2) {
+        free_cluster_chain(first_cluster);
+    }
+
+    // 5. Mark SFN as deleted
+    // Re-read to ensure buffer is fresh
+    read_sector(dirent_lba, g_sector_buf);
+    de = (fat32_dirent_t *)(g_sector_buf + dirent_off);
+    de->name[0] = 0xE5;
+    write_sector(dirent_lba, g_sector_buf);
+
+    /* 
+     * NOTE: To fully support LFN deletion, you would need to loop backwards 
+     * from dirent_off in parent directory and mark all ATTR_LFN entries
+     * with 0xE5 until you hit the entry with the 'Last Logical Order' bit
+     */
+
+    return 0;
+}
+
+
 /* ── Public: readdir ─────────────────────────────────────────────────────── */
 
 typedef struct {

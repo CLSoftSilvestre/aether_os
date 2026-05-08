@@ -610,8 +610,18 @@ static void cmd_touch(const char *path)
 
 static void cmd_rm(const char *path)
 {
-    (void)path;
-    term_puts("rm: not yet supported (FAT32 unlink not implemented)\n");
+
+    if (!path || path[0] == '\0') { term_puts("usage: rm <path>\n"); return; }
+
+    char resolved[CWD_MAX];
+    path_resolve(resolved, sizeof(resolved), path);
+
+    if (sys_fs_rm(resolved) < 0)
+        term_printf("rm: %s: failed (file does not exist or directory is not empty)\n", resolved);
+    else{
+        term_printf("rm: %s deleted with success\n", resolved);
+    }
+
 }
 
 static void cmd_mount(void)

@@ -33,6 +33,7 @@ int  vfs_readdir(const char *path, char *buf, u32 len);
 int  vfs_create (const char *path);                    /* create/truncate; returns vfd or -1 */
 int  vfs_write  (int vfd, const u8 *buf, u32 len);    /* bytes written or -1 */
 int  vfs_mkdir  (const char *path);                    /* create directory; returns 0 or -1 */
+int  vfs_rm     (const char *path);                    /* delete file or directory; returns 0 or -1 */
 
 /* 1 if the vfd number is in the VFS range */
 static inline int vfs_is_vfd(int fd) { return fd >= VFS_FD_BASE && fd < VFS_FD_BASE + VFS_MAX_FD; }

@@ -24,4 +24,7 @@ int  fat32_create (const char *path);               /* returns handle 0..7 or -1
 int  fat32_write  (int fh, const u8 *buf, u32 len); /* bytes written or -1 */
 int  fat32_mkdir  (const char *path);               /* create directory; returns 0 or -1 */
 
+/* Delete support */
+int  fat32_remove(const char *path);                /* deletes the directory; return 0 or -1 */
+
 #endif /* AETHER_FAT32_H */
