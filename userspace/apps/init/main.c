@@ -1092,10 +1092,10 @@ int main(void)
     desktop_icons_draw();
 
     /*sys_spawn("/statusbar");*/
-    g_dock[0].pid = sys_spawn("/aether_term");
+    // g_dock[0].pid = sys_spawn("/aether_term");
 
     /* Pre-focus the terminal so keyboard works immediately */
-    sys_wm_focus_set(g_dock[0].pid);
+    // sys_wm_focus_set(g_dock[0].pid);
 
     sys_cursor_show(1);
 
