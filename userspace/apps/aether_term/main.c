@@ -460,7 +460,7 @@ static void cmd_help(void)
     term_puts("  ls [path]         list directory (default: CWD)\n");
     term_puts("  mkdir <path>      create a directory (FAT32 only)\n");
     term_puts("  touch <path>      create an empty file (FAT32 only)\n");
-    term_puts("  rm <path>         remove a file (not yet implemented)\n");
+    term_puts("  rm <path>         remove a file (FAT32 only)\n");
     term_puts("  cat <path>        print a file (disk or initrd)\n");
     term_puts("  mount             show mounted filesystems\n");
     term_puts("  disk              show disk usage\n");
