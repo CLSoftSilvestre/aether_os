@@ -32,6 +32,10 @@
 /* Textarea line buffer (malloc'd by widget_init_textarea) */
 #define WGT_TEXTAREA_LINE_LEN 128
 
+/* Progress Bar modes */
+#define WGT_PROGRESS_DETERMINATE   0
+#define WGT_PROGRESS_INDETERMINATE 1
+
 /* ── Widget types ───────────────────────────────────────────────────────── */
 typedef enum {
     WIDGET_PANEL,
@@ -43,6 +47,7 @@ typedef enum {
     WIDGET_SCROLLBAR,
     WIDGET_CHECKBOX,
     WIDGET_TREEVIEW,    /* Phase 5.6: collapsible directory tree */
+    WIDGET_PROGRESS,
 } widget_type_t;
 
 /* ── TreeView icon types (TVICON_*) ─────────────────────────────────────── */
@@ -185,6 +190,11 @@ typedef struct {
     void (*on_toggle)(widget_t *w, int checked);
 } wdata_checkbox_t;
 
+typedef struct {
+    int value; /* 0-100 for determinate, or animation offset */
+    int mode; /* DETERMINATE or INDETERMINATE */
+} wdata_progress_t;
+
 /* Union of all type-specific data (largest member ≈ 300 bytes for textinput) */
 typedef union {
     wdata_button_t    button;
@@ -195,6 +205,7 @@ typedef union {
     wdata_scrollbar_t scrollbar;
     wdata_panel_t     panel;
     wdata_checkbox_t  checkbox;
+    wdata_progress_t  progress;
 } widget_data_t;
 
 /* ── Widget ─────────────────────────────────────────────────────────────── */
@@ -275,6 +286,8 @@ void widget_init_scrollbar_v(widget_t *w, int x, int y, int width, int height,
 void widget_init_scrollbar_h(widget_t *w, int x, int y, int width, int height,
                              int max, int page);
 
+void widget_init_progress(widget_t *w, int x, int y, int width, int height, int mode);
+
 /* ── Widget helpers ─────────────────────────────────────────────────────── */
 
 /* Label */
@@ -298,6 +311,9 @@ int  listview_get_selected(widget_t *w);
 /* Checkbox */
 int  checkbox_get_checked(widget_t *w);
 void checkbox_set_checked(widget_t *w, int checked);
+
+/* Progress Bar */
+void progress_set_value(widget_t *w, int value);
 
 /* ── Internal: called by individual widget .c files ────────────────────── */
 /* (not part of public API but declared here for cross-file access) */

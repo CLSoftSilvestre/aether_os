@@ -50,6 +50,7 @@ add_library(libwidget STATIC
     lib/libwidget/scrollbar.c
     lib/libwidget/checkbox.c
     lib/libwidget/treeview.c
+    lib/libwidget/progress.c
 )
 
 target_include_directories(libwidget PUBLIC

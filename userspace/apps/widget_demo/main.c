@@ -31,7 +31,7 @@
 #define BOTBAR_Y  744
 
 #define WIN_W    500
-#define WIN_H    380
+#define WIN_H    400
 #define TITLE_H   28
 #define SIDE_PAD   8
 #define CONT_PAD   8
@@ -55,6 +55,7 @@ static widget_t g_btn_add;    /* "Add to list"               */
 static widget_t g_listview;   /* scrollable list             */
 static widget_t g_checkbox;   /* "Show hints"                */
 static widget_t g_status;     /* status / hint label         */
+static widget_t g_progress;   /* progress bar                */
 
 /* ── Forward declarations ────────────────────────────────────────────────── */
 
@@ -155,6 +156,9 @@ static void build_ui(void)
     widget_init_label(&g_status, 0, 292, CONT_W, 20,
                       "  Type text, press Enter or click Add.",
                       WGT_ALIGN_LEFT);
+    
+    /* Progress Bar */
+    widget_init_progress(&g_progress, 0, 322, CONT_W, 20, WGT_PROGRESS_INDETERMINATE);
 
     /* Build tree */
     widget_add_child(&g_root, &g_header);
@@ -163,6 +167,7 @@ static void build_ui(void)
     widget_add_child(&g_root, &g_listview);
     widget_add_child(&g_root, &g_checkbox);
     widget_add_child(&g_root, &g_status);
+    widget_add_child(&g_root, &g_progress);
 
     /* Initial focus on text input */
     widget_set_focused(&g_input);
