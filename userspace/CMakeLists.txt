@@ -73,7 +73,7 @@ target_include_directories(user_init PRIVATE
 
 target_compile_options(user_init PRIVATE ${USER_COMPILE_FLAGS})
 
-target_link_libraries(user_init PRIVATE libaether)
+target_link_libraries(user_init PRIVATE libwidget libaether)
 
 target_link_options(user_init PRIVATE
     -T ${USER_LINKER_SCRIPT}

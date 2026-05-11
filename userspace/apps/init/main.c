@@ -18,6 +18,7 @@
 #include <string.h>
 #include <sys.h>
 #include <input.h>
+#include <widget.h>
 
 /* ── Wallpaper BMP ───────────────────────────────────────────────────────── */
 /* lumina_bg.bmp on the FAT32 disk (/lumina_bg.bmp).  32-bpp, 1376×768.
@@ -97,6 +98,23 @@ static int            g_icon_count = 0;
 #define DOCK_ICON_SIZE   40    /* 40x40 icon */
 
 static int DOCK_START_X;      /* set in main(): (SCR_W - DOCK_ITEM_COUNT*DOCK_SLOT_W) / 2 */
+
+/* ── Dock animation ──────────────────────────────────────────────────────────
+ * Hover magnification: each icon has a spring-driven scale.  The hovered icon
+ * peaks at DOCK_MAG_MAX; neighbours fall off with a cubic-smoothstep curve
+ * over DOCK_MAG_INFL slot-widths of radius.  Slot widths expand proportionally
+ * so icons physically spread apart (macOS-style).
+ * Launch bounce: uses dock_anim_t from libwidget (scale 1.0→1.3→1.0).
+ * ─────────────────────────────────────────────────────────────────────────── */
+#define DOCK_MAG_MAX   1.55f   /* peak hover scale                           */
+#define DOCK_MAG_INFL  2.5f    /* influence radius in slot-width units       */
+#define DOCK_MAG_K   300.0f    /* spring stiffness                           */
+#define DOCK_MAG_D    28.0f    /* spring damping                             */
+
+static spring_interp_t g_dock_mag[DOCK_ITEM_COUNT]; /* per-icon hover scale  */
+static int             g_dock_hover    = 0;          /* mouse over dock zone  */
+static int             g_dock_hover_mx = 0;          /* last mouse X in zone  */
+static dock_anim_t     g_dock_bounce[DOCK_ITEM_COUNT]; /* launch bounce       */
 
 typedef struct {
     const char *path;
@@ -361,8 +379,79 @@ static void draw_dock_item(int idx)
     }
 }
 
-static void draw_dock(void)
+static void wp_repaint_region(int rx, int ry, int rw, int rh);  /* forward decl */
+
+/* draw_dock_icon_at — render icon idx at arbitrary position and size.
+ * BMP icons are scaled via gfx_icon_blit; procedural fallbacks always draw
+ * at the natural 40×40 size (centred horizontally, bottom-anchored) to avoid
+ * glass-offset out-of-bounds when the icon protrudes above DOCK_Y. */
+static void draw_dock_icon_at(int idx, int ix, int iy, int isize)
 {
+    const icon_entry_t *bicon = icon_cache_get(g_dock[idx].icon_name);
+    if (bicon) {
+        gfx_icon_blit(bicon->pixels, bicon->width, bicon->height,
+                      ix, iy, isize, isize);
+        return;
+    }
+    /* Procedural fallback: fixed 40×40, centred in the slot, at natural Y */
+    int nat_x = ix + (isize - DOCK_ICON_SIZE) / 2;
+    int nat_y = DOCK_Y + 4;
+    switch (idx) {
+    case 0: draw_icon_term(nat_x, nat_y);       break;
+    case 1: draw_icon_calc(nat_x, nat_y);       break;
+    case 2: draw_icon_tictactoe(nat_x, nat_y);  break;
+    case 3: draw_icon_widget(nat_x, nat_y);     break;
+    case 4: draw_icon_files(nat_x, nat_y);      break;
+    case 5: draw_icon_text(nat_x, nat_y);       break;
+    case 6: draw_icon_telnet(nat_x, nat_y);     break;
+    case 7: draw_icon_widget(nat_x, nat_y);     break;
+    }
+}
+
+/* draw_dock_magnified — full dock redraw honouring per-icon scale springs.
+ *
+ * Slot widths scale proportionally (total dock width expands/contracts) and
+ * the whole dock stays horizontally centred on screen — this is what gives
+ * the "icons spread apart" look.  Icons are bottom-anchored so they grow
+ * upward out of the dock.  The wallpaper strip above the dock is repainted
+ * whenever any icon protrudes, with a one-frame trailing cleanup on the way
+ * back to scale 1.0.
+ *
+ * This function replaces draw_dock() for all rendering purposes. */
+static void draw_dock_magnified(void)
+{
+    static int s_strip_h = 0;   /* protrusion height repainted last call */
+
+    /* Step 1: effective scale per icon = max(hover, bounce) */
+    float eff[DOCK_ITEM_COUNT];
+    float max_scale = 1.0f;
+    for (int i = 0; i < DOCK_ITEM_COUNT; i++) {
+        float hs = g_dock_mag[i].pos;
+        float bs = g_dock_bounce[i].active ? g_dock_bounce[i].scale_sp.pos : 1.0f;
+        eff[i] = hs > bs ? hs : bs;
+        if (eff[i] > max_scale) max_scale = eff[i];
+    }
+
+    /* Step 2: magnified slot widths and centred start X */
+    float slot_w[DOCK_ITEM_COUNT];
+    float total_w = 0.0f;
+    for (int i = 0; i < DOCK_ITEM_COUNT; i++) {
+        slot_w[i] = (float)DOCK_SLOT_W * eff[i];
+        total_w  += slot_w[i];
+    }
+    float start_x = ((float)SCR_W - total_w) * 0.5f;
+
+    /* Step 3: repaint wallpaper strip above dock (icons may protrude upward).
+     * Use max(current, previous) height so the previous frame's pixels are
+     * always erased, giving a clean trailing edge as icons shrink back. */
+    int cur_prot = max_scale > 1.001f
+                   ? (int)((max_scale - 1.0f) * (float)DOCK_ICON_SIZE) + 2 : 0;
+    int prot = cur_prot > s_strip_h ? cur_prot : s_strip_h;
+    if (prot > 0 && DOCK_Y - prot >= 0)
+        wp_repaint_region(0, DOCK_Y - prot, SCR_W, prot);
+    s_strip_h = cur_prot;
+
+    /* Step 4: dock glass / panel background */
     if (g_glass_ok) {
         sys_fb_blit((const unsigned *)g_dock_glass,
                     0, (unsigned)DOCK_Y,
@@ -372,8 +461,42 @@ static void draw_dock(void)
         gfx_fill(0, (unsigned)DOCK_Y, (unsigned)SCR_W, DOCK_H, C_PANEL);
     }
     gfx_hline(0, (unsigned)DOCK_Y, (unsigned)SCR_W, C_SEP);
-    for (int i = 0; i < DOCK_ITEM_COUNT; i++)
-        draw_dock_item(i);
+
+    /* Step 5: icons at magnified positions */
+    float cx = start_x;
+    for (int i = 0; i < DOCK_ITEM_COUNT; i++) {
+        float center = cx + slot_w[i] * 0.5f;
+        int   isz    = (int)((float)DOCK_ICON_SIZE * eff[i]);
+        if (isz < 4) isz = 4;
+        int ix = (int)(center - (float)isz * 0.5f);
+        /* bottom-anchored: icon bottom fixed at DOCK_Y + 4 + DOCK_ICON_SIZE */
+        int iy = DOCK_Y + 4 + DOCK_ICON_SIZE - isz;
+
+        draw_dock_icon_at(i, ix, iy, isz);
+
+        /* Running indicator centred below icon within dock bottom area */
+        int running = g_dock[i].pid && (find_win_for_pid(g_dock[i].pid) >= 0);
+        int dx = (int)(center - 8.0f);
+        int dy = DOCK_Y + DOCK_H - 8;
+        if (dx < 0) dx = 0;
+        if (dx + 16 > SCR_W) dx = SCR_W - 16;
+        if (running) {
+            gfx_fill((unsigned)dx, (unsigned)dy, 16, 4, C_ACCENT2);
+        } else if (g_glass_ok) {
+            unsigned gw  = (unsigned)SCR_W;
+            unsigned row = (unsigned)(dy - DOCK_Y);
+            sys_fb_blit(g_dock_glass + row * gw + (unsigned)dx,
+                        (unsigned)dx, (unsigned)dy, 16, 4, gw * 4u);
+        } else {
+            gfx_fill((unsigned)dx, (unsigned)dy, 16, 4, C_PANEL);
+        }
+        cx += slot_w[i];
+    }
+}
+
+static void draw_dock(void)
+{
+    draw_dock_magnified();
 }
 
 /* ── Wallpaper: "Lumina Drift" ──────────────────────────────────────────── */
@@ -1037,11 +1160,14 @@ static void dock_click(int mx)
         draw_focus_border(wid, 1);
         sys_wm_focus_set(g_dock[idx].pid);
     } else {
-        /* App not running — launch it */
+        /* App not running — launch it and start bounce animation */
         long pid = sys_spawn(g_dock[idx].path);
         if (pid > 0) {
             g_dock[idx].pid = pid;
-            draw_dock_item(idx);
+            int sx = DOCK_START_X + idx * DOCK_SLOT_W;
+            int ix = sx + (DOCK_SLOT_W - DOCK_ICON_SIZE) / 2;
+            dock_anim_start(&g_dock_bounce[idx], ix, DOCK_Y + 4, DOCK_ICON_SIZE);
+            draw_dock_magnified();
         }
     }
 }
@@ -1097,6 +1223,12 @@ int main(void)
     if (g_wp_ok)
         sys_wp_register(g_wp_buf, LUMINA_BG_W, LUMINA_BG_H);
 
+    /* Initialise dock animation springs (must happen before first draw_dock) */
+    for (int i = 0; i < DOCK_ITEM_COUNT; i++) {
+        spring_init(&g_dock_mag[i], 1.0f, 1.0f, DOCK_MAG_K, DOCK_MAG_D);
+        g_dock_bounce[i].active = 0;
+    }
+
     draw_desktop();
     init_glass_panels();   /* must run after draw_desktop so wallpaper is ready */
     draw_top_bar();
@@ -1140,7 +1272,10 @@ int main(void)
                               (find_win_for_pid(g_dock[i].pid) >= 0);
                 if (running != s_dock_running[i]) {
                     s_dock_running[i] = running;
-                    draw_dock_item(i);
+                    /* When hover magnification is active the animation step
+                     * redraws the whole dock; only do individual redraws when idle */
+                    if (!g_dock_hover)
+                        draw_dock_item(i);
                 }
             }
         }
@@ -1164,6 +1299,14 @@ int main(void)
             int pressed  = btn && !prev_buttons;
             int released = !btn && prev_buttons;
             prev_buttons = btn;
+
+            /* Track dock hover for magnification effect */
+            if (my >= DOCK_Y && my < BOTBAR_Y) {
+                g_dock_hover    = 1;
+                g_dock_hover_mx = mx;
+            } else {
+                g_dock_hover = 0;
+            }
 
             /* ── Left button pressed ─────────────────────────────────── */
             if (pressed) {
@@ -1266,6 +1409,46 @@ int main(void)
                 }
             }
         }
+
+        /* ── Dock animation step ─────────────────────────────────────── */
+
+        /* Update hover magnification spring targets.
+         * Distance to cursor normalised to slot-width units; cubic smoothstep
+         * gives a smooth Gaussian-like falloff without needing expf(). */
+        if (g_dock_hover) {
+            for (int i = 0; i < DOCK_ITEM_COUNT; i++) {
+                float cx = (float)(DOCK_START_X + i * DOCK_SLOT_W + DOCK_SLOT_W / 2);
+                float adist = (float)g_dock_hover_mx - cx;
+                if (adist < 0.0f) adist = -adist;
+                adist /= (float)DOCK_SLOT_W;   /* normalise to slot units */
+                float t = 1.0f - adist / DOCK_MAG_INFL;
+                if (t < 0.0f) t = 0.0f;
+                float falloff = t * t * (3.0f - 2.0f * t);  /* smoothstep */
+                spring_set_target(&g_dock_mag[i],
+                                  1.0f + (DOCK_MAG_MAX - 1.0f) * falloff);
+            }
+        } else {
+            for (int i = 0; i < DOCK_ITEM_COUNT; i++)
+                spring_set_target(&g_dock_mag[i], 1.0f);
+        }
+
+        /* Advance springs and bounce animations; redraw if anything moved */
+        int dock_dirty = 0;
+        for (int i = 0; i < DOCK_ITEM_COUNT; i++) {
+            float prev = g_dock_mag[i].pos;
+            spring_step(&g_dock_mag[i], 1.0f / 60.0f);
+            float d = g_dock_mag[i].pos - prev;
+            if (d < 0.0f) d = -d;
+            if (d > 0.003f) dock_dirty = 1;
+        }
+        for (int i = 0; i < DOCK_ITEM_COUNT; i++) {
+            if (g_dock_bounce[i].active) {
+                dock_anim_tick(&g_dock_bounce[i]);
+                dock_dirty = 1;
+            }
+        }
+        if (dock_dirty)
+            draw_dock_magnified();
 
         sys_vsync_wait();   /* pace the event loop to ~60 fps */
     }
