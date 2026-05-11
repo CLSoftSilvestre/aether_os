@@ -74,6 +74,7 @@
 #define FICON_AS       2
 #define FICON_EXEC     3
 #define FICON_GENERIC  4
+#define FICON_IMAGE    5
 
 typedef struct {
     char          name[64];
@@ -197,6 +198,8 @@ static unsigned char detect_icon(const char *name)
         return FICON_EXEC;
     if (n>=4 && name[n-4]=='.' && (name[n-3]=='a' || name[n-3]=='A') && (name[n-2]=='p' || name[n-2]=='P') && (name[n-1]=='p' || name[n-1]=='P'))
         return FICON_EXEC;
+    if (n>=4 && name[n-4]=='.' && (name[n-3]=='b' || name[n-3]=='B') && (name[n-2]=='m' || name[n-2]=='M') && (name[n-1]=='p' || name[n-1]=='P'))
+        return FICON_IMAGE;
     return FICON_GENERIC;
 }
 
@@ -600,11 +603,12 @@ static void right_panel_draw(widget_t *w, int ax, int ay)
             "file_as",      /* FICON_AS      */
             "file_exec",    /* FICON_EXEC    */
             "file_generic", /* FICON_GENERIC */
+            "file_image",   /* FICON_IMAGE   */
         };
         int icon_x = cx + ICON_OFF_X;
         int icon_y = cy + ICON_OFF_Y;
         unsigned char itype = g_entries[i].icon_type;
-        if (itype >= 5u) itype = 4u;  /* clamp to FICON_GENERIC */
+        if (itype >= 6u) itype = 4u;  /* clamp to FICON_GENERIC */
         const icon_entry_t *bicon = icon_cache_get(s_icon_names[itype]);
         if (bicon) {
             gfx_icon_blit(bicon->pixels, bicon->width, bicon->height,
@@ -615,6 +619,7 @@ static void right_panel_draw(widget_t *w, int ax, int ay)
             case FICON_TXT:     gfx_icon_file_txt(icon_x, icon_y, ICON_SZ);     break;
             case FICON_AS:      gfx_icon_file_as(icon_x, icon_y, ICON_SZ);      break;
             case FICON_EXEC:    gfx_icon_file_exec(icon_x, icon_y, ICON_SZ);    break;
+            case FICON_IMAGE:   gfx_icon_file_generic(icon_x, icon_y, ICON_SZ); break;
             default:            gfx_icon_file_generic(icon_x, icon_y, ICON_SZ); break;
             }
         }
