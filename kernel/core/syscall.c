@@ -48,6 +48,7 @@
 #include "drivers/power/cpufreq.h"
 #include "drivers/power/thermal.h"
 #include "drivers/power/dpms.h"
+#include "drivers/rtc/pl031.h"
 
 /* ── Wallpaper sharing globals (Phase 6.1.x) ────────────────────────────── */
 static uintptr_t g_wp_ptr   = 0;   /* PMM physical address (kernel range) */
@@ -758,6 +759,9 @@ long syscall_dispatch(trap_frame_t *frame)
 
     case SYS_GET_TICKS:
         return do_sys_get_ticks();
+
+    case SYS_RTC_GET:
+        return (long)pl031_read();
 
     case SYS_FB_CLAIM:
         return do_sys_fb_claim();

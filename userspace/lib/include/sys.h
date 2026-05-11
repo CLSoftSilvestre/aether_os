@@ -42,6 +42,7 @@
 #define SYS_CURSOR_SHOW 606
 #define SYS_FB_BLIT      608  /* (buf, dst_x<<32|dst_y, w<<32|h, stride) → 0 */
 #define SYS_FB_CHAR_NOBG 609  /* ((x<<32)|y, (ch<<32)|fg) → 0              */
+#define SYS_RTC_GET      610  /* () → seconds since epoch (u32)            */
 #define SYS_VSYNC_WAIT   905  /* () → 0; blocks until next 60Hz boundary   */
 
 /* Window Manager syscalls (Phase 4.6) */
@@ -277,6 +278,12 @@ static inline void sys_fb_char(unsigned x, unsigned y,
 static inline long sys_get_ticks(void)
 {
     return _sys0(SYS_GET_TICKS);
+}
+
+/* Returns current wall-clock time as seconds since epoch (via PL031 RTC). */
+static inline unsigned long sys_rtc_get(void)
+{
+    return (unsigned long)_sys0(SYS_RTC_GET);
 }
 
 static inline void sys_fb_claim(void)

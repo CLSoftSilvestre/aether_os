@@ -44,6 +44,9 @@ set(KERNEL_SOURCES
     # Drivers — timer
     drivers/timer/arm_timer.c
 
+    # Drivers — RTC (PL031 — QEMU virt, backed by host clock)
+    drivers/rtc/pl031.c
+
     # Drivers — video (framebuffer)
     drivers/video/fw_cfg.c
     drivers/video/ramfb.c

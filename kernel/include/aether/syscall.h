@@ -128,6 +128,9 @@
 /* FB character without background (Phase 6.2 — glassmorphism) */
 #define SYS_FB_CHAR_NOBG  609  /* ((x<<32)|y, (ch<<16)|fg) → 0 */
 
+/* RTC — wall-clock time from PL031 */
+#define SYS_RTC_GET       610  /* () → seconds since epoch (u32)               */
+
 /* GPU / V3D syscalls (Phase 6.1) */
 #define SYS_GPU_ALLOC   900  /* (size_bytes) → bo_handle ≥1 or -1           */
 #define SYS_GPU_FREE    901  /* (bo_handle) → 0 or -1                        */

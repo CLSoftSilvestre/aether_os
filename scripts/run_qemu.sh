@@ -84,6 +84,7 @@ QEMU_ARGS=(
     -m 1G                   # 1GB RAM
     -kernel "${KERNEL_IMG}" # Load kernel image
     -no-reboot              # Don't restart on crash
+    -rtc base=localtime     # PL031 RTC tracks host local time
 
     # Network (Phase 5.1): user-mode NAT networking via virtio-net-pci
     # QEMU provides: DHCP lease 10.0.2.15/24, gateway 10.0.2.2, DNS 10.0.2.3

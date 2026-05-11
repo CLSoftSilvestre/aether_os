@@ -116,11 +116,12 @@ static dock_item_t g_dock[DOCK_ITEM_COUNT] = {
 
 /* ── Helpers ─────────────────────────────────────────────────────────────── */
 
-static void fmt_uptime(char *buf, long ticks)
+static void fmt_time(char *buf, unsigned long ts)
 {
-    long s = ticks / 100, m = s / 60; s %= 60;
-    long h = m / 60;                  m %= 60;
-    snprintf(buf, 16, "%02ld:%02ld:%02ld", h, m, s);
+    unsigned long s = ts % 86400UL;
+    unsigned long h = s / 3600UL;
+    unsigned long m = (s % 3600UL) / 60UL;
+    snprintf(buf, 6, "%02lu:%02lu", h, m);
 }
 
 /* ── WM helper: find win_id whose owner is pid ───────────────────────────── */
@@ -657,8 +658,12 @@ static void init_glass_panels(void)
     g_glass_ok = 1;
 }
 
-static void draw_top_bar(long ticks)
+static void draw_top_bar(void)
 {
+    char tbuf[6];
+    fmt_time(tbuf, sys_rtc_get());
+    int len = (int)strlen(tbuf);
+
     if (g_glass_ok) {
         sys_fb_blit((const unsigned *)g_topbar_glass,
                     0, (unsigned)TOPBAR_Y,
@@ -670,12 +675,8 @@ static void draw_top_bar(long ticks)
         gfx_text_center_transparent(0, (unsigned)SCR_W, TOPBAR_Y + 10,
                                     "Lumina Desktop  \xe2\x80\x94  Phase 6.2",
                                     C_TEXT_DIM);
-        char ubuf[20], tbuf[16];
-        fmt_uptime(tbuf, ticks);
-        snprintf(ubuf, sizeof(ubuf), "up %s", tbuf);
-        int len = (int)strlen(ubuf);
         gfx_text_transparent((unsigned)(SCR_W - len * FONT_W - 14),
-                              TOPBAR_Y + 10, ubuf, C_TEXT_DIM);
+                              TOPBAR_Y + 10, tbuf, C_TEXT_DIM);
     } else {
         gfx_fill(0, TOPBAR_Y, (unsigned)SCR_W, TOPBAR_H, C_PANEL);
         gfx_text(14, TOPBAR_Y + 10, "AetherOS", C_TEXT, C_PANEL);
@@ -684,12 +685,8 @@ static void draw_top_bar(long ticks)
         gfx_text_center(0, (unsigned)SCR_W, TOPBAR_Y + 10,
                         "Lumina Desktop  --  Phase 6.2",
                         C_TEXT_DIM, C_PANEL);
-        char ubuf[20], tbuf[16];
-        fmt_uptime(tbuf, ticks);
-        snprintf(ubuf, sizeof(ubuf), "up %s", tbuf);
-        int len = (int)strlen(ubuf);
         gfx_text((unsigned)(SCR_W - len * FONT_W - 14), TOPBAR_Y + 10,
-                 ubuf, C_TEXT_DIM, C_PANEL);
+                 tbuf, C_TEXT_DIM, C_PANEL);
     }
     gfx_fill(0, ACCENT_Y, (unsigned)SCR_W, ACCENT_H, C_ACCENT);
 }
@@ -711,26 +708,25 @@ static void draw_bot_bar(void)
              mbuf, C_TEXT_DIM, C_PANEL);
 }
 
-static void refresh_top_bar(long ticks)
+static void refresh_top_bar(void)
 {
-    char ubuf[20], tbuf[16];
-    fmt_uptime(tbuf, ticks);
-    snprintf(ubuf, sizeof(ubuf), "up %s", tbuf);
-    int len = (int)strlen(ubuf);
+    char tbuf[6];
+    fmt_time(tbuf, sys_rtc_get());
+    int len = (int)strlen(tbuf);
     int x = SCR_W - len * FONT_W - 14;
 
-    /* Restore the right third of the topbar, then redraw uptime text */
+    /* Restore the right third of the topbar, then redraw time text */
     unsigned erase_x = (unsigned)(SCR_W * 2 / 3);
     if (g_glass_ok) {
         sys_fb_blit((const unsigned *)(g_topbar_glass + erase_x),
                     erase_x, (unsigned)TOPBAR_Y,
                     (unsigned)SCR_W - erase_x, TOPBAR_H,
                     (unsigned)SCR_W * 4u);
-        gfx_text_transparent((unsigned)x, TOPBAR_Y + 10, ubuf, C_TEXT_DIM);
+        gfx_text_transparent((unsigned)x, TOPBAR_Y + 10, tbuf, C_TEXT_DIM);
     } else {
         gfx_fill(erase_x, TOPBAR_Y,
                  (unsigned)SCR_W - erase_x, TOPBAR_H, C_PANEL);
-        gfx_text((unsigned)x, TOPBAR_Y + 10, ubuf, C_TEXT_DIM, C_PANEL);
+        gfx_text((unsigned)x, TOPBAR_Y + 10, tbuf, C_TEXT_DIM, C_PANEL);
     }
 }
 
@@ -1101,7 +1097,7 @@ int main(void)
 
     draw_desktop();
     init_glass_panels();   /* must run after draw_desktop so wallpaper is ready */
-    draw_top_bar(gfx_ticks());
+    draw_top_bar();
     draw_bot_bar();
     draw_dock();
     desktop_icons_load();
@@ -1126,7 +1122,7 @@ int main(void)
     for (;;) {
         if (++bar_counter >= 60) {   /* 60 vsync frames ≈ 1 second */
             bar_counter = 0;
-            refresh_top_bar(gfx_ticks());
+            refresh_top_bar();
             draw_bot_bar();
         }
 
