@@ -84,8 +84,9 @@ void scheduler_init(void)
 void scheduler_add_idle(void)
 {
     task_t *idle = &g_tasks[0];
-    idle->pid   = 0;
-    idle->state = TASK_RUNNING;
+    idle->pid        = 0;
+    idle->state      = TASK_RUNNING;
+    idle->cpu_ticks  = 0;
     idle->stack_phys = 0;   /* uses boot stack — not PMM-managed */
     { const char *s = "idle"; int i = 0;
       while (i < PROC_NAME_MAX - 1 && s[i]) { idle->name[i] = s[i]; i++; }
@@ -134,6 +135,7 @@ static task_t *alloc_task(void (*entry_fn)(void), const char *name)
     t->el0_entry        = 0;
     t->el0_sp           = 0;
     t->l1_table_phys    = 0;
+    t->cpu_ticks        = 0;
     t->user_code_phys   = 0;
     t->user_code_pages  = 0;
     t->user_stack_phys  = 0;
@@ -272,7 +274,8 @@ void task_yield(void)
 
     if (from->state == TASK_RUNNING)
         from->state = TASK_READY;
-    to->state = TASK_RUNNING;
+    to->state      = TASK_RUNNING;
+    to->cpu_ticks++;
 
     g_current_idx = to_idx;
 
@@ -399,9 +402,11 @@ int task_ps(ps_entry_t *entries, int max_entries)
     for (u32 i = 0; i < g_num_tasks && n < max_entries; i++) {
         task_t *t = &g_tasks[i];
         if (t->state == TASK_UNUSED || t->state == TASK_DEAD) continue;
-        entries[n].pid   = t->pid;
-        entries[n].ppid  = t->ppid;
-        entries[n].state = t->state;
+        entries[n].pid       = t->pid;
+        entries[n].ppid      = t->ppid;
+        entries[n].state     = t->state;
+        entries[n].mem_pages = t->user_code_pages + t->user_stack_pages;
+        entries[n].cpu_ticks = t->cpu_ticks;
         int j = 0;
         while (j < PROC_NAME_MAX - 1 && t->name[j]) { entries[n].name[j] = t->name[j]; j++; }
         entries[n].name[j] = '\0';

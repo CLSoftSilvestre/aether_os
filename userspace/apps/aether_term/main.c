@@ -670,11 +670,44 @@ static void cmd_mem(void)
                 total_mb - free_mb, free_mb, total_mb);
 }
 
-static void cmd_time(long ticks)
+static void epoch_to_datetime(unsigned long epoch,
+                               int *yr, int *mo, int *dy,
+                               int *hr, int *mn, int *sc)
 {
+    static const int mdays[12] = {31,28,31,30,31,30,31,31,30,31,30,31};
+    *sc = (int)(epoch % 60); epoch /= 60;
+    *mn = (int)(epoch % 60); epoch /= 60;
+    *hr = (int)(epoch % 24); epoch /= 24;
+    long days = (long)epoch;
+    int y = 1970;
+    for (;;) {
+        int leap = (y % 4 == 0 && (y % 100 != 0 || y % 400 == 0));
+        if (days < (leap ? 366 : 365)) break;
+        days -= (leap ? 366 : 365); y++;
+    }
+    *yr = y;
+    int leap = (y % 4 == 0 && (y % 100 != 0 || y % 400 == 0));
+    int m;
+    for (m = 0; m < 12; m++) {
+        int md = mdays[m] + (m == 1 && leap ? 1 : 0);
+        if (days < md) break;
+        days -= md;
+    }
+    *mo = m + 1;
+    *dy = (int)days + 1;
+}
+
+static void cmd_time(void)
+{
+    unsigned long epoch = sys_rtc_get();
+    long ticks = sys_get_ticks();
+    int yr, mo, dy, hr, mn, sc;
+    epoch_to_datetime(epoch, &yr, &mo, &dy, &hr, &mn, &sc);
+    term_printf("Date/Time: %04d-%02d-%02d %02d:%02d:%02d UTC\n",
+                yr, mo, dy, hr, mn, sc);
     char tbuf[16];
     fmt_uptime(tbuf, ticks);
-    term_printf("Uptime: %s  (%ld ticks at 100 Hz)\n", tbuf, ticks);
+    term_printf("Uptime:    %s  (%ld ticks at 100 Hz)\n", tbuf, ticks);
 }
 
 static void cmd_clear(void)
@@ -996,7 +1029,7 @@ int main(void)
         else if (strcmp(cmd, "mount")    == 0) cmd_mount();
         else if (strcmp(cmd, "disk")     == 0) cmd_disk();
         else if (strcmp(cmd, "mem")      == 0) cmd_mem();
-        else if (strcmp(cmd, "time")     == 0) cmd_time(sys_get_ticks());
+        else if (strcmp(cmd, "time")     == 0) cmd_time();
         else if (strcmp(cmd, "clear")    == 0) cmd_clear();
         else if (strcmp(cmd, "uname")    == 0) cmd_uname();
         else if (strcmp(cmd, "pid")      == 0) cmd_pid();

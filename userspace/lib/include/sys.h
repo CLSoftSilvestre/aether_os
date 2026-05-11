@@ -207,10 +207,12 @@ static inline long sys_kill(long pid)
 /* Process snapshot entry (mirrors ps_entry_t in kernel scheduler.h) */
 #define PROC_NAME_MAX 16
 typedef struct {
-    unsigned int pid;
-    unsigned int ppid;
-    int          state;
-    char         name[PROC_NAME_MAX];
+    unsigned int       pid;
+    unsigned int       ppid;
+    int                state;
+    char               name[PROC_NAME_MAX];
+    unsigned int       mem_pages;  /* user_code_pages + user_stack_pages (×4 KB) */
+    unsigned long long cpu_ticks;  /* cumulative scheduler invocations            */
 } ps_entry_t;
 
 /* Fill entries[] with live processes; returns count or -1 */

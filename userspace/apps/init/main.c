@@ -92,7 +92,7 @@ static int            g_icon_count = 0;
 
 /* ── Dock layout ─────────────────────────────────────────────────────────── */
 
-#define DOCK_ITEM_COUNT   7
+#define DOCK_ITEM_COUNT   8
 #define DOCK_SLOT_W      80    /* width of each icon slot */
 #define DOCK_ICON_SIZE   40    /* 40x40 icon */
 
@@ -112,6 +112,7 @@ static dock_item_t g_dock[DOCK_ITEM_COUNT] = {
     { "/files",       "icon_files",     0 },
     { "/textviewer",  "icon_text",      0 },
     { "/telnet",      "icon_telnet",    0 },
+    { "/aether_top",  "icon_top",       0 },
 };
 
 /* ── Helpers ─────────────────────────────────────────────────────────────── */
@@ -340,6 +341,7 @@ static void draw_dock_item(int idx)
         case 4: draw_icon_files(ix, iy);      break;
         case 5: draw_icon_text(ix, iy);       break;
         case 6: draw_icon_telnet(ix, iy);     break;
+        case 7: draw_icon_widget(ix, iy);     break;
         }
     }
 

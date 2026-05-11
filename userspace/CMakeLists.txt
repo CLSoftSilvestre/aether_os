@@ -232,6 +232,22 @@ set_target_properties(user_aether_editor PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
 )
 
+# ── aether_top — task manager / process monitor ──────────────────────────────
+add_executable(user_aether_top
+    apps/aether_top/main.c
+    lib/crt0.S
+)
+target_include_directories(user_aether_top PRIVATE lib/include)
+target_compile_options(user_aether_top PRIVATE ${USER_COMPILE_FLAGS})
+target_link_libraries(user_aether_top PRIVATE libwidget libaether)
+target_link_options(user_aether_top PRIVATE
+    -T ${USER_LINKER_SCRIPT} -nostdlib -static -Wl,--build-id=none
+)
+set_target_properties(user_aether_top PROPERTIES
+    OUTPUT_NAME "aether_top" SUFFIX ""
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
+)
+
 # ── telnet — RFC-854 Telnet client ───────────────────────────────────────────
 add_executable(user_telnet
     apps/telnet/main.c
@@ -368,6 +384,7 @@ add_custom_command(
     DEPENDS ${INITRD_FILES_SRC}/motd.txt
             ${INITRD_FILES_SRC}/apps/tictactoe.app
             ${INITRD_FILES_SRC}/apps/telnet.app
+            ${INITRD_FILES_SRC}/apps/aether_top.app
     COMMENT "Copying initrd static files"
 )
 
@@ -379,7 +396,7 @@ add_custom_command(
                 ${INITRD_CPIO}
     DEPENDS user_init user_aether_term user_statusbar user_files user_textviewer
             user_calculator user_tictactoe user_widget_demo user_aether_editor
-            user_aether_http user_telnet
+            user_aether_http user_telnet user_aether_top
             ${INTERP_TARGET}
             ${INITRD_STAGING}/motd.txt
     COMMENT "Packaging initrd.cpio"
