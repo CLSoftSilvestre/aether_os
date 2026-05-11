@@ -12,6 +12,7 @@
 
 #include <gfx.h>
 #include <gpu.h>
+#include <icon_cache.h>
 #include <manifest.h>
 #include <stdio.h>
 #include <string.h>
@@ -99,17 +100,18 @@ static int DOCK_START_X;      /* set in main(): (SCR_W - DOCK_ITEM_COUNT*DOCK_SL
 
 typedef struct {
     const char *path;
-    long        pid;   /* 0 = not running */
+    const char *icon_name;  /* BMP key for /icons/<icon_name>.bmp */
+    long        pid;        /* 0 = not running */
 } dock_item_t;
 
 static dock_item_t g_dock[DOCK_ITEM_COUNT] = {
-    { "/aether_term", 0 },
-    { "/calculator",  0 },
-    { "/tictactoe",   0 },
-    { "/widget_demo", 0 },
-    { "/files",       0 },
-    { "/textviewer",  0 },
-    { "/telnet",      0 },
+    { "/aether_term", "icon_term",      0 },
+    { "/calculator",  "icon_calc",      0 },
+    { "/tictactoe",   "icon_tictactoe", 0 },
+    { "/widget_demo", "icon_widget",    0 },
+    { "/files",       "icon_files",     0 },
+    { "/textviewer",  "icon_text",      0 },
+    { "/telnet",      "icon_telnet",    0 },
 };
 
 /* ── Helpers ─────────────────────────────────────────────────────────────── */
@@ -323,14 +325,21 @@ static void draw_dock_item(int idx)
         gfx_fill((unsigned)sx, (unsigned)DOCK_Y,
                  (unsigned)DOCK_SLOT_W, DOCK_H, C_PANEL);
 
-    switch (idx) {
-    case 0: draw_icon_term(ix, iy);       break;
-    case 1: draw_icon_calc(ix, iy);       break;
-    case 2: draw_icon_tictactoe(ix, iy);  break;
-    case 3: draw_icon_widget(ix, iy);     break;
-    case 4: draw_icon_files(ix, iy);      break;
-    case 5: draw_icon_text(ix, iy);       break;
-    case 6: draw_icon_telnet(ix, iy);     break;
+    /* Try BMP icon from /icons/ first; fall back to procedural vector icon */
+    const icon_entry_t *bicon = icon_cache_get(g_dock[idx].icon_name);
+    if (bicon) {
+        gfx_icon_blit(bicon->pixels, bicon->width, bicon->height,
+                      ix, iy, DOCK_ICON_SIZE, DOCK_ICON_SIZE);
+    } else {
+        switch (idx) {
+        case 0: draw_icon_term(ix, iy);       break;
+        case 1: draw_icon_calc(ix, iy);       break;
+        case 2: draw_icon_tictactoe(ix, iy);  break;
+        case 3: draw_icon_widget(ix, iy);     break;
+        case 4: draw_icon_files(ix, iy);      break;
+        case 5: draw_icon_text(ix, iy);       break;
+        case 6: draw_icon_telnet(ix, iy);     break;
+        }
     }
 
     /* Running indicator: accent bar when running, glass restored when not */
@@ -829,11 +838,17 @@ static void desktop_icons_draw_one(int idx)
     int iy = cy + 4;
 
     const char *key = ic->manifest.icon;
-    if      (strcmp(key, "icon_term")       == 0) gfx_icon_term(ix, iy);
-    else if (strcmp(key, "icon_files")      == 0) gfx_icon_files(ix, iy);
-    else if (strcmp(key, "icon_editor")     == 0) gfx_icon_editor(ix, iy);
-    else if (strcmp(key, "icon_tictactoe")  == 0) gfx_icon_tictactoe(ix, iy);
-    else if (strcmp(key, "icon_telnet")     == 0) gfx_icon_telnet(ix, iy);
+
+    /* Try BMP icon from /icons/ first; fall back to procedural vector icon */
+    const icon_entry_t *bicon = icon_cache_get(key);
+    if (bicon) {
+        gfx_icon_blit(bicon->pixels, bicon->width, bicon->height,
+                      ix, iy, DESKTOP_ICON_SIZE, DESKTOP_ICON_SIZE);
+    } else if (strcmp(key, "icon_term")      == 0) gfx_icon_term(ix, iy);
+    else if   (strcmp(key, "icon_files")     == 0) gfx_icon_files(ix, iy);
+    else if   (strcmp(key, "icon_editor")    == 0) gfx_icon_editor(ix, iy);
+    else if   (strcmp(key, "icon_tictactoe") == 0) gfx_icon_tictactoe(ix, iy);
+    else if   (strcmp(key, "icon_telnet")    == 0) gfx_icon_telnet(ix, iy);
     else                                           gfx_icon_generic(ix, iy, ic->manifest.name);
 
     gfx_text_center(cx, DESKTOP_CELL_W, cy + 4 + DESKTOP_ICON_SIZE + 4,
@@ -1063,6 +1078,7 @@ int main(void)
 {
     sys_fb_claim();
     gfx_init();
+    icon_cache_init();
 
     /* Compute layout from actual screen dimensions */
     SCR_W          = (int)gfx_width();
@@ -1099,6 +1115,10 @@ int main(void)
 
     sys_cursor_show(1);
 
+    /* Dock running state — track per-item to avoid full redraws */
+    static int s_dock_running[DOCK_ITEM_COUNT];
+    for (int i = 0; i < DOCK_ITEM_COUNT; i++) s_dock_running[i] = 0;
+
     int  bar_counter  = 0;
     int  dock_counter = 0;
     int  prev_buttons = 0;
@@ -1110,10 +1130,21 @@ int main(void)
             draw_bot_bar();
         }
 
-        /* Refresh dock running indicators every ~30 frames (~500 ms) */
+        /*
+         * Refresh dock running indicators every ~30 frames (~500 ms).
+         * Only redraw individual items whose running state changed — avoids
+         * the full glass-blit → icon-redraw cycle that caused flicker.
+         */
         if (++dock_counter >= 30) {
             dock_counter = 0;
-            draw_dock();
+            for (int i = 0; i < DOCK_ITEM_COUNT; i++) {
+                int running = g_dock[i].pid &&
+                              (find_win_for_pid(g_dock[i].pid) >= 0);
+                if (running != s_dock_running[i]) {
+                    s_dock_running[i] = running;
+                    draw_dock_item(i);
+                }
+            }
         }
 
         /* ── Drain WM events (window-closed notifications from kernel) ── */

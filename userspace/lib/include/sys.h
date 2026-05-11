@@ -125,6 +125,20 @@ static inline long _sys4(long nr, long a0, long a1, long a2, long a3)
     return x0;
 }
 
+static inline long _sys5(long nr, long a0, long a1, long a2, long a3, long a4)
+{
+    register long x0 asm("x0") = a0;
+    register long x1 asm("x1") = a1;
+    register long x2 asm("x2") = a2;
+    register long x3 asm("x3") = a3;
+    register long x4 asm("x4") = a4;
+    register long x8 asm("x8") = nr;
+    __asm__ volatile("svc #0" : "+r"(x0)
+                     : "r"(x1), "r"(x2), "r"(x3), "r"(x4), "r"(x8)
+                     : "memory", "cc");
+    return x0;
+}
+
 /* ── Typed wrappers ──────────────────────────────────────────────── */
 
 __attribute__((noreturn))
@@ -557,11 +571,17 @@ static inline long sys_fs_readdir(const char *path, char *buf, long len)
 
 /* ── GPU / V3D syscalls (Phase 6.1) ──────────────────────────────── */
 
-#define SYS_GPU_ALLOC  900
-#define SYS_GPU_FREE   901
-#define SYS_GPU_MAP    902
-#define SYS_GPU_INFO   903
-#define SYS_GPU_BLUR   904
+#define SYS_GPU_ALLOC   900
+#define SYS_GPU_FREE    901
+#define SYS_GPU_MAP     902
+#define SYS_GPU_INFO    903
+#define SYS_GPU_BLUR    904
+/* Animation compositing (Phase 6.1.7 / 6.2) */
+#define SYS_FB_CAPTURE      910  /* (bo, src_x<<32|src_y, w<<32|h) → 0/-1        */
+#define SYS_GPU_BLIT        911  /* (bo, sw<<32|sh, dx<<32|dy, dw<<32|dh, alpha) */
+#define SYS_COMPOSITE_ANIM  912  /* (bo, nat_x<<32|nat_y, nat_w<<32|nat_h,       *
+                                  *    anim_x<<32|anim_y,                         *
+                                  *    anim_w<<32|(anim_h<<16)|alpha) → 0/-1      */
 
 /* Wallpaper sharing (Phase 6.1.x) */
 #define SYS_WP_REGISTER   906  /* (buf_ptr, (w<<32)|h) → 0 */
@@ -592,6 +612,56 @@ static inline long sys_wp_blend_fill(unsigned x, unsigned y,
     long xy = ((long)x << 32) | (long)y;
     long wh = ((long)w << 32) | (long)h;
     return _sys3(SYS_WP_BLEND_FILL, xy, wh, (long)color);
+}
+
+/* Copy a live framebuffer region into a GPU BO (animation snapshot).
+ * Returns 0 on success, -1 on error. */
+static inline long sys_fb_capture(int bo, unsigned src_x, unsigned src_y,
+                                   unsigned w, unsigned h)
+{
+    long xy = ((long)src_x << 32) | (long)src_y;
+    long wh = ((long)w     << 32) | (long)h;
+    return _sys3(SYS_FB_CAPTURE, (long)bo, xy, wh);
+}
+
+/* Bilinear-scale a GPU BO and alpha-blend it onto the framebuffer.
+ * src_w/h: natural dimensions of the BO content.
+ * dst_x/y: framebuffer destination top-left.
+ * dst_w/h: destination size (may differ from src for scaling effect).
+ * alpha:   0 = transparent (no-op), 255 = opaque.
+ * Returns 0 on success, -1 on error. */
+static inline long sys_gpu_blit(int bo,
+                                 unsigned src_w, unsigned src_h,
+                                 unsigned dst_x, unsigned dst_y,
+                                 unsigned dst_w, unsigned dst_h,
+                                 unsigned char alpha)
+{
+    long src_wh = ((long)src_w << 32) | (long)src_h;
+    long dst_xy = ((long)dst_x << 32) | (long)dst_y;
+    long dst_wh = ((long)dst_w << 32) | (long)dst_h;
+    return _sys5(SYS_GPU_BLIT, (long)bo, src_wh, dst_xy, dst_wh, (long)alpha);
+}
+
+/* Single-pass wallpaper-restore + BO composite for window animations.
+ * Writes each FB pixel exactly once: no intermediate blank-window frame.
+ *
+ * nat_*:  the natural (unscaled) window rect — defines the area to clear.
+ * anim_*: the current scaled rect centred inside the natural rect.
+ * alpha:  animation opacity (0=transparent, 255=opaque).
+ * The BO must have been captured at nat_w × nat_h resolution.
+ */
+static inline long sys_composite_anim(int bo,
+                                       unsigned nat_x, unsigned nat_y,
+                                       unsigned nat_w, unsigned nat_h,
+                                       unsigned anim_x, unsigned anim_y,
+                                       unsigned anim_w, unsigned anim_h,
+                                       unsigned char alpha)
+{
+    long nat_pos   = ((long)nat_x  << 32) | (long)nat_y;
+    long nat_sz    = ((long)nat_w  << 32) | (long)nat_h;
+    long anim_pos  = ((long)anim_x << 32) | (long)anim_y;
+    long anim_wha  = ((long)anim_w << 32) | ((long)anim_h << 16) | (long)alpha;
+    return _sys5(SYS_COMPOSITE_ANIM, (long)bo, nat_pos, nat_sz, anim_pos, anim_wha);
 }
 
 /* ── AetherFS write syscalls (Phase 5.5) ────────────────────────── */

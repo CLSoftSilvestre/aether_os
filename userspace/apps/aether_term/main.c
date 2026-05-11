@@ -11,6 +11,7 @@
  */
 
 #include <gfx.h>
+#include <widget.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -933,6 +934,17 @@ int main(void)
     g_win_id = sys_wm_register(WX, WY, WIN_W, WIN_H, "AetherTerm");
     sys_wm_focus_set(sys_getpid());
 
+    /* Window open animation (scale 0.85→1.0, alpha 0→1, ~120ms) */
+    {
+        win_anim_t open_a;
+        if (win_anim_open(&open_a, WX, WY, WIN_W, WIN_H) == 0) {
+            while (win_anim_tick(&open_a));
+            win_anim_free(&open_a);
+            /* Restore live window content over the final BO composite */
+            draw_window();
+        }
+    }
+
     {
         /*
         char motd[2048];
@@ -1000,6 +1012,14 @@ int main(void)
         else if (strcmp(cmd, "exit")  == 0) {
             int code = (argc > 1) ? atoi(argv[1]) : 0;
             term_puts("Goodbye!\n");
+            /* Window close animation (scale 1.0→0.85, alpha 1→0, ~80ms) */
+            {
+                win_anim_t close_a;
+                if (win_anim_close(&close_a, WX, WY, WIN_W, WIN_H) == 0) {
+                    while (win_anim_tick(&close_a));
+                    win_anim_free(&close_a);
+                }
+            }
             if (g_win_id >= 0) sys_wm_unregister(g_win_id);
             exit(code);
         } else {

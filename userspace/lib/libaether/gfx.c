@@ -748,3 +748,133 @@ void gfx_bmp_blit_region(const unsigned *pixels, unsigned bmp_w, unsigned bmp_h,
     const unsigned *src = pixels + src_y * bmp_w + src_x;
     sys_fb_blit(src, dst_x, dst_y, dst_w, dst_h, bmp_w * 4);
 }
+
+/* ── BMP icon loader (24-bpp and 32-bpp) ───────────────────────────────── */
+
+int gfx_bmp_load_icon(const char *path, unsigned *pixels, unsigned buf_pixels,
+                       unsigned *out_w, unsigned *out_h)
+{
+    long vfd = sys_fs_open(path);
+    if (vfd < 0) return -1;
+
+    unsigned char hdr[54];
+    if (bmp_read_exact(vfd, hdr, 54) != 0 ||
+        hdr[0] != 'B' || hdr[1] != 'M') {
+        sys_fs_close(vfd); return -1;
+    }
+
+    unsigned pix_off = (unsigned)hdr[10] | ((unsigned)hdr[11] << 8) |
+                       ((unsigned)hdr[12] << 16) | ((unsigned)hdr[13] << 24);
+    unsigned width   = (unsigned)hdr[18] | ((unsigned)hdr[19] << 8) |
+                       ((unsigned)hdr[20] << 16) | ((unsigned)hdr[21] << 24);
+    int      h_raw   = (int)((unsigned)hdr[22] | ((unsigned)hdr[23] << 8) |
+                             ((unsigned)hdr[24] << 16) | ((unsigned)hdr[25] << 24));
+    unsigned bpp     = (unsigned)hdr[28] | ((unsigned)hdr[29] << 8);
+    unsigned compr   = (unsigned)hdr[30] | ((unsigned)hdr[31] << 8) |
+                       ((unsigned)hdr[32] << 16) | ((unsigned)hdr[33] << 24);
+
+    if ((bpp != 24 && bpp != 32) || compr != 0 || h_raw == 0 || width == 0) {
+        sys_fs_close(vfd); return -1;
+    }
+
+    int flipped = (h_raw > 0);
+    unsigned height = flipped ? (unsigned)h_raw : (unsigned)(-h_raw);
+
+    if (width * height > buf_pixels) {
+        sys_fs_close(vfd); return -1;
+    }
+
+    /* Skip extra header bytes before pixel data */
+    if (pix_off > 54) {
+        unsigned char tmp[64];
+        unsigned extra = pix_off - 54;
+        while (extra > 0) {
+            unsigned chunk = extra < 64u ? extra : 64u;
+            if (bmp_read_exact(vfd, tmp, (long)chunk) != 0) {
+                sys_fs_close(vfd); return -1;
+            }
+            extra -= chunk;
+        }
+    }
+
+    if (bpp == 32) {
+        unsigned row_bytes = width * 4u;
+        for (unsigned i = 0; i < height; i++) {
+            unsigned dst_row = flipped ? (height - 1u - i) : i;
+            unsigned char *dst = (unsigned char *)(pixels + dst_row * width);
+            if (bmp_read_exact(vfd, dst, (long)row_bytes) != 0) {
+                sys_fs_close(vfd); return -1;
+            }
+        }
+    } else {
+        /* 24-bpp: [B][G][R] per pixel, rows padded to 4-byte boundary */
+        unsigned row_stride = (width * 3u + 3u) & ~3u;
+        /* Static row scratch — supports icons up to 256 px wide */
+        static unsigned char s_row24[256 * 3 + 4];
+        if (row_stride > sizeof(s_row24)) {
+            sys_fs_close(vfd); return -1;
+        }
+        for (unsigned i = 0; i < height; i++) {
+            unsigned dst_row = flipped ? (height - 1u - i) : i;
+            if (bmp_read_exact(vfd, s_row24, (long)row_stride) != 0) {
+                sys_fs_close(vfd); return -1;
+            }
+            unsigned *dst = pixels + dst_row * width;
+            for (unsigned x = 0; x < width; x++) {
+                unsigned b = s_row24[x * 3 + 0];
+                unsigned g = s_row24[x * 3 + 1];
+                unsigned r = s_row24[x * 3 + 2];
+                dst[x] = GFX_RGB(r, g, b);
+            }
+        }
+    }
+
+    sys_fs_close(vfd);
+    if (out_w) *out_w = width;
+    if (out_h) *out_h = height;
+    return 0;
+}
+
+/* ── Chroma-key icon blit with nearest-neighbor scaling ─────────────────── */
+
+/* Scratch row buffer used by gfx_icon_blit — sized for the largest icon */
+static unsigned s_icon_row[64];
+
+void gfx_icon_blit(const unsigned *pixels, unsigned src_w, unsigned src_h,
+                    int dst_x, int dst_y, int dst_w, int dst_h)
+{
+    if (!pixels || src_w == 0 || src_h == 0 || dst_w <= 0 || dst_h <= 0) return;
+    if ((unsigned)dst_w > 64u) dst_w = 64;   /* clamp to scratch row size */
+
+    for (int dy = 0; dy < dst_h; dy++) {
+        unsigned sy = (unsigned)dy * src_h / (unsigned)dst_h;
+        if (sy >= src_h) sy = src_h - 1u;
+
+        /* Build a scaled row, masking alpha so comparison is RGB-only */
+        for (int dx = 0; dx < dst_w; dx++) {
+            unsigned sx = (unsigned)dx * src_w / (unsigned)dst_w;
+            if (sx >= src_w) sx = src_w - 1u;
+            s_icon_row[dx] = pixels[sy * src_w + sx] & 0x00FFFFFFu;
+        }
+
+        /* Blit contiguous opaque runs — minimises sys_fb_blit call count */
+        int dx = 0;
+        while (dx < dst_w) {
+            /* Skip transparent pixels */
+            while (dx < dst_w &&
+                   s_icon_row[dx] == (GFX_ICON_TRANSPARENT & 0x00FFFFFFu))
+                dx++;
+            if (dx >= dst_w) break;
+
+            int run_start = dx;
+            while (dx < dst_w &&
+                   s_icon_row[dx] != (GFX_ICON_TRANSPARENT & 0x00FFFFFFu))
+                dx++;
+
+            sys_fb_blit(s_icon_row + run_start,
+                        (unsigned)(dst_x + run_start), (unsigned)(dst_y + dy),
+                        (unsigned)(dx - run_start), 1u,
+                        (unsigned)dst_w * 4u);
+        }
+    }
+}

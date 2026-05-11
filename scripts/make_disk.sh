@@ -74,6 +74,35 @@ else
     echo "[DISK] Warning: assets/lumina_bg.bmp not found — wallpaper will use procedural fallback"
 fi
 
+# /icons/ — BMP icons (Phase 6.2)
+# Expected files: 48×48 px, 24-bpp or 32-bpp uncompressed BMP.
+# Background / transparent areas must be filled with RGB(255,0,255) — pure magenta.
+#
+# App icons:    icon_term.bmp  icon_files.bmp  icon_editor.bmp
+#               icon_calc.bmp  icon_tictactoe.bmp  icon_widget.bmp
+#               icon_text.bmp  icon_telnet.bmp
+# File types:   file_folder.bmp  file_folder_open.bmp
+#               file_txt.bmp  file_as.bmp  file_exec.bmp  file_generic.bmp
+# Drives:       drive_fat32.bmp  drive_initrd.bmp  drive_afs.bmp
+#
+# If a file is missing the system falls back to the procedural vector icon.
+mmd -i "${DISK}" ::icons
+
+ICON_DIR="${SCRIPT_DIR}/../assets/icons"
+if [ -d "${ICON_DIR}" ]; then
+    icon_count=0
+    for bmp in "${ICON_DIR}"/*.bmp; do
+        [ -f "${bmp}" ] || continue
+        fname="$(basename "${bmp}")"
+        mcopy -i "${DISK}" "${bmp}" "::icons/${fname}"
+        icon_count=$((icon_count + 1))
+    done
+    echo "[DISK] Copied ${icon_count} icon(s) from assets/icons/"
+else
+    echo "[DISK] Note: assets/icons/ not found — system will use procedural vector icons"
+    echo "[DISK]       Create 48×48 BMP files there to override individual icons."
+fi
+
 printf "name=Terminal\nicon=icon_term\nexec=/aether_term\ndescription=Terminal emulator\n" \
     | mcopy -i "${DISK}" - ::apps/aether_term.app
 

@@ -271,7 +271,7 @@ static void tick_recursive(widget_t *w, long tick)
 
 /* ── Main event loop ─────────────────────────────────────────────────────── */
 
-#define BLINK_TICKS 30  /* 300 ms at 100 Hz */
+#define BLINK_TICKS 30  /* 300 ms at 100 Hz — for cursor blink when idle */
 
 void widget_run(widget_t *root, widget_ctx_t *ctx)
 {
@@ -326,9 +326,15 @@ void widget_run(widget_t *root, widget_ctx_t *ctx)
             dispatch_key(root, &ev);
         }
 
-        /* ── Periodic tick (blink, etc.) ───────────────────────────────── */
+        /* ── Tick dispatch ──────────────────────────────────────────────── */
         long now = sys_get_ticks();
-        if (now - last_tick_event >= BLINK_TICKS) {
+        if (anim_any_active()) {
+            /* Animations are running: fire WEV_TICK every vsync frame so
+             * spring_step() in the app's tick handler runs at 60 fps. */
+            tick_recursive(root, now);
+            last_tick_event = now;
+        } else if (now - last_tick_event >= BLINK_TICKS) {
+            /* Normal idle tick: 300 ms cadence for cursor blink etc. */
             last_tick_event = now;
             tick_recursive(root, now);
         }
@@ -338,7 +344,12 @@ void widget_run(widget_t *root, widget_ctx_t *ctx)
         cy = *ctx->win_y + ctx->content_dy;
         draw_recursive(root, cx, cy, 0);
 
-        if (!had_event)
-            sys_sched_yield();
+        /* ── Yield / vsync pace ─────────────────────────────────────────── */
+        if (!had_event) {
+            if (anim_any_active())
+                sys_vsync_wait();    /* pace loop to 60 fps during animations */
+            else
+                sys_sched_yield();  /* cooperative yield when idle */
+        }
     }
 }

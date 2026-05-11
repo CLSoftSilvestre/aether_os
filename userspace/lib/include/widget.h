@@ -2,7 +2,7 @@
 #define AETHER_WIDGET_H
 
 /*
- * AetherOS libwidget — Retained widget toolkit (Phase 5.3)
+ * AetherOS libwidget — Retained widget toolkit (Phase 5.3 + 6.1.7)
  *
  * Usage pattern:
  *   1. Declare widget_t variables (global or local; they are ~500 bytes each).
@@ -319,6 +319,91 @@ void progress_set_value(widget_t *w, int value);
 /* (not part of public API but declared here for cross-file access) */
 widget_t *widget_get_focused(void);
 void      widget_set_focused(widget_t *w);  /* dispatches FOCUS_IN/OUT */
+
+/* ── Spring interpolator (Phase 6.1.7b) ────────────────────────────────── */
+
+/*
+ * Damped spring for UI animations.
+ * Euler-integrate with dt = 1/60 s per vsync frame.
+ * Good defaults: k=600 d=35 (open, ~120ms), k=800 d=50 (close, ~80ms).
+ */
+typedef struct {
+    float pos;      /* current value */
+    float vel;      /* current velocity */
+    float target;   /* destination value */
+    float k;        /* stiffness (spring constant) */
+    float d;        /* damping coefficient */
+} spring_interp_t;
+
+/* Initialise spring at pos with given target and constants. */
+void spring_init(spring_interp_t *s, float pos, float target, float k, float d);
+/* Move spring target (safe to call mid-animation). */
+void spring_set_target(spring_interp_t *s, float target);
+/* Advance spring by dt seconds (use 1.0f/60.0f for vsync cadence). */
+void spring_step(spring_interp_t *s, float dt);
+/* Returns 1 when spring has settled within threshold of target. */
+int  spring_settled(const spring_interp_t *s);
+
+/* ── Window animation (Phase 6.1.7c/d) ─────────────────────────────────── */
+
+/*
+ * win_anim_t — state for a single open or close window animation.
+ * Allocates a GPU BO on start; free it when done with win_anim_free().
+ */
+typedef struct {
+    int  active;           /* 1 while animation is running */
+    int  is_open;          /* 1 = opening, 0 = closing */
+    int  win_x, win_y;     /* window top-left on screen */
+    int  win_w, win_h;     /* window natural size in pixels */
+    int  content_bo;       /* GPU BO with captured window pixels */
+    spring_interp_t scale_sp;   /* 0.0=invisible ↔ 1.0=full size */
+    spring_interp_t alpha_sp;   /* 0.0=transparent ↔ 1.0=opaque   */
+} win_anim_t;
+
+/*
+ * Capture window pixels from the framebuffer and start an open animation
+ * (scale 0.85→1.0, alpha 0→1).  Returns 0 on success, -1 if BO unavailable
+ * (animation module will simply not run; window is already visible).
+ */
+int  win_anim_open(win_anim_t *a, int wx, int wy, int ww, int wh);
+
+/*
+ * Capture window pixels and start a close animation (scale 1.0→0.85, alpha 1→0).
+ * After win_anim_tick() returns 0, the caller should exit/hide the window.
+ */
+int  win_anim_close(win_anim_t *a, int wx, int wy, int ww, int wh);
+
+/*
+ * Advance animation by one vsync frame (calls sys_vsync_wait internally).
+ * Returns 1 if animation is still running, 0 if it has settled.
+ * Must be called in a loop until it returns 0.
+ */
+int  win_anim_tick(win_anim_t *a);
+
+/* Release the GPU BO held by a win_anim_t (call after animation completes). */
+void win_anim_free(win_anim_t *a);
+
+/* ── Dock icon bounce (Phase 6.1.7e) ───────────────────────────────────── */
+
+/*
+ * dock_anim_t — spring-physics bounce for a dock/taskbar icon.
+ * The caller re-renders the icon each tick using scale_sp.pos as scale.
+ */
+typedef struct {
+    int  active;
+    int  icon_x, icon_y;
+    int  icon_size;       /* natural size in pixels */
+    spring_interp_t scale_sp;   /* 1.0=normal, peaks at ~1.3 */
+} dock_anim_t;
+
+/* Start a bounce animation for a dock icon at (ix, iy) with given size. */
+void dock_anim_start(dock_anim_t *a, int ix, int iy, int icon_size);
+/* Advance one frame. Returns 1 if running, 0 when settled.
+ * Read a->scale_sp.pos for the current render scale. */
+int  dock_anim_tick(dock_anim_t *a);
+
+/* Returns non-zero if any animation is currently running (used by widget_run). */
+int  anim_any_active(void);
 
 /* ── TreeView API (Phase 5.6) ───────────────────────────────────────────── */
 

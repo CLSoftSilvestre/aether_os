@@ -136,4 +136,47 @@ u32       v3d_bo_size(u32 handle);
 int v3d_blur(uintptr_t src_phys, uintptr_t dst_phys,
              u32 width, u32 height, u32 radius);
 
+/*
+ * v3d_fb_capture — copy a framebuffer region into a GPU BO.
+ *   bo_handle    existing BO with capacity ≥ w*h*4 bytes
+ *   src_x, src_y top-left corner in the framebuffer
+ *   w, h         dimensions in pixels
+ * Returns 0 on success, -1 on error (invalid BO, FB absent, OOB).
+ */
+int v3d_fb_capture(u32 bo_handle, u32 src_x, u32 src_y, u32 w, u32 h);
+
+/*
+ * v3d_blit_to_fb — bilinear-scale a GPU BO and alpha-blend it onto
+ * the framebuffer (Phase 6.1.7 window animation compositing).
+ *
+ *   bo_handle        source BO with XRGB8888 pixels (src_w × src_h)
+ *   src_w, src_h     natural size of the BO content
+ *   dst_x, dst_y     framebuffer destination top-left
+ *   dst_w, dst_h     destination size (scale implicit from src/dst ratio)
+ *   alpha            0 = no-op, 255 = fully opaque
+ *
+ * Returns 0 on success, -1 on error.
+ */
+int v3d_blit_to_fb(u32 bo_handle,
+                   u32 src_w, u32 src_h,
+                   u32 dst_x, u32 dst_y,
+                   u32 dst_w, u32 dst_h,
+                   u8 alpha);
+
+/*
+ * v3d_composite_anim — single-pass animation composite (Phase 6.2).
+ *
+ * For every pixel in [nat_x, nat_y, nat_w × nat_h]: reads the wallpaper
+ * background (via wp_ptr/wp_bmpw/wp_bmph forwarded from syscall.c), and if
+ * the pixel is inside the scaled rect [anim_x, anim_y, anim_w × anim_h],
+ * bilinear-samples the BO (captured at nat_w × nat_h) and alpha-blends it
+ * over the background.  Each framebuffer pixel is written exactly once,
+ * eliminating the two-step restore+blit flicker.
+ */
+int v3d_composite_anim(u32 bo_handle,
+                        u32 nat_x, u32 nat_y, u32 nat_w, u32 nat_h,
+                        u32 anim_x, u32 anim_y, u32 anim_w, u32 anim_h,
+                        u8 alpha,
+                        uintptr_t wp_ptr, u32 wp_bmpw, u32 wp_bmph);
+
 #endif /* DRIVERS_GPU_V3D_H */

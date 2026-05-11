@@ -17,6 +17,7 @@
 
 #include <gfx.h>
 #include <gpu.h>
+#include <icon_cache.h>
 #include <sys.h>
 #include <widget.h>
 #include <vfs_mounts.h>
@@ -592,15 +593,30 @@ static void right_panel_draw(widget_t *w, int ax, int ay)
             gfx_rect((unsigned)cx, (unsigned)cy, CELL_W, CELL_H, C_ACCENT);
         }
 
-        /* Icon */
+        /* Icon — BMP from /icons/ preferred; procedural vector as fallback */
+        static const char *s_icon_names[] = {
+            "file_folder",  /* FICON_FOLDER  */
+            "file_txt",     /* FICON_TXT     */
+            "file_as",      /* FICON_AS      */
+            "file_exec",    /* FICON_EXEC    */
+            "file_generic", /* FICON_GENERIC */
+        };
         int icon_x = cx + ICON_OFF_X;
         int icon_y = cy + ICON_OFF_Y;
-        switch (g_entries[i].icon_type) {
-        case FICON_FOLDER:  gfx_icon_folder(icon_x, icon_y, ICON_SZ);       break;
-        case FICON_TXT:     gfx_icon_file_txt(icon_x, icon_y, ICON_SZ);     break;
-        case FICON_AS:      gfx_icon_file_as(icon_x, icon_y, ICON_SZ);      break;
-        case FICON_EXEC:    gfx_icon_file_exec(icon_x, icon_y, ICON_SZ);    break;
-        default:            gfx_icon_file_generic(icon_x, icon_y, ICON_SZ); break;
+        unsigned char itype = g_entries[i].icon_type;
+        if (itype >= 5u) itype = 4u;  /* clamp to FICON_GENERIC */
+        const icon_entry_t *bicon = icon_cache_get(s_icon_names[itype]);
+        if (bicon) {
+            gfx_icon_blit(bicon->pixels, bicon->width, bicon->height,
+                          icon_x, icon_y, ICON_SZ, ICON_SZ);
+        } else {
+            switch (g_entries[i].icon_type) {
+            case FICON_FOLDER:  gfx_icon_folder(icon_x, icon_y, ICON_SZ);       break;
+            case FICON_TXT:     gfx_icon_file_txt(icon_x, icon_y, ICON_SZ);     break;
+            case FICON_AS:      gfx_icon_file_as(icon_x, icon_y, ICON_SZ);      break;
+            case FICON_EXEC:    gfx_icon_file_exec(icon_x, icon_y, ICON_SZ);    break;
+            default:            gfx_icon_file_generic(icon_x, icon_y, ICON_SZ); break;
+            }
         }
 
         /* Label (up to 2 lines, 10 chars each) */
@@ -862,6 +878,7 @@ int main(int argc, const char *const *argv)
 
     gfx_init();
     gpu_init((void *)0);   /* probe GPU; software fallback if absent */
+    icon_cache_init();
 
     g_selected_entry  = -1;
     g_last_click_entry = -1;

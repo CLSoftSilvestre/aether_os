@@ -137,6 +137,19 @@
 #define SYS_WP_BLEND_FILL 909  /* (x<<32|y, w<<32|h, color) → 0; kernel blends
                                 *   80% color + 20% wallpaper into the framebuffer */
 
+/* GPU blit / capture — window animation compositing (Phase 6.1.7) */
+#define SYS_FB_CAPTURE  910  /* (bo_handle, src_x<<32|src_y, w<<32|h) → 0/-1     *
+                              *   Copies a live FB region into a GPU BO.           */
+#define SYS_GPU_BLIT    911  /* (bo, src_w<<32|src_h, dst_x<<32|dst_y,            *
+                              *    dst_w<<32|dst_h, alpha) → 0/-1                  *
+                              *   Bilinear-scale BO onto FB with alpha blend.      */
+#define SYS_COMPOSITE_ANIM 912 /* (bo, nat_x<<32|nat_y, nat_w<<32|nat_h,          *
+                                *    anim_x<<32|anim_y,                            *
+                                *    anim_w<<32|(anim_h<<16)|alpha) → 0/-1         *
+                                *   Single-pass: restore wallpaper bg over nat_rect*
+                                *   then composite scaled BO inside anim_rect.     *
+                                *   Eliminates flicker from two-step restore+blit. */
+
 /* File descriptor numbers */
 #define FD_STDIN   0
 #define FD_STDOUT  1

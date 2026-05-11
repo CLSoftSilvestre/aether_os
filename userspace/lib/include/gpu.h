@@ -118,6 +118,24 @@ void gpu_alpha_blend(uint32_t *out,
                      unsigned count, uint8_t alpha);
 
 /*
+ * gpu_blit — bilinear-scale a GPU BO and alpha-blend it onto the framebuffer
+ * (Phase 6.1.7a — window animation compositing).
+ *
+ *   bo       GPU BO handle containing XRGB8888 pixels at natural (src_w×src_h)
+ *   src_w/h  natural dimensions of the BO content
+ *   dst_x/y  destination top-left on the framebuffer
+ *   dst_w/h  destination size (may differ from src to scale the content)
+ *   alpha    0 = no-op, 255 = fully opaque; blends against existing FB pixels
+ *
+ * Returns 0 on success, -1 on error.
+ */
+int gpu_blit(gpu_bo_t bo,
+             unsigned src_w, unsigned src_h,
+             unsigned dst_x, unsigned dst_y,
+             unsigned dst_w, unsigned dst_h,
+             unsigned char alpha);
+
+/*
  * gpu_glass_panel — composite a frosted-glass rectangle.
  *
  *   bg        source pixels from the desktop / background at (bx, by).

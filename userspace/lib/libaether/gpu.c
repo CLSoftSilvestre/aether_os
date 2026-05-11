@@ -81,6 +81,18 @@ int gpu_blur_bo(gpu_bo_t src, gpu_bo_t dst,
     return (int)_sys3(SYS_GPU_BLUR, handles, wh, (long)radius);
 }
 
+/* ── Blit (scale + alpha-blend BO onto framebuffer) ───────────────────── */
+
+int gpu_blit(gpu_bo_t bo,
+             unsigned src_w, unsigned src_h,
+             unsigned dst_x, unsigned dst_y,
+             unsigned dst_w, unsigned dst_h,
+             unsigned char alpha)
+{
+    if (bo <= 0 || !src_w || !src_h || !dst_w || !dst_h) return -1;
+    return (int)sys_gpu_blit(bo, src_w, src_h, dst_x, dst_y, dst_w, dst_h, alpha);
+}
+
 /* ── Software ping-pong scratch buffer ────────────────────────────────── */
 /*
  * Sized for the largest glass panel: GLASS_W_MAX × (DOCK_H + margin)

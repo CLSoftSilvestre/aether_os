@@ -29,6 +29,7 @@ add_library(libaether STATIC
     lib/libaether/gpu.c
     lib/libaether/manifest.c
     lib/libaether/vfs_mounts.c
+    lib/libaether/icon_cache.c
     lib/libaether/setjmp.S
 )
 
@@ -51,6 +52,7 @@ add_library(libwidget STATIC
     lib/libwidget/checkbox.c
     lib/libwidget/treeview.c
     lib/libwidget/progress.c
+    lib/libwidget/anim.c
 )
 
 target_include_directories(libwidget PUBLIC
@@ -93,7 +95,7 @@ add_executable(user_aether_term
 )
 target_include_directories(user_aether_term PRIVATE lib/include)
 target_compile_options(user_aether_term PRIVATE ${USER_COMPILE_FLAGS})
-target_link_libraries(user_aether_term PRIVATE libaether)
+target_link_libraries(user_aether_term PRIVATE libwidget libaether)
 target_link_options(user_aether_term PRIVATE
     -T ${USER_LINKER_SCRIPT} -nostdlib -static -Wl,--build-id=none
 )

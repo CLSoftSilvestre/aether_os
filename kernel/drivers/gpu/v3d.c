@@ -24,6 +24,7 @@
 
 #include "drivers/gpu/v3d.h"
 #include "drivers/gpu/mailbox.h"
+#include "drivers/video/fb.h"
 #include "aether/mm.h"
 #include "aether/printk.h"
 #include "aether/types.h"
@@ -508,5 +509,233 @@ int v3d_blur(uintptr_t src_phys, uintptr_t dst_phys,
     for (u32 i = 0; i < npages; i++)
         pmm_free_page(tmp_phys + i * (u32)PMM_PAGE_SIZE);
 
+    return 0;
+}
+
+/* ── FB ↔ BO helpers (Phase 6.1.7) ───────────────────────────────────────── */
+
+/*
+ * v3d_fb_capture — snapshot a rectangular region of the live framebuffer
+ * into a GPU BO for use as animation source material.
+ */
+int v3d_fb_capture(u32 bo_handle, u32 src_x, u32 src_y, u32 w, u32 h)
+{
+    if (!fb_base || !w || !h) return -1;
+
+    uintptr_t dst_phys = v3d_bo_phys(bo_handle);
+    if (!dst_phys) return -1;
+
+    /* Clamp to FB bounds */
+    if (src_x >= fb_width || src_y >= fb_height) return -1;
+    if (src_x + w > fb_width)  w = fb_width  - src_x;
+    if (src_y + h > fb_height) h = fb_height - src_y;
+
+    u32 fb_stride_px = fb_stride / 4u;
+    u32 *dst = (u32 *)dst_phys;
+
+    for (u32 row = 0; row < h; row++) {
+        const volatile u32 *src_row = fb_base + (src_y + row) * fb_stride_px + src_x;
+        u32 *dst_row = dst + row * w;
+        for (u32 col = 0; col < w; col++)
+            dst_row[col] = src_row[col];
+    }
+    return 0;
+}
+
+/*
+ * v3d_blit_to_fb — bilinear-scale a GPU BO and alpha-blend it onto the
+ * framebuffer at the specified destination position and size.
+ *
+ * alpha = 0   → fully transparent, framebuffer unchanged (early-out)
+ * alpha = 255 → fully opaque, destination pixels replaced
+ *
+ * Used by the window animation subsystem (6.1.7) to composite scaled+faded
+ * window snapshots during open/close spring animations.
+ */
+int v3d_blit_to_fb(u32 bo_handle,
+                   u32 src_w, u32 src_h,
+                   u32 dst_x, u32 dst_y,
+                   u32 dst_w, u32 dst_h,
+                   u8 alpha)
+{
+    if (!alpha) return 0;
+    if (!fb_base || !src_w || !src_h || !dst_w || !dst_h) return -1;
+
+    uintptr_t src_phys = v3d_bo_phys(bo_handle);
+    if (!src_phys) return -1;
+
+    if (dst_x >= fb_width || dst_y >= fb_height) return 0;
+
+    /* Clip destination to framebuffer extents */
+    u32 clip_w = dst_w;
+    u32 clip_h = dst_h;
+    if (dst_x + clip_w > fb_width)  clip_w = fb_width  - dst_x;
+    if (dst_y + clip_h > fb_height) clip_h = fb_height - dst_y;
+
+    const volatile u32 *src = (const volatile u32 *)src_phys;
+    u32 fb_stride_px = fb_stride / 4u;
+    u32 inv_a = 255u - (u32)alpha;
+
+    for (u32 dy = 0; dy < clip_h; dy++) {
+        u32 fb_y = dst_y + dy;
+
+        /* Fixed-point bilinear: map dy in [0, dst_h) → [0, src_h-1] */
+        u32 sy_fxp = (dst_h > 1u) ?
+            (dy * (src_h - 1u) * 256u) / (dst_h - 1u) : 0u;
+        u32 sy0 = sy_fxp >> 8;
+        u32 fy  = sy_fxp & 0xFFu;
+        u32 sy1 = (sy0 + 1u < src_h) ? sy0 + 1u : sy0;
+
+        for (u32 dx = 0; dx < clip_w; dx++) {
+            u32 fb_x = dst_x + dx;
+
+            u32 sx_fxp = (dst_w > 1u) ?
+                (dx * (src_w - 1u) * 256u) / (dst_w - 1u) : 0u;
+            u32 sx0 = sx_fxp >> 8;
+            u32 fx  = sx_fxp & 0xFFu;
+            u32 sx1 = (sx0 + 1u < src_w) ? sx0 + 1u : sx0;
+
+            u32 p00 = src[sy0 * src_w + sx0];
+            u32 p10 = src[sy0 * src_w + sx1];
+            u32 p01 = src[sy1 * src_w + sx0];
+            u32 p11 = src[sy1 * src_w + sx1];
+
+#define BL(p00, p10, p01, p11, sh, mask)                          \
+    ((((((p00)>>(sh))&(mask)) * (256u-fx) * (256u-fy) +           \
+       (((p10)>>(sh))&(mask)) * fx        * (256u-fy) +           \
+       (((p01)>>(sh))&(mask)) * (256u-fx) * fy        +           \
+       (((p11)>>(sh))&(mask)) * fx        * fy) + (1u << 15)) >> 16)
+
+            u32 sr = BL(p00, p10, p01, p11, 16u, 0xFFu);
+            u32 sg = BL(p00, p10, p01, p11,  8u, 0xFFu);
+            u32 sb = BL(p00, p10, p01, p11,  0u, 0xFFu);
+#undef BL
+
+            if (alpha == 255u) {
+                fb_base[fb_y * fb_stride_px + fb_x] =
+                    (sr << 16) | (sg << 8) | sb;
+            } else {
+                u32 fp = fb_base[fb_y * fb_stride_px + fb_x];
+                u32 fr = (fp >> 16) & 0xFFu;
+                u32 fg = (fp >>  8) & 0xFFu;
+                u32 fbl = fp & 0xFFu;
+                fb_base[fb_y * fb_stride_px + fb_x] =
+                    (((sr * (u32)alpha + fr * inv_a) / 255u) << 16) |
+                    (((sg * (u32)alpha + fg * inv_a) / 255u) <<  8) |
+                     ((sb * (u32)alpha + fbl* inv_a) / 255u);
+            }
+        }
+    }
+    return 0;
+}
+
+/*
+ * v3d_composite_anim — single-pass window animation composite (Phase 6.2).
+ *
+ * Eliminates the two-step (restore_bg + blit) pattern that causes a visible
+ * blank-window flash between frames.  For every pixel in the natural window
+ * rect [nat_x, nat_y, nat_w, nat_h]:
+ *   - Reads the background from the kernel wallpaper buffer (or 0x1A1A2E).
+ *   - If the pixel is inside the scaled rect [anim_x, anim_y, anim_w, anim_h],
+ *     bilinear-samples the BO (which holds the nat_w × nat_h window snapshot)
+ *     and alpha-blends it over the background.
+ *   - Writes the result directly to the framebuffer — one write per pixel.
+ *
+ * wp_ptr/wp_bmpw/wp_bmph: kernel wallpaper state forwarded from syscall.c.
+ */
+int v3d_composite_anim(u32 bo_handle,
+                        u32 nat_x, u32 nat_y, u32 nat_w, u32 nat_h,
+                        u32 anim_x, u32 anim_y, u32 anim_w, u32 anim_h,
+                        u8 alpha,
+                        uintptr_t wp_ptr, u32 wp_bmpw, u32 wp_bmph)
+{
+    if (!fb_base || !nat_w || !nat_h) return -1;
+
+    uintptr_t bo_phys = v3d_bo_phys(bo_handle);
+    if (!bo_phys) return -1;
+    const u32 *bo_mem = (const u32 *)bo_phys;
+
+    /* Clamp destination to framebuffer */
+    u32 x0 = nat_x, y0 = nat_y;
+    u32 x1 = nat_x + nat_w, y1 = nat_y + nat_h;
+    if (x0 >= fb_width || y0 >= fb_height) return 0;
+    if (x1 > fb_width)  x1 = fb_width;
+    if (y1 > fb_height) y1 = fb_height;
+
+    u32 stride_px = fb_stride / 4u;
+
+    /* Wallpaper centering crop (BMP may be wider/taller than screen) */
+    u32 crop_x = (wp_ptr && wp_bmpw > fb_width)  ? (wp_bmpw - fb_width)  / 2u : 0u;
+    u32 crop_y = (wp_ptr && wp_bmph > fb_height) ? (wp_bmph - fb_height) / 2u : 0u;
+
+    for (u32 dy = y0; dy < y1; dy++) {
+        volatile u32 *fb_row = fb_base + dy * stride_px;
+
+        /* Pre-fetch wallpaper row for this scanline */
+        const u32 *wp_row = (void *)0;
+        if (wp_ptr) {
+            u32 wy = dy + crop_y;
+            if (wy < wp_bmph)
+                wp_row = (const u32 *)wp_ptr + wy * wp_bmpw;
+        }
+
+        for (u32 dx = x0; dx < x1; dx++) {
+            /* Background pixel from wallpaper or fallback colour */
+            u32 bg;
+            if (wp_row) {
+                u32 wx = dx + crop_x;
+                bg = (wx < wp_bmpw) ? wp_row[wx] : 0x1A1A2Eu;
+            } else {
+                bg = 0x1A1A2Eu;
+            }
+
+            /* Skip BO compositing outside the scaled rect, or when transparent */
+            if (alpha == 0u || dx < anim_x || dx >= anim_x + anim_w ||
+                dy < anim_y || dy >= anim_y + anim_h) {
+                fb_row[dx] = bg;
+                continue;
+            }
+
+            /* Bilinear sample from BO (nat_w × nat_h source) */
+            u32 sx_fxp = (anim_w > 1u) ?
+                ((dx - anim_x) * (nat_w - 1u) * 256u) / (anim_w - 1u) : 0u;
+            u32 sy_fxp = (anim_h > 1u) ?
+                ((dy - anim_y) * (nat_h - 1u) * 256u) / (anim_h - 1u) : 0u;
+
+            u32 sx0 = sx_fxp >> 8; u32 fx = sx_fxp & 0xFFu;
+            u32 sy0 = sy_fxp >> 8; u32 fy = sy_fxp & 0xFFu;
+            u32 sx1 = (sx0 + 1u < nat_w) ? sx0 + 1u : sx0;
+            u32 sy1 = (sy0 + 1u < nat_h) ? sy0 + 1u : sy0;
+
+            u32 p00 = bo_mem[sy0 * nat_w + sx0];
+            u32 p10 = bo_mem[sy0 * nat_w + sx1];
+            u32 p01 = bo_mem[sy1 * nat_w + sx0];
+            u32 p11 = bo_mem[sy1 * nat_w + sx1];
+
+#define BL(p00, p10, p01, p11, sh, mask)                          \
+    ((((((p00)>>(sh))&(mask)) * (256u-fx) * (256u-fy) +           \
+       (((p10)>>(sh))&(mask)) * fx        * (256u-fy) +           \
+       (((p01)>>(sh))&(mask)) * (256u-fx) * fy        +           \
+       (((p11)>>(sh))&(mask)) * fx        * fy) + (1u << 15)) >> 16)
+
+            u32 sr = BL(p00, p10, p01, p11, 16u, 0xFFu);
+            u32 sg = BL(p00, p10, p01, p11,  8u, 0xFFu);
+            u32 sb = BL(p00, p10, p01, p11,  0u, 0xFFu);
+#undef BL
+
+            if (alpha == 255u) {
+                fb_row[dx] = (sr << 16) | (sg << 8) | sb;
+            } else {
+                u32 br = (bg >> 16) & 0xFFu;
+                u32 bg_ = (bg >>  8) & 0xFFu;
+                u32 bb  =  bg        & 0xFFu;
+                u32 ia  = 255u - (u32)alpha;
+                fb_row[dx] =
+                    (((sr * (u32)alpha + br  * ia) / 255u) << 16) |
+                    (((sg * (u32)alpha + bg_ * ia) / 255u) <<  8) |
+                     ((sb * (u32)alpha + bb  * ia) / 255u);
+            }
+        }
+    }
     return 0;
 }

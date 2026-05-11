@@ -153,4 +153,32 @@ void gfx_bmp_blit_region(const unsigned *pixels, unsigned bmp_w, unsigned bmp_h,
                            unsigned dst_x, unsigned dst_y,
                            unsigned dst_w, unsigned dst_h);
 
+/* ── BMP icon system ────────────────────────────────────────────────────── */
+
+/*
+ * Pure magenta as the chroma-key transparency color.
+ * Pixels exactly matching this value are not drawn to the framebuffer.
+ * Never appears in the Lumina glassmorphism palette (dark purples + cyans).
+ * Artists: fill the icon background with RGB(255, 0, 255) in their editor.
+ */
+#define GFX_ICON_TRANSPARENT  GFX_RGB(255, 0, 255)
+
+/*
+ * Load a 24-bpp or 32-bpp uncompressed BMP from VFS for use as an icon.
+ * Output: pixels[] in XRGB8888 format, top-to-bottom, row-major.
+ * buf_pixels must be >= width × height (pixel count, not bytes).
+ * Returns 0 on success, -1 on error.
+ */
+int gfx_bmp_load_icon(const char *path, unsigned *pixels, unsigned buf_pixels,
+                       unsigned *out_w, unsigned *out_h);
+
+/*
+ * Blit a loaded icon pixel buffer to the framebuffer at (dst_x, dst_y)
+ * with target size (dst_w × dst_h).  Nearest-neighbor scaling is applied
+ * when src and dst sizes differ.  Pixels equal to GFX_ICON_TRANSPARENT
+ * are skipped, leaving the background intact.
+ */
+void gfx_icon_blit(const unsigned *pixels, unsigned src_w, unsigned src_h,
+                    int dst_x, int dst_y, int dst_w, int dst_h);
+
 #endif /* _GFX_H */

@@ -1402,16 +1402,17 @@ Build produces zero new errors or warnings.
 
 ### Milestone 6.1 — GPU Integration
 
-**Status:** In progress
+**Status:** In progress (6.1.3/6.1.4/6.1.6 deferred — require Mesa cross-compile / firmware MMAL)
 
 #### Architecture
 
 | Layer | File(s) | Notes |
 |-------|---------|-------|
 | Kernel mailbox driver | `kernel/drivers/gpu/mailbox.c` | VideoCore property interface; powers on V3D |
-| Kernel V3D driver | `kernel/drivers/gpu/v3d.c` | BO allocator + blur; hardware ident from V3D_HUB_IDENT0 |
-| Kernel syscalls | `SYS_GPU_ALLOC/FREE/MAP/INFO/BLUR` (900–904) | Dispatched in `kernel/core/syscall.c` |
-| Userspace API | `userspace/lib/include/gpu.h` + `libaether/gpu.c` | `gpu_init`, `gpu_alloc`, `gpu_blur`, `gpu_glass_panel` |
+| Kernel V3D driver | `kernel/drivers/gpu/v3d.c` | BO allocator + blur + blit; hardware ident from V3D_HUB_IDENT0 |
+| Kernel syscalls | `SYS_GPU_ALLOC/FREE/MAP/INFO/BLUR` (900–904), `SYS_VSYNC_WAIT` (905), `SYS_FB_CAPTURE` (910), `SYS_GPU_BLIT` (911) | Dispatched in `kernel/core/syscall.c` |
+| Userspace API | `userspace/lib/include/gpu.h` + `libaether/gpu.c` | `gpu_init`, `gpu_alloc`, `gpu_blur`, `gpu_blit`, `gpu_glass_panel` |
+| Animation module | `userspace/lib/libwidget/anim.c` | `spring_interp_t`, `win_anim_t`, `dock_anim_t`; vsync-paced tick |
 
 **QEMU vs Pi 4:** Define `AETHER_TARGET_PI4` in CMakeLists for hardware builds.
 Without it, mailbox/V3D are stubbed and all effects use the software path.
@@ -1419,7 +1420,7 @@ Without it, mailbox/V3D are stubbed and all effects use the software path.
 **Glassmorphism roadmap:**
 - Blur (this milestone): `gpu_glass_panel(bg, pitch, out, w, h, tint, tint_a, radius)` — available now via software path
 - Hardware acceleration (6.1.5): TFU iterative downsample + bilinear upsample on Pi 4 ✅
-- Animations (future): spring interpolation in libwidget + per-frame `gpu_glass_panel` refresh
+- Animations (6.1.7): spring interpolation in libwidget + per-frame `gpu_blit` compositing ✅
 - 3-D liquid effect (future): Mesa/GLES vertex-shader distortion + environment mapping
 
 #### Tasks
@@ -1468,29 +1469,41 @@ Without it, mailbox/V3D are stubbed and all effects use the software path.
 
 ### Milestone 6.1.7 — GPU-Accelerated Window Animations
 
-**Status:** Not started  
+**Status:** Complete ✅  
 **Goal:** Spring-physics window open/close/minimize animations at 60 fps using the V3D blit engine.
 
 #### Architecture
 
 ```
-libwidget spring_interp  →  SYS_GPU_BLIT (906) → v3d_blit()
-                         →  per-frame gpu_glass_panel() refresh
-                         →  SYS_GPU_SWAP
+libwidget spring_interp  →  SYS_FB_CAPTURE (910)  → v3d_fb_capture()   [snapshot]
+                         →  SYS_GPU_BLIT    (911)  → v3d_blit_to_fb()  [scale+alpha→FB]
+                         →  SYS_VSYNC_WAIT  (905)  → paced at 60fps
 ```
 
 #### Tasks
 
-- [ ] **6.1.7a** Add `SYS_GPU_BLIT` (906) — scaled+alpha-blended BO copy (uses V3D TFU)
-- [ ] **6.1.7b** `spring_interp_t` in `libwidget` — damped spring state (pos, vel, target, k, d)
-  - `spring_step(dt)` — Euler step; settles when |pos−target| < 0.5 && |vel| < 0.5
+- [x] **6.1.7a** Add `SYS_FB_CAPTURE` (910) + `SYS_GPU_BLIT` (911) — capture FB→BO and bilinear-scale BO→FB with alpha blend
+  - `v3d_fb_capture(bo, sx, sy, w, h)` — kernel: copies live FB region into GPU BO
+  - `v3d_blit_to_fb(bo, src_w, src_h, dst_x, dst_y, dst_w, dst_h, alpha)` — kernel: bilinear scale + alpha blend onto FB
+  - `gpu_blit()` userspace wrapper; `sys_fb_capture()` / `sys_gpu_blit()` in `sys.h`
+  - `_sys5()` inline stub added to `sys.h` for 5-argument syscalls
+- [x] **6.1.7b** `spring_interp_t` in `libwidget` — damped spring state (pos, vel, target, k, d)
+  - `spring_init / spring_set_target / spring_step(dt) / spring_settled()` in `anim.c`
+  - Euler integration at dt = 1/60 s; settles when |pos−target| < 0.005 && |vel| < 0.05
   - Shared by open, close, minimize, maximize, and drag-snap animations
-- [ ] **6.1.7c** Window open animation: scale 0.85→1.0 + fade 0→1, ~120ms spring
-- [ ] **6.1.7d** Window close animation: scale 1.0→0.85 + fade 1→0, ~80ms spring; `sys_kill()` after settle
-- [ ] **6.1.7e** Dock bounce animation for app icon on launch (scale 1.0→1.3→1.0, ~200ms)
-- [ ] **6.1.7f** Vsync syscall `SYS_VSYNC_WAIT` (907) — blocks until next VBlank interrupt (16ms budget)
-  - DRM/KMS-free: poll Pi 4 HVS DISPSTAT register bit 0 (`VBLANK`) in kernel
-- [ ] **6.1.7g** Animation event loop integration: `WEV_TICK` fires on vsync; `spring_step` runs per tick
+- [x] **6.1.7c** Window open animation: scale 0.85→1.0 + fade 0→1, ~120ms spring (k=600, d=35)
+  - `win_anim_open(a, wx, wy, ww, wh)` — captures window, starts springs
+  - `win_anim_tick(a)` — per-frame: restores wallpaper bg, composites scaled window via SYS_GPU_BLIT
+- [x] **6.1.7d** Window close animation: scale 1.0→0.85 + fade 1→0, ~80ms spring (k=800, d=50)
+  - `win_anim_close(a, wx, wy, ww, wh)` — same flow, reversed spring targets
+  - After `win_anim_tick()` returns 0 caller should exit/unregister window
+- [x] **6.1.7e** Dock bounce animation: scale 1.0→1.3→1.0, ~200ms spring (k=400, d=20)
+  - `dock_anim_start / dock_anim_tick(a)` in `anim.c`
+  - Spring retargets to 1.0 once it overshoots the 1.3 peak; caller reads `a->scale_sp.pos`
+- [x] **6.1.7f** `SYS_VSYNC_WAIT` (905) already implemented; paces animation loop at 60fps
+  - `win_anim_tick()` calls `sys_vsync_wait()` at top of each frame
+- [x] **6.1.7g** Animation event loop integration: `WEV_TICK` fires every vsync when `anim_any_active()`
+  - `widget_run()` polls `anim_any_active()`; uses `sys_vsync_wait()` instead of `sys_sched_yield()` and fires tick every frame when animations are running
 
 ---
 

@@ -949,6 +949,61 @@ long syscall_dispatch(trap_frame_t *frame)
         return 0;
     }
 
+    /* GPU blit / FB capture — window animation (Phase 6.1.7) */
+    case SYS_FB_CAPTURE: {
+        /* arg0 = bo_handle, arg1 = (src_x<<32|src_y), arg2 = (w<<32|h) */
+        u32 bo   = (u32)arg0;
+        u32 sx   = (u32)((u64)arg1 >> 32);
+        u32 sy   = (u32)((u64)arg1 & 0xFFFFFFFFu);
+        u32 w    = (u32)((u64)arg2 >> 32);
+        u32 h    = (u32)((u64)arg2 & 0xFFFFFFFFu);
+        return (long)v3d_fb_capture(bo, sx, sy, w, h);
+    }
+
+    case SYS_GPU_BLIT: {
+        /* arg0 = bo_handle
+         * arg1 = (src_w<<32|src_h)
+         * arg2 = (dst_x<<32|dst_y)
+         * arg3 = (dst_w<<32|dst_h)
+         * arg4 = alpha (0-255) */
+        u64 arg3 = frame->x[3];
+        u64 arg4 = frame->x[4];
+        u32 bo     = (u32)arg0;
+        u32 src_w  = (u32)((u64)arg1 >> 32);
+        u32 src_h  = (u32)((u64)arg1 & 0xFFFFFFFFu);
+        u32 dst_x  = (u32)((u64)arg2 >> 32);
+        u32 dst_y  = (u32)((u64)arg2 & 0xFFFFFFFFu);
+        u32 dst_w  = (u32)((u64)arg3 >> 32);
+        u32 dst_h  = (u32)((u64)arg3 & 0xFFFFFFFFu);
+        u8  alpha  = (u8)((u64)arg4 & 0xFFu);
+        return (long)v3d_blit_to_fb(bo, src_w, src_h, dst_x, dst_y, dst_w, dst_h, alpha);
+    }
+
+    case SYS_COMPOSITE_ANIM: {
+        /* arg0 = bo_handle
+         * arg1 = (nat_x<<32|nat_y)    — natural window position
+         * arg2 = (nat_w<<32|nat_h)    — natural window size = BO source dims
+         * arg3 = (anim_x<<32|anim_y)  — scaled rect position
+         * arg4 = (anim_w<<32|(anim_h<<16)|alpha) */
+        u64 a3 = frame->x[3];
+        u64 a4 = frame->x[4];
+        u32 bo     = (u32)arg0;
+        u32 nat_x  = (u32)((u64)arg1 >> 32);
+        u32 nat_y  = (u32)((u64)arg1 & 0xFFFFFFFFu);
+        u32 nat_w  = (u32)((u64)arg2 >> 32);
+        u32 nat_h  = (u32)((u64)arg2 & 0xFFFFFFFFu);
+        u32 anim_x = (u32)((u64)a3 >> 32);
+        u32 anim_y = (u32)((u64)a3 & 0xFFFFFFFFu);
+        u32 anim_w = (u32)((u64)a4 >> 32);
+        u32 anim_h = (u32)(((u64)a4 >> 16) & 0xFFFFu);
+        u8  alpha  = (u8)((u64)a4 & 0xFFu);
+        return (long)v3d_composite_anim(bo,
+                                        nat_x, nat_y, nat_w, nat_h,
+                                        anim_x, anim_y, anim_w, anim_h,
+                                        alpha,
+                                        g_wp_ptr, g_wp_bmpw, g_wp_bmph);
+    }
+
     default:
         kwarn("[SYS] unknown syscall #%lu from PID %lu\n",
               (unsigned long)nr, (unsigned long)task_current_pid());
