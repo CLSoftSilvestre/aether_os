@@ -62,10 +62,12 @@ _Static_assert(sizeof(block_header_t) == 16, "block_header_t must be 16 bytes");
     ((h)->size_flags = ((h)->size_flags & HDR_FREE_FLAG) | ((s) & ~HDR_FREE_FLAG))
 
 /* Heap state */
-static block_header_t *g_heap_head = NULL;   /* first block */
-static block_header_t *g_heap_tail = NULL;   /* last block (for appending) */
-static size_t          g_heap_used = 0;
+static block_header_t *g_heap_head  = NULL;   /* first block */
+static block_header_t *g_heap_tail  = NULL;   /* last block (for appending) */
+static size_t          g_heap_used  = 0;
 static size_t          g_heap_total = 0;
+static size_t          g_heap_peak  = 0;      /* high-water mark (Phase 6.2.6) */
+static u32             g_alloc_count = 0;     /* live allocation count */
 
 /* ── Internal helpers ───────────────────────────────────────────────────── */
 
@@ -163,6 +165,8 @@ void *kmalloc(size_t size)
             maybe_split(blk, size);
             HDR_SET_USED(blk);
             g_heap_used += HDR_SIZE(blk);
+            g_alloc_count++;
+            if (g_heap_used > g_heap_peak) g_heap_peak = g_heap_used;
             return (void *)(blk + 1);   /* pointer just past the header */
         }
         blk = blk->next;
@@ -180,6 +184,8 @@ void *kmalloc(size_t size)
         maybe_split(blk, size);
         HDR_SET_USED(blk);
         g_heap_used += HDR_SIZE(blk);
+        g_alloc_count++;
+        if (g_heap_used > g_heap_peak) g_heap_peak = g_heap_used;
         return (void *)(blk + 1);
     }
 
@@ -203,6 +209,7 @@ void kfree(void *ptr)
     }
 
     g_heap_used -= HDR_SIZE(blk);
+    g_alloc_count--;
     HDR_SET_FREE(blk);
     coalesce();
 }
@@ -224,4 +231,24 @@ void kmalloc_print_stats(void)
           (unsigned long)g_heap_used,
           (unsigned long)g_heap_total,
           (unsigned long)((g_heap_total - g_heap_used) >> 10));
+}
+
+void kmalloc_get_stats(kmalloc_stats_t *out)
+{
+    if (!out) return;
+
+    u32 live = 0, free_blks = 0;
+    block_header_t *blk = g_heap_head;
+    while (blk) {
+        if (HDR_IS_FREE(blk)) free_blks++;
+        else                   live++;
+        blk = blk->next;
+    }
+
+    out->heap_total  = (u64)g_heap_total;
+    out->heap_used   = (u64)g_heap_used;
+    out->heap_free   = (u64)(g_heap_total - g_heap_used);
+    out->heap_peak   = (u64)g_heap_peak;
+    out->live_allocs = live;
+    out->free_blocks = free_blks;
 }

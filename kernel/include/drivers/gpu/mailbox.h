@@ -54,12 +54,20 @@
 #define MBOX_TAG_SET_POWER_STATE  0x00038001u
 #define MBOX_TAG_GET_CLOCK_RATE   0x00030002u
 #define MBOX_TAG_SET_CLOCK_RATE   0x00038002u
+#define MBOX_TAG_GET_MAX_CLOCK_RATE  0x00030004u  /* Phase 6.2.1 */
+#define MBOX_TAG_GET_MIN_CLOCK_RATE  0x00030007u  /* Phase 6.2.1 */
+#define MBOX_TAG_GET_TEMPERATURE     0x00030006u  /* Phase 6.2.4 — millideg C */
+#define MBOX_TAG_GET_MAX_TEMPERATURE 0x0003000Au  /* Phase 6.2.4 */
 
 /* ── Device IDs (for SET/GET_POWER_STATE) ─────────────────────────────── */
 #define MBOX_DEV_V3D  10u   /* V3D GPU on BCM2711 */
 
 /* ── Clock IDs (for GET/SET_CLOCK_RATE) ──────────────────────────────── */
 #define MBOX_CLK_V3D  5u
+#define MBOX_CLK_ARM  3u    /* ARM CPU clock — Phase 6.2.1 */
+
+/* ── Temperature sensor IDs (for GET_TEMPERATURE) ────────────────────── */
+#define MBOX_TEMP_SOC  0u   /* Main SoC temperature sensor */
 
 /* ── Power state flags ────────────────────────────────────────────────── */
 #define MBOX_POWER_ON    (1u << 0)   /* set = on, clear = off */
@@ -89,5 +97,10 @@ u32 mailbox_get_firmware_rev(void);
 int mailbox_set_power_state(u32 device_id, u32 flags);
 u32 mailbox_get_power_state(u32 device_id);
 u32 mailbox_get_clock_rate(u32 clock_id);
+u32 mailbox_get_max_clock_rate(u32 clock_id);   /* Phase 6.2.1 */
+u32 mailbox_get_min_clock_rate(u32 clock_id);   /* Phase 6.2.1 */
+int mailbox_set_clock_rate(u32 clock_id, u32 rate_hz); /* Phase 6.2.1 — returns actual Hz in *rate_hz */
+u32 mailbox_get_temperature(u32 sensor_id);     /* Phase 6.2.4 — millidegrees C */
+u32 mailbox_get_max_temperature(u32 sensor_id); /* Phase 6.2.4 */
 
 #endif /* DRIVERS_GPU_MAILBOX_H */

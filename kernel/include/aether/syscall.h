@@ -83,9 +83,17 @@
 #define SYS_WRITE        34   /* sys_write(fd, buf, len) → bytes written     */
 
 /* AetherOS-specific extensions */
-#define SYS_INITRD_LS   500   /* sys_initrd_ls(buf, len) → bytes written     */
-#define SYS_INITRD_READ 501   /* sys_initrd_read(name, buf, len) → bytes     */
-#define SYS_PMM_STATS   502   /* → (free_pages << 32) | total_pages          */
+#define SYS_INITRD_LS     500   /* sys_initrd_ls(buf, len) → bytes written     */
+#define SYS_INITRD_READ   501   /* sys_initrd_read(name, buf, len) → bytes     */
+#define SYS_PMM_STATS     502   /* → (free_pages << 32) | total_pages          */
+#define SYS_KMALLOC_STATS 503   /* (buf_ptr → kmalloc_stats_t) → 0  Phase 6.2.6 */
+
+/* Power management syscalls (Phase 6.2) */
+#define SYS_POWER_CPUFREQ_GET  920  /* () → current CPU clock in Hz                    */
+#define SYS_POWER_CPUFREQ_GOV  921  /* (gov: 0=perf,1=ondemand,2=powersave | -1=get)
+                                     *   → 0 on set, or current governor on get         */
+#define SYS_POWER_THERMAL      922  /* () → SoC temperature in millidegrees C, or -1   */
+#define SYS_POWER_DPMS         923  /* (0=blank,1=wake,2=status) → 0 or blanked flag   */
 
 /* Graphics syscalls (Phase 4.1) — arg packing documented in syscall.c */
 #define SYS_FB_FILL     601   /* fill rect:  (x<<32|y, w<<32|h, color)       */

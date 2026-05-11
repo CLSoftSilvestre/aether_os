@@ -36,7 +36,7 @@ int  sock_bind(int fd, u16 port);
 int  sock_sendto(int fd, u32 dst_ip, u16 dst_port,
                  const u8 *buf, u16 len);
 
-/* Receive UDP datagram. Fills *from_ip/*from_port. Returns bytes or -1. */
+/* Receive UDP datagram. Fills from_ip and from_port. Returns bytes or -1. */
 int  sock_recvfrom(int fd, u8 *buf, u16 maxlen,
                    u32 *from_ip, u16 *from_port, u32 timeout_ms);
 

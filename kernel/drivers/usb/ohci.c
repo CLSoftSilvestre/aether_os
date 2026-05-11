@@ -15,6 +15,7 @@
 #include "drivers/input/pl050_kbd.h"
 #include "drivers/input/pl050_mouse.h"
 #include "drivers/input/keycodes.h"
+#include "drivers/timer/arm_timer.h"
 #include "aether/printk.h"
 #include "aether/types.h"
 
@@ -586,6 +587,9 @@ static void process_tablet_report(const u8 *rep)
     mouse_post_event(mouse_event_pack(me));
 }
 
+/* ── Activity flag (read by usb_hid_get_activity / autosuspend) ─────────── */
+static volatile u32 g_hid_activity = 0;   /* set when any report is processed */
+
 /* ── usb_hid_poll (called at 100 Hz from timer IRQ) ────────────────────── */
 
 static volatile u32 g_poll_n;   /* how many times poll has been called */
@@ -655,6 +659,7 @@ void usb_hid_poll(void)
                       g_int_buf[i][0], g_int_buf[i][1], g_int_buf[i][2], g_int_buf[i][3],
                       g_int_buf[i][4], g_int_buf[i][5], g_int_buf[i][6], g_int_buf[i][7]);
             }
+            g_hid_activity = 1;
             if (dev->is_kbd)
                 process_kbd_report(dev, g_int_buf[i]);
             else
@@ -817,4 +822,76 @@ void usb_hid_init(void)
               (unsigned long)g_int_td[i].be);
     }
     kinfo("USB: HID subsystem ready (%d device(s))\n", g_hid_count);
+}
+
+/* ── Activity flag & autosuspend (Phase 6.2.2) ──────────────────────────── */
+/*
+ * Autosuspend strategy: set ED_SKIP on all interrupt EDs to stop the HC
+ * from polling those endpoints.  This is safe to call from the timer IRQ
+ * context (no busy-waits, unlike HCFS_SUS which needs a 20 ms resume delay).
+ *
+ * Every USB_PROBE_SECS seconds while suspended we clear ED_SKIP for one
+ * 1-second probe window.  If a report arrives in that window, activity is
+ * recorded and the controller stays resumed.  If not, it re-suspends.
+ */
+
+#define USB_PROBE_SECS  60u   /* probe every 60 s while suspended */
+
+bool usb_hid_get_activity(void)
+{
+    if (!g_hid_activity) return false;
+    g_hid_activity = 0;
+    return true;
+}
+
+static bool g_usb_suspended   = false;
+static u64  g_usb_last_active = 0;
+static u32  g_usb_probe_cnt   = 0;   /* seconds counted while suspended */
+
+static void ohci_ed_skip_set(bool skip)
+{
+    for (int i = 0; i < g_hid_count; i++) {
+        if (skip)
+            g_int_ed[i].flags |=  (u32)ED_SKIP;
+        else
+            g_int_ed[i].flags &= ~(u32)ED_SKIP;
+    }
+    DSB();
+}
+
+void usb_autosuspend_activity(void)
+{
+    g_usb_last_active = timer_get_ticks();
+    if (g_usb_suspended) {
+        ohci_ed_skip_set(false);
+        g_usb_suspended  = false;
+        g_usb_probe_cnt  = 0;
+        kinfo("[USB autosuspend] activity-triggered resume\n");
+    }
+}
+
+void usb_autosuspend_tick(void)
+{
+    if (!g_ohci_base || !g_hid_count) return;
+
+    if (g_usb_suspended) {
+        /* Periodic probe: briefly un-skip EDs for one 1-second window */
+        if (++g_usb_probe_cnt >= USB_PROBE_SECS) {
+            g_usb_probe_cnt = 0;
+            ohci_ed_skip_set(false);
+            g_usb_suspended = false;
+            /* If no activity arrives in the next ~1 s, will re-suspend */
+            kinfo("[USB autosuspend] probe window open\n");
+        }
+        return;
+    }
+
+    u64 idle = timer_get_ticks() - g_usb_last_active;
+    if (idle >= (u64)USB_AUTOSUSPEND_TICKS) {
+        ohci_ed_skip_set(true);
+        g_usb_suspended = true;
+        g_usb_probe_cnt = 0;
+        kinfo("[USB autosuspend] suspended (idle %llu s)\n",
+              (unsigned long long)(idle / 100u));
+    }
 }

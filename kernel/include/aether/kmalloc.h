@@ -30,4 +30,16 @@ void *kzalloc(size_t size);
 /* Diagnostic: print heap statistics */
 void kmalloc_print_stats(void);
 
+/* Phase 6.2.6 — structured heap statistics (written by kmalloc_get_stats) */
+typedef struct {
+    u64 heap_total;    /* total heap capacity in bytes */
+    u64 heap_used;     /* bytes in live allocations (excluding headers) */
+    u64 heap_free;     /* bytes in free blocks (excluding headers) */
+    u64 heap_peak;     /* high-water mark of heap_used */
+    u32 live_allocs;   /* number of live (used) blocks */
+    u32 free_blocks;   /* number of free blocks */
+} kmalloc_stats_t;
+
+void kmalloc_get_stats(kmalloc_stats_t *out);
+
 #endif /* AETHER_KMALLOC_H */

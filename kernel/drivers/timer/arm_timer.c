@@ -24,8 +24,12 @@
 #include "drivers/irq/gic_v2.h"
 #include "drivers/input/virtio_input.h"
 #include "drivers/usb/ohci.h"
+#include "drivers/power/cpufreq.h"
+#include "drivers/power/thermal.h"
+#include "drivers/power/dpms.h"
 #include "aether/net.h"
 #include "aether/printk.h"
+#include "aether/scheduler.h"
 
 /* Tick counter — incremented by timer_irq_handler() on every timer interrupt */
 static volatile u64 g_ticks = 0;
@@ -111,13 +115,46 @@ void timer_init(void)
  * Must re-arm the timer by rewriting CNTP_TVAL_EL0, otherwise only
  * one interrupt fires. (The hardware clears TVAL to 0 when it fires.)
  */
+/* ── Power management sampling (Phase 6.2) ────────────────────────────── */
+/* Count idle ticks within each 1-second (TIMER_HZ tick) window.
+ * The idle task's name is "idle"; checking the first two chars is cheap. */
+static u32 s_pm_idle  = 0;
+static u32 s_pm_total = 0;
+
 void timer_irq_handler(void)
 {
     g_ticks++;
     write_cntp_tval(g_interval);
+
+    /* Track idle vs busy for ondemand governor */
+    {
+        const char *name = task_current_name();
+        s_pm_total++;
+        if (name[0] == 'i' && name[1] == 'd')   /* "idle" */
+            s_pm_idle++;
+    }
+
     virtio_input_poll();
+
+    /* USB: record input activity for DPMS and autosuspend */
+    if (usb_hid_get_activity()) {
+        dpms_activity();
+        usb_autosuspend_activity();
+    }
+
     usb_hid_poll();
     net_rx_poll();
+
+    /* 1 Hz power management tick */
+    if ((g_ticks % TIMER_HZ) == 0) {
+        cpufreq_sample(s_pm_idle, s_pm_total);
+        s_pm_idle  = 0;
+        s_pm_total = 0;
+
+        thermal_tick();
+        dpms_tick();
+        usb_autosuspend_tick();
+    }
 }
 
 u64 timer_get_ticks(void)

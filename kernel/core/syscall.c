@@ -43,7 +43,11 @@
 #include "aether/dns.h"
 #include "aether/socket.h"
 #include "aether/vfs.h"
+#include "aether/kmalloc.h"
 #include "drivers/gpu/v3d.h"
+#include "drivers/power/cpufreq.h"
+#include "drivers/power/thermal.h"
+#include "drivers/power/dpms.h"
 
 /* ── Wallpaper sharing globals (Phase 6.1.x) ────────────────────────────── */
 static uintptr_t g_wp_ptr   = 0;   /* PMM physical address (kernel range) */
@@ -713,6 +717,13 @@ long syscall_dispatch(trap_frame_t *frame)
     case SYS_PMM_STATS:
         return do_sys_pmm_stats();
 
+    case SYS_KMALLOC_STATS: {
+        kmalloc_stats_t *s = (kmalloc_stats_t *)arg0;
+        if (!s) return -1;
+        kmalloc_get_stats(s);
+        return 0;
+    }
+
     case SYS_SCHED_YIELD:
         return do_sys_sched_yield();
 
@@ -1002,6 +1013,30 @@ long syscall_dispatch(trap_frame_t *frame)
                                         anim_x, anim_y, anim_w, anim_h,
                                         alpha,
                                         g_wp_ptr, g_wp_bmpw, g_wp_bmph);
+    }
+
+    /* ── Power management (Phase 6.2) ───────────────────────────────────── */
+
+    case SYS_POWER_CPUFREQ_GET:
+        return (long)cpufreq_get_current_hz();
+
+    case SYS_POWER_CPUFREQ_GOV: {
+        long gov = (long)arg0;
+        if (gov < 0)
+            return (long)cpufreq_get_governor();
+        cpufreq_set_governor((int)gov);
+        return 0;
+    }
+
+    case SYS_POWER_THERMAL:
+        return (long)thermal_get_mc();
+
+    case SYS_POWER_DPMS: {
+        long cmd = (long)arg0;
+        if (cmd == 0) { dpms_force_blank(); return 0; }
+        if (cmd == 1) { dpms_force_wake();  return 0; }
+        /* cmd == 2: status query */
+        return dpms_is_blanked() ? 1L : 0L;
     }
 
     default:

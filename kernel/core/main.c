@@ -36,6 +36,10 @@
 #include "drivers/pci/pci_ecam.h"
 #include "drivers/gpu/mailbox.h"
 #include "drivers/gpu/v3d.h"
+#include "drivers/power/boot_prof.h"
+#include "drivers/power/cpufreq.h"
+#include "drivers/power/thermal.h"
+#include "drivers/power/dpms.h"
 
 extern u8 __stack_top[];
 
@@ -46,22 +50,26 @@ void kernel_main(void)
 {
     /* ── 1. UART — first, so we can see output immediately ─────────── */
     uart_init();
+    boot_prof_stamp("uart");
     uart_puts("\r\n");
     uart_puts("╔══════════════════════════════════════╗\r\n");
-    uart_puts("║         AetherOS v0.0.6              ║\r\n");
-    uart_puts("║   Phase 5.2 — Filesystem & Storage   ║\r\n");
+    uart_puts("║         AetherOS v0.0.7              ║\r\n");
+    uart_puts("║  Phase 6.2 — Power Management        ║\r\n");
     uart_puts("╚══════════════════════════════════════╝\r\n");
     uart_puts("\r\n");
 
     /* ── 2. Exception vector table ──────────────────────────────────── */
     exceptions_init();
+    boot_prof_stamp("exceptions");
 
     /* ── 3. Physical Memory Manager ─────────────────────────────────── */
     pmm_init();
     pmm_print_stats();
+    boot_prof_stamp("pmm");
 
     /* ── 4. Kernel heap ──────────────────────────────────────────────── */
     kmalloc_init();
+    boot_prof_stamp("kmalloc");
 
     /* ── 5. MMU ─────────────────────────────────────────────────────── */
     /*
@@ -70,6 +78,7 @@ void kernel_main(void)
      * Kernel region: 0x40000000–0x6FFFFFFF (AP=EL1_RW only).
      */
     vmm_init();
+    boot_prof_stamp("vmm");
 
     /* ── 5b. Framebuffer (after MMU so caches are on) ───────────────── */
     /*
@@ -81,11 +90,13 @@ void kernel_main(void)
      */
     ramfb_init();
     fb_console_init();
+    boot_prof_stamp("framebuffer");
 
     /* ── 6. GIC + Timer ─────────────────────────────────────────────── */
     gic_init();
     uart_enable_rx_irq();
     timer_init();
+    boot_prof_stamp("gic+timer");
 
     /*
      * Input subsystem — Phase 4.5.
@@ -101,6 +112,7 @@ void kernel_main(void)
     cursor_init();
     virtio_input_init();   /* kept for pl050/PS2 fallback; USB replaces it */
     usb_hid_init();
+    boot_prof_stamp("input+usb");
 
     /* ── 6b. Network (after framebuffer, before scheduler) ─────────── */
     /*
@@ -110,10 +122,15 @@ void kernel_main(void)
      * 100 Hz for ongoing packet delivery after DHCP.
      */
     net_init();
+    boot_prof_stamp("net+dhcp");
 
-    /* ── 6b.5 GPU / V3D (Phase 6.1) ────────────────────────────────── */
+    /* ── 6b.5 GPU / V3D + Power (Phase 6.1 / 6.2) ──────────────────── */
     mailbox_init();
     v3d_init();
+    cpufreq_init();
+    thermal_init();
+    dpms_init();
+    boot_prof_stamp("gpu+power");
 
     /* ── 6c. Block storage + VFS (Phase 5.2) ───────────────────────── */
     /*
@@ -126,15 +143,18 @@ void kernel_main(void)
     fat32_mount();
     aetherfs_mount();   /* device 1; no-op if second disk not attached */
     vfs_init();
+    boot_prof_stamp("storage+vfs");
 
     /* ── 7. Scheduler + Pipe + WM subsystem ────────────────────────── */
     pipe_init();
     wm_init();
     scheduler_init();
     scheduler_add_idle();
+    boot_prof_stamp("scheduler+wm");
 
     /* ── 8. initrd ──────────────────────────────────────────────────── */
     initrd_init();
+    boot_prof_stamp("initrd");
 
     /* ── 9. Spawn first user process from initrd ELF ───────────────── */
     /*
@@ -144,11 +164,13 @@ void kernel_main(void)
      */
     if (process_spawn("/init") != 0)
         kpanic("kernel_main: failed to spawn /init\n");
+    boot_prof_stamp("spawn_init");
 
     /* ── 10. Enable IRQs and enter idle loop ────────────────────────── */
     /* Seed the tick counter with the real elapsed boot time so that
      * userspace uptime counts from QEMU launch, not from this moment. */
     timer_seed_from_cntpct();
+    boot_prof_print();   /* print boot timeline before entering idle */
     kinfo("Enabling IRQs — entering idle loop\n");
     kinfo("────────────────────────────────────────────\n");
     __asm__ volatile("msr daifclr, #2" ::: "memory");

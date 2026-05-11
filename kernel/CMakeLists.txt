@@ -67,6 +67,12 @@ set(KERNEL_SOURCES
     drivers/gpu/mailbox.c
     drivers/gpu/v3d.c
 
+    # Drivers — Power Management (Phase 6.2)
+    drivers/power/cpufreq.c
+    drivers/power/thermal.c
+    drivers/power/dpms.c
+    drivers/power/boot_prof.c
+
     # Drivers — VirtIO net (Phase 5.1)
     drivers/net/virtio_net.c
 

@@ -250,4 +250,20 @@ void usb_hid_init(void);
  */
 void usb_hid_poll(void);
 
+/*
+ * usb_hid_get_activity — returns true once if any HID report was processed
+ * since the last call, then clears the flag.  Used by the power-management
+ * tick to track input activity for DPMS and USB autosuspend.
+ */
+bool usb_hid_get_activity(void);
+
+/* Phase 6.2.2 — USB autosuspend */
+#define USB_AUTOSUSPEND_TICKS  3000u  /* suspend after 30 s at 100 Hz */
+
+/* Record input activity (resets the idle timer; resumes if suspended). */
+void usb_autosuspend_activity(void);
+
+/* Called every 1 Hz from the power-management tick. */
+void usb_autosuspend_tick(void);
+
 #endif /* AETHER_USB_OHCI_H */

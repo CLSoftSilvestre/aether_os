@@ -167,3 +167,94 @@ u32 mailbox_get_clock_rate(u32 clock_id)
     if (mailbox_call(MBOX_CH_PROP, g_buf) < 0) return 0;
     return g_buf[6];
 }
+
+u32 mailbox_get_max_clock_rate(u32 clock_id)
+{
+    if (!g_present) return 0;
+
+    g_buf[0] = 9 * 4;
+    g_buf[1] = MBOX_CODE_REQUEST;
+    g_buf[2] = MBOX_TAG_GET_MAX_CLOCK_RATE;
+    g_buf[3] = 8;
+    g_buf[4] = 0;
+    g_buf[5] = clock_id;
+    g_buf[6] = 0;
+    g_buf[7] = 0;
+    g_buf[8] = MBOX_TAG_END;
+
+    if (mailbox_call(MBOX_CH_PROP, g_buf) < 0) return 0;
+    return g_buf[6];
+}
+
+u32 mailbox_get_min_clock_rate(u32 clock_id)
+{
+    if (!g_present) return 0;
+
+    g_buf[0] = 9 * 4;
+    g_buf[1] = MBOX_CODE_REQUEST;
+    g_buf[2] = MBOX_TAG_GET_MIN_CLOCK_RATE;
+    g_buf[3] = 8;
+    g_buf[4] = 0;
+    g_buf[5] = clock_id;
+    g_buf[6] = 0;
+    g_buf[7] = 0;
+    g_buf[8] = MBOX_TAG_END;
+
+    if (mailbox_call(MBOX_CH_PROP, g_buf) < 0) return 0;
+    return g_buf[6];
+}
+
+int mailbox_set_clock_rate(u32 clock_id, u32 rate_hz)
+{
+    if (!g_present) return -1;
+
+    /* Value buffer: clock_id(4) + rate_hz(4) + skip_turbo(4) = 12 bytes */
+    g_buf[0]  = 10 * 4;
+    g_buf[1]  = MBOX_CODE_REQUEST;
+    g_buf[2]  = MBOX_TAG_SET_CLOCK_RATE;
+    g_buf[3]  = 12;
+    g_buf[4]  = 0;
+    g_buf[5]  = clock_id;
+    g_buf[6]  = rate_hz;
+    g_buf[7]  = 0;    /* skip_turbo = 0 */
+    g_buf[8]  = 0;
+    g_buf[9]  = MBOX_TAG_END;
+
+    return mailbox_call(MBOX_CH_PROP, g_buf);
+}
+
+u32 mailbox_get_temperature(u32 sensor_id)
+{
+    if (!g_present) return 0;
+
+    g_buf[0] = 9 * 4;
+    g_buf[1] = MBOX_CODE_REQUEST;
+    g_buf[2] = MBOX_TAG_GET_TEMPERATURE;
+    g_buf[3] = 8;
+    g_buf[4] = 0;
+    g_buf[5] = sensor_id;
+    g_buf[6] = 0;      /* VC fills with millidegrees C */
+    g_buf[7] = 0;
+    g_buf[8] = MBOX_TAG_END;
+
+    if (mailbox_call(MBOX_CH_PROP, g_buf) < 0) return 0;
+    return g_buf[6];
+}
+
+u32 mailbox_get_max_temperature(u32 sensor_id)
+{
+    if (!g_present) return 0;
+
+    g_buf[0] = 9 * 4;
+    g_buf[1] = MBOX_CODE_REQUEST;
+    g_buf[2] = MBOX_TAG_GET_MAX_TEMPERATURE;
+    g_buf[3] = 8;
+    g_buf[4] = 0;
+    g_buf[5] = sensor_id;
+    g_buf[6] = 0;
+    g_buf[7] = 0;
+    g_buf[8] = MBOX_TAG_END;
+
+    if (mailbox_call(MBOX_CH_PROP, g_buf) < 0) return 0;
+    return g_buf[6];
+}
