@@ -364,6 +364,321 @@ else()
     set(INTERP_TARGET "")
 endif()
 
+# ── libaether_posix — POSIX compatibility shim (Phase 7.0) ───────────────────
+#
+# Provides a full POSIX C API surface for porting external software (NetSurf,
+# zlib, libpng, QuickJS, etc.) to AetherOS without modifying their source code.
+#
+# Compile flags: same USER_COMPILE_FLAGS but with -nostdinc satisfied by our
+# own include/ directory (which shadows the partial lib/include/ headers).
+# lib/include/ is still listed second so that <sys.h> resolves to the AetherOS
+# syscall interface.
+
+set(POSIX_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/libaether_posix)
+set(POSIX_INC_DIR ${POSIX_SRC_DIR}/include)
+
+add_library(libaether_posix STATIC
+    ${POSIX_SRC_DIR}/errno.c
+    ${POSIX_SRC_DIR}/memory.c
+    ${POSIX_SRC_DIR}/string_posix.c
+    ${POSIX_SRC_DIR}/stdio_posix.c
+    ${POSIX_SRC_DIR}/time_posix.c
+    ${POSIX_SRC_DIR}/pthread_stub.c
+    ${POSIX_SRC_DIR}/socket_posix.c
+    ${POSIX_SRC_DIR}/dirent_posix.c
+    ${POSIX_SRC_DIR}/misc_posix.c
+    ${POSIX_SRC_DIR}/setjmp_aarch64.S   # AArch64 setjmp/longjmp (required by libpng)
+)
+
+# Include order matters:
+#   1. POSIX shim headers (complete, shadow lib/include for external apps)
+#   2. lib/include (for <sys.h>, <input.h> — AetherOS syscall interface)
+target_include_directories(libaether_posix PUBLIC
+    ${POSIX_INC_DIR}       # POSIX-complete headers (first → shadows lib/include)
+    lib/include            # sys.h, input.h — AetherOS specifics
+)
+
+target_compile_options(libaether_posix PRIVATE
+    ${USER_COMPILE_FLAGS}
+    -Wno-implicit-function-declaration
+    -Wno-sign-compare
+    -Wno-unused-parameter
+    -Wno-unused-function
+)
+
+# ── posix_test — Phase 7.0 integration test (Task 7.0.8) ─────────────────────
+#
+# A mini HTTP wget that exercises all libaether_posix components.
+# Launch inside AetherOS: posix_test http://10.0.2.2:8080/test.html
+
+add_executable(user_posix_test
+    apps/posix_test/main.c
+    lib/crt0.S
+)
+
+target_include_directories(user_posix_test PRIVATE
+    ${POSIX_INC_DIR}
+    lib/include
+)
+
+target_compile_options(user_posix_test PRIVATE
+    ${USER_COMPILE_FLAGS}
+    -Wno-unused-parameter
+)
+
+target_link_libraries(user_posix_test PRIVATE libaether_posix)
+
+target_link_options(user_posix_test PRIVATE
+    -T ${USER_LINKER_SCRIPT} -nostdlib -static -Wl,--build-id=none
+)
+
+set_target_properties(user_posix_test PROPERTIES
+    OUTPUT_NAME "posix_test" SUFFIX ""
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
+)
+
+# ── vendor_zlib — zlib 1.3.1 (Phase 7.1) ────────────────────────────────────
+#
+# Prerequisites: run  scripts/fetch_zlib.sh  once to populate vendor/zlib/.
+# gz* files (gzclose/gzlib/gzread/gzwrite) are omitted — libpng only uses the
+# in-memory deflate/inflate API, not the gzip file layer.
+
+set(ZLIB_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/zlib)
+
+if(EXISTS ${ZLIB_SRC_DIR}/zlib.h)
+
+    add_library(vendor_zlib STATIC
+        ${ZLIB_SRC_DIR}/adler32.c
+        ${ZLIB_SRC_DIR}/compress.c
+        ${ZLIB_SRC_DIR}/crc32.c
+        ${ZLIB_SRC_DIR}/deflate.c
+        ${ZLIB_SRC_DIR}/infback.c
+        ${ZLIB_SRC_DIR}/inffast.c
+        ${ZLIB_SRC_DIR}/inflate.c
+        ${ZLIB_SRC_DIR}/inftrees.c
+        ${ZLIB_SRC_DIR}/trees.c
+        ${ZLIB_SRC_DIR}/uncompr.c
+        ${ZLIB_SRC_DIR}/zutil.c
+    )
+
+    target_include_directories(vendor_zlib PUBLIC
+        ${ZLIB_SRC_DIR}      # zlib.h, zconf.h
+        ${POSIX_INC_DIR}     # stddef.h, stdint.h, stdlib.h, string.h ...
+        lib/include          # sys.h (AetherOS syscall interface)
+    )
+
+    target_compile_options(vendor_zlib PRIVATE
+        ${USER_COMPILE_FLAGS}
+        -DHAVE_UNISTD_H
+        -Wno-implicit-function-declaration
+        -Wno-unused-function
+        -Wno-unused-variable
+    )
+
+    set(ZLIB_TARGET vendor_zlib)
+    message(STATUS "zlib 1.3.x found — vendor_zlib will be built")
+
+else()
+    message(STATUS
+        "zlib source not found in vendor/zlib/ — "
+        "run scripts/fetch_zlib.sh then re-configure.  "
+        "vendor_zlib / vendor_libpng / vendor_libjpeg / img_test will NOT be built.")
+    set(ZLIB_TARGET "")
+endif()
+
+# ── vendor_libpng — libpng 1.6.x (Phase 7.1) ────────────────────────────────
+#
+# Prerequisites: fetch_zlib.sh + fetch_libpng.sh (which installs pnglibconf.h).
+# ARM NEON files (arm/*.c) are excluded; PNG_ARM_NEON_OPT=0 set in pnglibconf.h
+# by the fetch script.
+
+set(LIBPNG_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/libpng)
+
+if(EXISTS ${LIBPNG_SRC_DIR}/png.h AND ZLIB_TARGET)
+
+    add_library(vendor_libpng STATIC
+        ${LIBPNG_SRC_DIR}/png.c
+        ${LIBPNG_SRC_DIR}/pngerror.c
+        ${LIBPNG_SRC_DIR}/pngget.c
+        ${LIBPNG_SRC_DIR}/pngmem.c
+        ${LIBPNG_SRC_DIR}/pngpread.c
+        ${LIBPNG_SRC_DIR}/pngread.c
+        ${LIBPNG_SRC_DIR}/pngrio.c
+        ${LIBPNG_SRC_DIR}/pngrtran.c
+        ${LIBPNG_SRC_DIR}/pngrutil.c
+        ${LIBPNG_SRC_DIR}/pngset.c
+        ${LIBPNG_SRC_DIR}/pngtrans.c
+        ${LIBPNG_SRC_DIR}/pngwio.c
+        ${LIBPNG_SRC_DIR}/pngwrite.c
+        ${LIBPNG_SRC_DIR}/pngwtran.c
+        ${LIBPNG_SRC_DIR}/pngwutil.c
+    )
+
+    target_include_directories(vendor_libpng PUBLIC
+        ${LIBPNG_SRC_DIR}    # png.h, pngconf.h, pnglibconf.h
+        ${ZLIB_SRC_DIR}      # zlib.h (libpng includes it directly)
+        ${POSIX_INC_DIR}
+        lib/include
+    )
+
+    target_compile_options(vendor_libpng PRIVATE
+        ${USER_COMPILE_FLAGS}
+        -DPNG_ARM_NEON_OPT=0
+        -Wno-implicit-function-declaration
+        -Wno-unused-function
+        -Wno-sign-compare
+        -Wno-unused-but-set-variable
+    )
+
+    target_link_libraries(vendor_libpng PUBLIC vendor_zlib)
+
+    set(LIBPNG_TARGET vendor_libpng)
+    message(STATUS "libpng 1.6.x found — vendor_libpng will be built")
+
+else()
+    if(NOT ZLIB_TARGET)
+        # Already warned above
+    else()
+        message(STATUS
+            "libpng source not found in vendor/libpng/ — "
+            "run scripts/fetch_libpng.sh then re-configure.")
+    endif()
+    set(LIBPNG_TARGET "")
+endif()
+
+# ── vendor_libjpeg — libjpeg 9f (Phase 7.1) ──────────────────────────────────
+#
+# IJG reference JPEG library, pure C.  jmemnobs.c uses malloc/free for the
+# memory manager (no backing store) — matches our libaether_posix heap.
+# Prerequisite: run scripts/fetch_libjpeg.sh once.
+
+set(LIBJPEG_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/libjpeg)
+
+if(EXISTS ${LIBJPEG_SRC_DIR}/jpeglib.h)
+
+    add_library(vendor_libjpeg STATIC
+        ${LIBJPEG_SRC_DIR}/jaricom.c
+        ${LIBJPEG_SRC_DIR}/jcapimin.c
+        ${LIBJPEG_SRC_DIR}/jcapistd.c
+        ${LIBJPEG_SRC_DIR}/jcarith.c
+        ${LIBJPEG_SRC_DIR}/jccoefct.c
+        ${LIBJPEG_SRC_DIR}/jccolor.c
+        ${LIBJPEG_SRC_DIR}/jcdctmgr.c
+        ${LIBJPEG_SRC_DIR}/jchuff.c
+        ${LIBJPEG_SRC_DIR}/jcinit.c
+        ${LIBJPEG_SRC_DIR}/jcmainct.c
+        ${LIBJPEG_SRC_DIR}/jcmarker.c
+        ${LIBJPEG_SRC_DIR}/jcmaster.c
+        ${LIBJPEG_SRC_DIR}/jcomapi.c
+        ${LIBJPEG_SRC_DIR}/jcparam.c
+        ${LIBJPEG_SRC_DIR}/jcprepct.c
+        ${LIBJPEG_SRC_DIR}/jcsample.c
+        ${LIBJPEG_SRC_DIR}/jctrans.c
+        ${LIBJPEG_SRC_DIR}/jdapimin.c
+        ${LIBJPEG_SRC_DIR}/jdapistd.c
+        ${LIBJPEG_SRC_DIR}/jdarith.c
+        ${LIBJPEG_SRC_DIR}/jdatadst.c
+        ${LIBJPEG_SRC_DIR}/jdatasrc.c
+        ${LIBJPEG_SRC_DIR}/jdcoefct.c
+        ${LIBJPEG_SRC_DIR}/jdcolor.c
+        ${LIBJPEG_SRC_DIR}/jddctmgr.c
+        ${LIBJPEG_SRC_DIR}/jdhuff.c
+        ${LIBJPEG_SRC_DIR}/jdinput.c
+        ${LIBJPEG_SRC_DIR}/jdmainct.c
+        ${LIBJPEG_SRC_DIR}/jdmarker.c
+        ${LIBJPEG_SRC_DIR}/jdmaster.c
+        ${LIBJPEG_SRC_DIR}/jdmerge.c
+        ${LIBJPEG_SRC_DIR}/jdpostct.c
+        ${LIBJPEG_SRC_DIR}/jdsample.c
+        ${LIBJPEG_SRC_DIR}/jdtrans.c
+        ${LIBJPEG_SRC_DIR}/jerror.c
+        ${LIBJPEG_SRC_DIR}/jfdctflt.c
+        ${LIBJPEG_SRC_DIR}/jfdctfst.c
+        ${LIBJPEG_SRC_DIR}/jfdctint.c
+        ${LIBJPEG_SRC_DIR}/jidctflt.c
+        ${LIBJPEG_SRC_DIR}/jidctfst.c
+        ${LIBJPEG_SRC_DIR}/jidctint.c
+        ${LIBJPEG_SRC_DIR}/jmemmgr.c
+        ${LIBJPEG_SRC_DIR}/jmemnobs.c   # no-backing-store memory manager
+        ${LIBJPEG_SRC_DIR}/jquant1.c
+        ${LIBJPEG_SRC_DIR}/jquant2.c
+        ${LIBJPEG_SRC_DIR}/jutils.c
+    )
+
+    target_include_directories(vendor_libjpeg PUBLIC
+        ${LIBJPEG_SRC_DIR}   # jpeglib.h, jconfig.h, jmorecfg.h, jerror.h
+        ${POSIX_INC_DIR}
+        lib/include
+    )
+
+    target_compile_options(vendor_libjpeg PRIVATE
+        ${USER_COMPILE_FLAGS}
+        -Wno-implicit-function-declaration
+        -Wno-sign-compare
+        -Wno-unused-parameter
+        -Wno-unused-variable
+        -Wno-shift-negative-value
+    )
+
+    set(LIBJPEG_TARGET vendor_libjpeg)
+    message(STATUS "libjpeg 9f found — vendor_libjpeg will be built")
+
+else()
+    message(STATUS
+        "libjpeg source not found in vendor/libjpeg/ — "
+        "run scripts/fetch_libjpeg.sh then re-configure.  "
+        "img_test will NOT be built.")
+    set(LIBJPEG_TARGET "")
+endif()
+
+# ── img_test — Phase 7.1 integration test (Task 7.1.4) ───────────────────────
+#
+# Decodes /images/test.png and /images/test.jpg from the FAT32 disk,
+# verifies 4-quadrant pixel colors, prints pass/fail.
+# Test images are generated by: python3 scripts/gen_test_images.py
+
+if(LIBPNG_TARGET AND LIBJPEG_TARGET)
+
+    add_executable(user_img_test
+        apps/img_test/main.c
+        lib/crt0.S
+    )
+
+    target_include_directories(user_img_test PRIVATE
+        ${LIBPNG_SRC_DIR}
+        ${LIBJPEG_SRC_DIR}
+        ${ZLIB_SRC_DIR}
+        ${POSIX_INC_DIR}
+        lib/include
+    )
+
+    target_compile_options(user_img_test PRIVATE
+        ${USER_COMPILE_FLAGS}
+        -Wno-unused-parameter
+    )
+
+    target_link_libraries(user_img_test PRIVATE
+        vendor_libpng
+        vendor_libjpeg
+        vendor_zlib
+        libaether_posix
+    )
+
+    target_link_options(user_img_test PRIVATE
+        -T ${USER_LINKER_SCRIPT} -nostdlib -static -Wl,--build-id=none
+    )
+
+    set_target_properties(user_img_test PROPERTIES
+        OUTPUT_NAME "img_test" SUFFIX ""
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
+    )
+
+    set(IMG_TEST_TARGET user_img_test)
+
+else()
+    set(IMG_TEST_TARGET "")
+endif()
+
 # ── initrd CPIO archive ───────────────────────────────────────────────────────
 #
 # Step 1 — package all files from initrd_staging/ into a CPIO newc archive.
@@ -385,6 +700,8 @@ add_custom_command(
             ${INITRD_FILES_SRC}/apps/tictactoe.app
             ${INITRD_FILES_SRC}/apps/telnet.app
             ${INITRD_FILES_SRC}/apps/aether_top.app
+            ${INITRD_FILES_SRC}/apps/posix_test.app
+            ${INITRD_FILES_SRC}/apps/img_test.app
     COMMENT "Copying initrd static files"
 )
 
@@ -396,8 +713,9 @@ add_custom_command(
                 ${INITRD_CPIO}
     DEPENDS user_init user_aether_term user_statusbar user_files user_textviewer
             user_calculator user_tictactoe user_widget_demo user_aether_editor
-            user_aether_http user_telnet user_aether_top
+            user_aether_http user_telnet user_aether_top user_posix_test
             ${INTERP_TARGET}
+            ${IMG_TEST_TARGET}
             ${INITRD_STAGING}/motd.txt
     COMMENT "Packaging initrd.cpio"
 )

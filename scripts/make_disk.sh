@@ -62,6 +62,24 @@ printf "-- AetherOS hello world\nprint(\"Hello from AetherOS \" .. os.version)\n
 # /tmp/ — temporary files (Phase 5.5, for script.as staging)
 mmd -i "${DISK}" ::tmp
 
+# /images/ — test images for Phase 7.1 img_test (PNG, JPEG)
+mmd -i "${DISK}" ::images
+
+IMAGES_ASSET_DIR="${SCRIPT_DIR}/../assets/images"
+echo "[DISK] Generating Phase 7.1 test images..."
+if python3 "${SCRIPT_DIR}/gen_test_images.py" "${IMAGES_ASSET_DIR}" 2>&1; then
+    img_count=0
+    for img in "${IMAGES_ASSET_DIR}"/*; do
+        [ -f "$img" ] || continue
+        fname="$(basename "${img}")"
+        mcopy -i "${DISK}" "${img}" "::images/${fname}"
+        img_count=$((img_count + 1))
+    done
+    echo "[DISK] Copied ${img_count} test image(s) to /images/"
+else
+    echo "[DISK] Note: gen_test_images.py failed — /images/ will be empty (img_test will skip JPEG)"
+fi
+
 # /apps/ — app manifests for desktop icon launcher (Phase 5.4)
 mmd -i "${DISK}" ::apps
 
