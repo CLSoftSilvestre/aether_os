@@ -1060,3 +1060,37 @@ void gfx_icon_blit(const unsigned *pixels, unsigned src_w, unsigned src_h,
         }
     }
 }
+
+/* Blit a strided pixel buffer into the current render target (if active) or
+ * directly to the live framebuffer.  Transparent-pixel handling is not applied;
+ * all pixels are copied as-is.  Use this instead of sys_fb_blit() when the
+ * call site may be inside a gfx_begin_frame / gfx_end_frame block. */
+void gfx_raw_blit(const unsigned *src, unsigned src_stride_px,
+                  int dst_x, int dst_y, unsigned w, unsigned h)
+{
+    if (!src || w == 0 || h == 0) return;
+    if (g_rt_buf) {
+        int rx0  = dst_x - g_rt_off_x;
+        int ry0  = dst_y - g_rt_off_y;
+        int col0 = rx0 < 0 ? -rx0 : 0;
+        int col1 = rx0 + (int)w > (int)g_rt_w ? (int)g_rt_w - rx0 : (int)w;
+        if (col1 <= col0) return;
+        int cw = col1 - col0;
+        for (unsigned row = 0; row < h; row++) {
+            int ry = ry0 + (int)row;
+            if (ry < 0 || ry >= (int)g_rt_h) continue;
+            const unsigned *s = src + row * src_stride_px + (unsigned)col0;
+            unsigned       *d = g_rt_buf + ry * (int)g_rt_w + rx0 + col0;
+            for (int c = 0; c < cw; c++) d[c] = s[c];
+            int ax = rx0 + col0, bx = ax + cw;
+            if (ax < g_dr_x0) g_dr_x0 = ax;
+            if (bx > g_dr_x1) g_dr_x1 = bx;
+            if (ry     < g_dr_y0) g_dr_y0 = ry;
+            if (ry + 1 > g_dr_y1) g_dr_y1 = ry + 1;
+        }
+        g_rt_dirty = 1;
+    } else {
+        sys_fb_blit(src, (unsigned)dst_x, (unsigned)dst_y, w, h,
+                    src_stride_px * 4u);
+    }
+}

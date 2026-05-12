@@ -68,6 +68,11 @@ static unsigned int g_topbar_glass[GLASS_W_MAX * TOPBAR_H];  /* ~180 KB BSS */
 static unsigned int g_dock_glass[GLASS_W_MAX * DOCK_H];      /* ~280 KB BSS */
 static int          g_glass_ok = 0;
 
+/* Back buffer for draw_dock_magnified() — covers DOCK_H plus the strip above
+ * where icons protrude.  All dock drawing composites here before one blit. */
+#define DOCK_BB_STRIP  40   /* pixels above DOCK_Y; exceeds max protrusion (~24) */
+static unsigned int g_dock_bb[GLASS_W_MAX * (DOCK_BB_STRIP + DOCK_H)];
+
 /* ── Desktop icon grid ───────────────────────────────────────────────────── */
 
 #define DESKTOP_ICON_MAX   16
@@ -441,6 +446,13 @@ static void draw_dock_magnified(void)
     }
     float start_x = ((float)SCR_W - total_w) * 0.5f;
 
+    /* Composite the entire dock strip (including icon protrusion above) into a
+     * back buffer and blit it in one shot — eliminates flicker from sequential
+     * wallpaper / glass / icon writes hitting the live framebuffer. */
+    gfx_begin_frame(g_dock_bb, (unsigned)SCR_W,
+                    (unsigned)(DOCK_BB_STRIP + DOCK_H),
+                    0, DOCK_Y - DOCK_BB_STRIP);
+
     /* Step 3: repaint wallpaper strip above dock (icons may protrude upward).
      * Use max(current, previous) height so the previous frame's pixels are
      * always erased, giving a clean trailing edge as icons shrink back. */
@@ -453,10 +465,8 @@ static void draw_dock_magnified(void)
 
     /* Step 4: dock glass / panel background */
     if (g_glass_ok) {
-        sys_fb_blit((const unsigned *)g_dock_glass,
-                    0, (unsigned)DOCK_Y,
-                    (unsigned)SCR_W, DOCK_H,
-                    (unsigned)SCR_W * 4u);
+        gfx_raw_blit(g_dock_glass, (unsigned)SCR_W,
+                     0, DOCK_Y, (unsigned)SCR_W, DOCK_H);
     } else {
         gfx_fill(0, (unsigned)DOCK_Y, (unsigned)SCR_W, DOCK_H, C_PANEL);
     }
@@ -485,13 +495,15 @@ static void draw_dock_magnified(void)
         } else if (g_glass_ok) {
             unsigned gw  = (unsigned)SCR_W;
             unsigned row = (unsigned)(dy - DOCK_Y);
-            sys_fb_blit(g_dock_glass + row * gw + (unsigned)dx,
-                        (unsigned)dx, (unsigned)dy, 16, 4, gw * 4u);
+            gfx_raw_blit(g_dock_glass + row * gw + (unsigned)dx,
+                         gw, dx, dy, 16, 4);
         } else {
             gfx_fill((unsigned)dx, (unsigned)dy, 16, 4, C_PANEL);
         }
         cx += slot_w[i];
     }
+
+    gfx_end_frame();
 }
 
 static void draw_dock(void)

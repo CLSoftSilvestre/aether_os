@@ -219,4 +219,8 @@ int gfx_bmp_load_icon(const char *path, unsigned *pixels, unsigned buf_pixels,
 void gfx_icon_blit(const unsigned *pixels, unsigned src_w, unsigned src_h,
                     int dst_x, int dst_y, int dst_w, int dst_h);
 
+/* Blit a strided pixel buffer into the active render target (or live fb). */
+void gfx_raw_blit(const unsigned *src, unsigned src_stride_px,
+                  int dst_x, int dst_y, unsigned w, unsigned h);
+
 #endif /* _GFX_H */
