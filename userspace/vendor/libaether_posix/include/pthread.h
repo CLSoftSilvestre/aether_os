@@ -2,6 +2,7 @@
 #define _POSIX_PTHREAD_H
 
 #include <sys/types.h>
+#include <time.h>
 
 /* All pthread primitives are single-threaded stubs.
  * NetSurf's fetch subsystem is compiled with threading disabled; these stubs
@@ -49,6 +50,8 @@ int pthread_mutexattr_settype(pthread_mutexattr_t *a, int type);
 /* Condition variable (no-ops) */
 int pthread_cond_init(pthread_cond_t *c, const pthread_condattr_t *a);
 int pthread_cond_wait(pthread_cond_t *c, pthread_mutex_t *m);
+int pthread_cond_timedwait(pthread_cond_t *c, pthread_mutex_t *m,
+                            const struct timespec *ts);
 int pthread_cond_signal(pthread_cond_t *c);
 int pthread_cond_broadcast(pthread_cond_t *c);
 int pthread_cond_destroy(pthread_cond_t *c);

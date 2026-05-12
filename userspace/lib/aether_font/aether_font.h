@@ -63,4 +63,16 @@ int aether_font_draw(aether_font_t *font,
 int aether_font_measure_width(aether_font_t *font,
                                const char *text, int px_size);
 
+/*
+ * Return the ascender in pixels at px_size (distance from baseline to top
+ * of tallest glyph).  Used to position the baseline in a render buffer.
+ */
+int aether_font_get_ascent(aether_font_t *font, int px_size);
+
+/*
+ * Return the full line height in pixels at px_size (ascender + |descender|).
+ * Use as the render-buffer row height.
+ */
+int aether_font_get_height(aether_font_t *font, int px_size);
+
 #endif /* AETHER_FONT_H */

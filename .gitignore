@@ -13,6 +13,9 @@ userspace/vendor/zlib
 userspace/vendor/libpng
 userspace/vendor/libjpeg
 
+# QuickJS ES2020 engine (Phase 7.4) — fetched by scripts/fetch_quickjs.sh
+userspace/vendor/quickjs
+
 # NetSurf support libraries (Phase 7.3) — fetched by scripts/fetch_netsurf_libs.sh
 userspace/vendor/libparserutils
 userspace/vendor/libwapcaplet

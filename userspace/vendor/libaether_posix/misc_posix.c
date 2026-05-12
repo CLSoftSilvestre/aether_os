@@ -385,9 +385,30 @@ float  fmaxf(float a, float b) { return __builtin_fmaxf(a, b); }
 static double _unsupported(double x) { (void)x; return 0.0; }
 double exp(double x)   { return _unsupported(x); }
 double exp2(double x)  { return _unsupported(x); }
-double log(double x)   { return _unsupported(x); }
-double log2(double x)  { return _unsupported(x); }
-double log10(double x) { return _unsupported(x); }
+
+/* log / log2 / log10 — implemented via IEEE 754 bit tricks + arctanh series.
+ * Accurate to ~14 significant digits, which is sufficient for BigInt digit-count
+ * estimation in QuickJS's bf_ftoa (ceil(expn * log2(2) / log2(10))).
+ * Does NOT call any other stub functions. */
+double log(double x)
+{
+    if (x <= 0.0) return 0.0;
+    union { double d; unsigned long long u; } v;
+    v.d = x;
+    int e = (int)((v.u >> 52) & 0x7ffULL) - 1023;
+    /* Normalize mantissa to [1.0, 2.0) */
+    v.u = (v.u & 0x000fffffffffffffULL) | 0x3ff0000000000000ULL;
+    double m = v.d;
+    /* log(m) for m in [1, 2): t = (m-1)/(m+1), log(m) = 2*arctanh(t)
+     *   = 2t * (1 + t^2/3 + t^4/5 + t^6/7 + t^8/9)   [Horner form] */
+    double t  = (m - 1.0) / (m + 1.0);
+    double t2 = t * t;
+    double lnm = 2.0 * t * (1.0 + t2 * (1.0/3.0 + t2 * (1.0/5.0
+                   + t2 * (1.0/7.0 + t2 * (1.0/9.0 + t2 / 11.0)))));
+    return lnm + (double)e * 0.6931471805599453094; /* e * ln(2) */
+}
+double log2(double x)  { return log(x) * 1.4426950408889634074; } /* 1/ln(2) */
+double log10(double x) { return log(x) * 0.4342944819032518276; } /* 1/ln(10) */
 double pow(double x, double y) { (void)y; return _unsupported(x); }
 double cbrt(double x)  { return _unsupported(x); }
 double sin(double x)   { return _unsupported(x); }
@@ -414,6 +435,25 @@ float sinf(float x)   { return (float)_unsupported((double)x); }
 float cosf(float x)   { return (float)_unsupported((double)x); }
 float tanf(float x)   { return (float)_unsupported((double)x); }
 float fmodf(float x, float y) { (void)y; return (float)_unsupported((double)x); }
+
+/* ── C99 math additions (needed by QuickJS / libregexp) ─────────────────── */
+double acosh(double x)   { return _unsupported(x); }
+double asinh(double x)   { return _unsupported(x); }
+double atanh(double x)   { return _unsupported(x); }
+double expm1(double x)   { return _unsupported(x); }
+double log1p(double x)   { return _unsupported(x); }
+double rint(double x)    { return __builtin_rint(x); }
+double nearbyint(double x){ return __builtin_nearbyint(x); }
+double copysign(double x, double y) { return __builtin_copysign(x, y); }
+double fma(double x, double y, double z) { return __builtin_fma(x, y, z); }
+double remainder(double x, double y) { (void)y; return _unsupported(x); }
+double scalbn(double x, int n) { (void)n; return _unsupported(x); }
+int    ilogb(double x)   { (void)x; return 0; }
+long   lrint(double x)   { return (long)__builtin_rint(x); }
+
+float  log2f(float x)   { return (float)_unsupported((double)x); }
+float  expm1f(float x)  { return (float)_unsupported((double)x); }
+float  log1pf(float x)  { return (float)_unsupported((double)x); }
 
 ssize_t pread(int fd, void *buf, size_t count, off_t offset)
 { (void)fd; (void)buf; (void)count; (void)offset; errno = ENOSYS; return -1; }

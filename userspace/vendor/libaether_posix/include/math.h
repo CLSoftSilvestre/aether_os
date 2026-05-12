@@ -64,6 +64,31 @@ float  fmodf(float x, float y);
 float  expf(float x);
 float  logf(float x);
 
+/* Inverse hyperbolic (C99) */
+double acosh(double x);
+double asinh(double x);
+double atanh(double x);
+
+/* Exponential/log helpers (C99) */
+double expm1(double x);   /* exp(x) - 1, accurate near zero */
+double log1p(double x);   /* log(1 + x), accurate near zero */
+double log2(double x);
+
+/* Rounding (C99) */
+long   lrint(double x);   /* round to nearest integer, result as long */
+double rint(double x);    /* round to nearest integer, result as double */
+double nearbyint(double x);
+
+/* Misc (C99) */
+double copysign(double x, double y);
+double fma(double x, double y, double z);
+double remainder(double x, double y);
+double scalbn(double x, int n);
+int    ilogb(double x);
+
+float  expm1f(float x);
+float  log1pf(float x);
+
 int    isnan(double x);
 int    isinf(double x);
 int    isfinite(double x);

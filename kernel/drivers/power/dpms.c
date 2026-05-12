@@ -34,7 +34,8 @@ void dpms_force_blank(void)
     if (g_blanked) return;
     g_blanked = true;
     cursor_hide();
-    fb_fill_rect(0, 0, fb_width, fb_height, FB_BLACK);
+    /* TODO: We need to save the stave of the screen to get it back when we wake up */
+    /* fb_fill_rect(0, 0, fb_width, fb_height, FB_BLACK); */
     kinfo("[dpms] display blanked\n");
 }
 

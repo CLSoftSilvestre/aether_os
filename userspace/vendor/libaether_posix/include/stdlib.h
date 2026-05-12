@@ -14,6 +14,14 @@ void  *calloc(size_t nmemb, size_t size);
 void  *realloc(void *ptr, size_t size);
 void   free(void *ptr);
 
+/* Stack allocation — always available as a compiler intrinsic */
+#define alloca(size) __builtin_alloca(size)
+
+/* malloc_usable_size — QuickJS calls this in its #else fallback branch even on
+ * non-Linux platforms.  Returning 0 tells QuickJS to use JS_MALLOC_OVERHEAD
+ * for accounting; GC still triggers via the malloc_limit check. */
+static inline size_t malloc_usable_size(const void *ptr) { (void)ptr; return 0; }
+
 /* String conversion */
 int       atoi(const char *s);
 long      atol(const char *s);

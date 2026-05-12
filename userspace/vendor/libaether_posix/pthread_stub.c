@@ -54,6 +54,9 @@ int pthread_cond_init(pthread_cond_t *c, const pthread_condattr_t *a)
 int pthread_cond_wait(pthread_cond_t *c, pthread_mutex_t *m)
 { (void)c; (void)m; return 0; }
 
+int pthread_cond_timedwait(pthread_cond_t *c, pthread_mutex_t *m,
+                            const struct timespec *ts)
+{ (void)c; (void)m; (void)ts; return 0; }
 int pthread_cond_signal(pthread_cond_t *c)   { (void)c; return 0; }
 int pthread_cond_broadcast(pthread_cond_t *c){ (void)c; return 0; }
 int pthread_cond_destroy(pthread_cond_t *c)  { (void)c; return 0; }

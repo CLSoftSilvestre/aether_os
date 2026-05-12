@@ -273,14 +273,28 @@ static void tick_recursive(widget_t *w, long tick)
 
 #define BLINK_TICKS 30  /* 300 ms at 100 Hz — for cursor blink when idle */
 
+/* Wrap a draw_recursive call with begin/end frame when a frame buffer exists. */
+#define FRAME_BEGIN(fb, fw, fh, cx, cy) \
+    do { if (fb) gfx_begin_frame(fb, fw, fh, cx, cy); } while (0)
+#define FRAME_END(fb) \
+    do { if (fb) gfx_end_frame(); } while (0)
+
 void widget_run(widget_t *root, widget_ctx_t *ctx)
 {
     long last_tick_event = 0;
 
-    /* Initial draw */
+    /* Persistent off-screen frame buffer — reused across frames so non-dirty
+     * widget pixels are preserved between partial redraws. */
+    unsigned frame_w   = (unsigned)root->bounds.w;
+    unsigned frame_h   = (unsigned)root->bounds.h;
+    unsigned *frame_buf = (unsigned *)malloc(frame_w * frame_h * sizeof(unsigned));
+
+    /* Initial draw — force=1 paints every widget into the fresh buffer. */
     int cx = *ctx->win_x + ctx->content_dx;
     int cy = *ctx->win_y + ctx->content_dy;
+    FRAME_BEGIN(frame_buf, frame_w, frame_h, cx, cy);
     draw_recursive(root, cx, cy, 1);
+    FRAME_END(frame_buf);
 
     while (ctx->running) {
         int had_event = 0;
@@ -301,7 +315,9 @@ void widget_run(widget_t *root, widget_ctx_t *ctx)
                 cx = *ctx->win_x + ctx->content_dx;
                 cy = *ctx->win_y + ctx->content_dy;
                 widget_invalidate_all(root);
+                FRAME_BEGIN(frame_buf, frame_w, frame_h, cx, cy);
                 draw_recursive(root, cx, cy, 1);
+                FRAME_END(frame_buf);
                 continue;
             }
 
@@ -342,14 +358,19 @@ void widget_run(widget_t *root, widget_ctx_t *ctx)
         /* ── Redraw dirty widgets ───────────────────────────────────────── */
         cx = *ctx->win_x + ctx->content_dx;
         cy = *ctx->win_y + ctx->content_dy;
+        FRAME_BEGIN(frame_buf, frame_w, frame_h, cx, cy);
         draw_recursive(root, cx, cy, 0);
+        FRAME_END(frame_buf);
 
         /* ── Yield / vsync pace ─────────────────────────────────────────── */
-        if (!had_event) {
-            if (anim_any_active())
-                sys_vsync_wait();    /* pace loop to 60 fps during animations */
-            else
-                sys_sched_yield();  /* cooperative yield when idle */
-        }
+        /* Always yield so the cooperative scheduler can run init / other
+         * apps.  Without this, a stream of mouse events (had_event=1) would
+         * prevent yielding and starve the desktop compositor. */
+        if (anim_any_active())
+            sys_vsync_wait();    /* pace loop to 60 fps during animations */
+        else
+            sys_sched_yield();  /* cooperative yield every iteration */
     }
+
+    free(frame_buf);
 }

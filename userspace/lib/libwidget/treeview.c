@@ -123,19 +123,18 @@ static void treeview_draw(widget_t *w, int ax, int ay)
         }
         cx += TV_ICON_W + TV_GAP;
 
-        /* Label — clipped to right edge of pane */
+        /* Label — pixel-clipped to right edge of pane */
         int label_px = ax + pw - cx - 2;
         if (label_px > 0) {
-            int max_chars = label_px / WGT_FONT_W;
-            if (max_chars > 63) max_chars = 63;
             char clip[64];
             int j = 0;
-            while (j < max_chars && node->label[j]) {
+            while (node->label[j] && j < 63 &&
+                   gfx_text_prefix_width(node->label, j + 1) <= label_px) {
                 clip[j] = node->label[j];
                 j++;
             }
             clip[j] = '\0';
-            unsigned fg = (vi == td->selected) ? C_TEXT : C_TEXT;
+            unsigned fg = C_TEXT;
             gfx_text((unsigned)cx, (unsigned)(row_y + 6), clip, fg, row_bg);
         }
     }

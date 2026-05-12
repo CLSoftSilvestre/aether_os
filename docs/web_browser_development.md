@@ -114,7 +114,7 @@ Text rendering is a first-class requirement. FreeType renders TrueType/OpenType 
 | 7.2.1 | **FreeType 2.13.3** — `scripts/fetch_freetype.sh`; modules: sfnt, truetype, smooth, autofit, psnames, raster | ✅ |
 | 7.2.2 | **Noto Sans** + **Noto Sans Mono** — `scripts/fetch_fonts.sh` → `assets/fonts/` → `/fonts/` on disk | ✅ |
 | 7.2.3 | `lib/aether_font/aether_font.h/c` — `aether_font_init`, `aether_font_load`, `aether_font_draw`, `aether_font_measure_width` | ✅ |
-| 7.2.4 | Integrate with Lumina — replace bitmap font in `gfx.c` with FreeType calls | ⏳ deferred |
+| 7.2.4 | Integrate with Lumina — replace bitmap font in `gfx.c` with FreeType calls | ✅ |
 | 7.2.5 | `font_test` — renders "Hello, AetherOS!" at 12/18/24px + Greek "Γεια!" into pixel buffer; checks non-zero pixel count | ✅ |
 
 **Setup order:**
@@ -165,21 +165,26 @@ NetSurf depends on its own set of pure-C support libraries, maintained by the Ne
 
 ---
 
-## Phase 7.4 — QuickJS Port
+## Phase 7.4 — QuickJS Port ✅ COMPLETE (2026-05-12)
 
 **Duration:** 2–3 weeks  
-**Output:** `vendor/quickjs/`
+**Output:** `userspace/vendor/quickjs/` (fetched by `scripts/fetch_quickjs.sh`)
 
-QuickJS is a small, embeddable JavaScript engine (ES2020) written in pure C by Fabrice Bellard. We already ported Lua 5.4 (Phase 5.5) — the approach is identical.
+QuickJS 2021-03-27 (Fabrice Bellard) — small embeddable ES2020 engine in pure C.
 
-| Task | Description |
-|---|---|
-| 7.4.1 | Fetch QuickJS source (`scripts/fetch_quickjs.sh` — mirrors fetch_lua.sh pattern) |
-| 7.4.2 | Configure `quickjs-config.h` — disable OS threading, OS filesystem; enable AetherOS malloc |
-| 7.4.3 | Implement `js_os_stubs.c` — minimal OS bindings: console.log → UART/WM |
-| 7.4.4 | Compile static `libquickjs.a` for AArch64 bare-metal |
-| 7.4.5 | Integration test: evaluate `"Hello from JS"` and basic ES6 (arrow functions, promises, fetch stub) |
-| 7.4.6 | Memory cap: configure `JS_STACK_SIZE_MAX` and GC heap limit (128MB default for QuickJS) |
+| Task | Description | Status |
+|---|---|---|
+| 7.4.1 | `scripts/fetch_quickjs.sh` — downloads + extracts QuickJS 2021-03-27 | ✅ |
+| 7.4.2 | Configuration via CMake defines: `CONFIG_BIGNUM` (required for BigInt/ES2020), `CONFIG_ATOMICS` hardcoded in source → `stdatomic.h` stub provided; `-mno-outline-atomics` avoids outline GCC helper calls | ✅ |
+| 7.4.3 | No OS module needed — `quickjs-libc.c` excluded; integration test uses raw `JS_Eval` API | ✅ |
+| 7.4.4 | `vendor_quickjs` static library: `quickjs.c + libregexp.c + libunicode.c + cutils.c + libbf.c` | ✅ |
+| 7.4.5 | `js_test`: string eval, arithmetic, arrow functions, closures, BigInt — confirmed `sys_exit(0)` | ✅ |
+| 7.4.6 | `JS_SetMemoryLimit(rt, 16MB)` + `JS_SetMaxStackSize(rt, 64KB)` in `js_test/main.c` | ✅ |
+
+**Build notes:**
+- `scripts/fetch_quickjs.sh` downloads to `userspace/vendor/quickjs/` (gitignored — unmodified upstream)
+- `-mno-outline-atomics` on vendor_quickjs avoids `__aarch64_ldadd*_acq_rel` libgcc calls
+- libaether_posix additions: `fenv.h` stub, `stdatomic.h` stub, `malloc_usable_size` returning 0, `pthread_cond_timedwait`, `acosh/asinh/atanh/expm1/log1p/lrint/...` math stubs, `tm_gmtoff` in struct tm, `alloca` macro
 
 ---
 

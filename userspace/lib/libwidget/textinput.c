@@ -95,27 +95,29 @@ static void textinput_draw(widget_t *w, int ax, int ay)
 
     int tx   = ax + INPUT_PAD_X;
     int ty   = ay + INPUT_PAD_Y;
-    int visible_cols = (w->bounds.w - 2 * INPUT_PAD_X) / WGT_FONT_W;
+    int visible_px = w->bounds.w - 2 * INPUT_PAD_X;
 
-    /* Compute scroll offset so cursor stays visible */
+    /* Pixel-based scroll: advance start until cursor fits in visible_px */
     int scroll = 0;
-    if (d->cursor >= visible_cols)
-        scroll = d->cursor - visible_cols + 1;
+    while (scroll < d->cursor &&
+           gfx_text_prefix_width(d->buf + scroll, d->cursor - scroll) > visible_px)
+        scroll++;
 
-    /* Draw text */
-    for (int i = 0; i < visible_cols && (scroll + i) <= d->len; i++) {
-        int idx = scroll + i;
-        char ch = (idx < d->len) ? d->buf[idx] : ' ';
-        gfx_char(tx + i * WGT_FONT_W, ty, ch, C_TEXT, C_INPUT_BG);
-    }
+    /* Build visible string */
+    char vis[WGT_TEXTINPUT_MAX];
+    int vi = 0;
+    while (d->buf[scroll + vi] &&
+           gfx_text_prefix_width(d->buf + scroll, vi + 1) <= visible_px)
+        vis[vi++] = d->buf[scroll + vi];
+    vis[vi] = '\0';
+    gfx_text((unsigned)tx, (unsigned)ty, vis, C_TEXT, C_INPUT_BG);
 
     /* Caret */
     if (focused && d->blink_on) {
-        int caret_col = d->cursor - scroll;
-        if (caret_col >= 0 && caret_col < visible_cols) {
-            gfx_fill(tx + caret_col * WGT_FONT_W, ty,
-                     2, WGT_FONT_H, C_INPUT_CUR);
-        }
+        int cx = gfx_text_prefix_width(d->buf + scroll, d->cursor - scroll);
+        if (cx <= visible_px)
+            gfx_fill((unsigned)(tx + cx), (unsigned)ty,
+                     2, (unsigned)gfx_font_height(), C_INPUT_CUR);
     }
 }
 

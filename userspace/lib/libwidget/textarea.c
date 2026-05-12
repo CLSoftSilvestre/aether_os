@@ -130,17 +130,12 @@ static int visible_rows(widget_t *w)
     return (w->bounds.h - 2 * TA_PAD_Y) / WGT_FONT_H;
 }
 
-static int visible_cols(widget_t *w)
-{
-    return (w->bounds.w - 2 * TA_PAD_X) / WGT_FONT_W;
-}
-
 static void textarea_draw(widget_t *w, int ax, int ay)
 {
     wdata_textarea_t *d = &w->data.textarea;
     int focused = (w->state == WS_FOCUSED || w->state == WS_PRESSED);
     int rows = visible_rows(w);
-    int cols = visible_cols(w);
+    int content_w = w->bounds.w - 2 * TA_PAD_X;
 
     gfx_fill(ax, ay, w->bounds.w, w->bounds.h, C_TA_BG);
     gfx_rect(ax, ay, w->bounds.w, w->bounds.h,
@@ -163,21 +158,40 @@ static void textarea_draw(widget_t *w, int ax, int ay)
         for (int j = 0; j < len; j++) hl[j] = C_TEXT;
         highlight_line(line, hl, len);
 
-        for (int c = 0; c < cols && c < len; c++) {
-            unsigned int fg = hl[c];
-            unsigned int bg = C_TA_BG;
-
-            /* Cursor highlight takes priority */
+        /* Span-based FreeType rendering */
+        int x = tx;
+        int c = 0;
+        while (c < len && (x - tx) < content_w) {
             if (focused && line_idx == d->cur_row && c == d->cur_col) {
-                fg = C_TA_BG;
-                bg = C_TA_CUR;
+                /* Render cursor character highlighted */
+                char cs[2] = {line[c], '\0'};
+                int cw = gfx_text_width(cs);
+                if (cw < 1) cw = WGT_FONT_W;
+                gfx_fill((unsigned)x, (unsigned)ly,
+                          (unsigned)cw, (unsigned)WGT_FONT_H, C_TA_CUR);
+                gfx_text((unsigned)x, (unsigned)ly, cs, C_TA_BG, C_TA_CUR);
+                x += cw;
+                c++;
+            } else {
+                /* Collect a span of consecutive same-color characters */
+                unsigned int span_fg = hl[c];
+                int s0 = c;
+                while (c < len && hl[c] == span_fg &&
+                       !(focused && line_idx == d->cur_row && c == d->cur_col))
+                    c++;
+                char span[WGT_TEXTAREA_LINE_LEN + 1];
+                int slen = c - s0;
+                for (int j = 0; j < slen; j++) span[j] = line[s0 + j];
+                span[slen] = '\0';
+                gfx_text((unsigned)x, (unsigned)ly, span, span_fg, C_TA_BG);
+                x += gfx_text_width(span);
             }
-            gfx_char(tx + c * WGT_FONT_W, ly, line[c], fg, bg);
         }
 
-        /* Caret at end of line */
-        if (focused && line_idx == d->cur_row && d->cur_col >= len && d->cur_col < cols) {
-            gfx_fill(tx + d->cur_col * WGT_FONT_W, ly, 2, WGT_FONT_H, C_TA_CUR);
+        /* Caret past end of line */
+        if (focused && line_idx == d->cur_row && d->cur_col >= len) {
+            int cx = gfx_text_prefix_width(line, len);
+            gfx_fill((unsigned)(tx + cx), (unsigned)ly, 2, (unsigned)WGT_FONT_H, C_TA_CUR);
         }
     }
 }

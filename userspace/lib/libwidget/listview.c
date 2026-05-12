@@ -38,7 +38,6 @@ static void listview_draw(widget_t *w, int ax, int ay)
     int rows = lv_visible_rows(w);
     int has_sb = d->n_items > rows;
     int text_w = w->bounds.w - 2 * LV_PAD_X - (has_sb ? LV_SB_W : 0);
-    int visible_chars = text_w / WGT_FONT_W;
 
     gfx_fill(ax, ay, w->bounds.w, w->bounds.h, C_LV_BG);
     gfx_rect(ax, ay, w->bounds.w, w->bounds.h,
@@ -62,10 +61,14 @@ static void listview_draw(widget_t *w, int ax, int ay)
 
         gfx_fill(tx, ry, text_w, LV_ROW_H, row_bg);
 
-        /* Item label (truncated) */
+        /* Item label (pixel-clipped) */
         char *lbl = d->items[idx].label;
-        for (int c = 0; c < visible_chars && lbl[c]; c++)
-            gfx_char(tx + c * WGT_FONT_W, ry + 2, lbl[c], row_fg, row_bg);
+        int ci = 0;
+        while (lbl[ci] && gfx_text_prefix_width(lbl, ci + 1) <= text_w) ci++;
+        char clip[WGT_LISTITEM_LABEL];
+        for (int j = 0; j < ci; j++) clip[j] = lbl[j];
+        clip[ci] = '\0';
+        gfx_text((unsigned)tx, (unsigned)(ry + 2), clip, row_fg, row_bg);
     }
 
     /* Scrollbar */

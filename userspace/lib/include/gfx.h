@@ -36,6 +36,25 @@ unsigned   gfx_width(void);
 unsigned   gfx_height(void);
 long       gfx_ticks(void);       /* 100Hz ticks since boot */
 
+/* ── Off-screen render target (eliminates widget flicker) ───────────────── */
+/*
+ * gfx_begin_frame / gfx_end_frame implement double-buffering for widget
+ * windows.  While a frame is active, gfx_fill() and gfx_text() write into
+ * buf instead of the live framebuffer.  gfx_end_frame() blits buf to the
+ * screen in a single sys_fb_blit(), so the user only ever sees completed
+ * frames — no intermediate blank-background / text-appearing flicker.
+ *
+ *   buf     : XRGB8888 pixel array, w×h pixels, caller-owned
+ *   w, h    : dimensions of buf (= content area of the window)
+ *   off_x/y : screen position of buf's top-left corner
+ *
+ * Only gfx_fill() and gfx_text() (and anything that calls them) are
+ * redirected.  gfx_char() always writes directly to the framebuffer so
+ * the terminal renderer is unaffected.
+ */
+void gfx_begin_frame(unsigned *buf, unsigned w, unsigned h, int off_x, int off_y);
+void gfx_end_frame(void);
+
 /* ── Drawing primitives ─────────────────────────────────────────────── */
 void gfx_fill(unsigned x, unsigned y, unsigned w, unsigned h, unsigned color);
 void gfx_hline(unsigned x, unsigned y, unsigned w, unsigned color);
@@ -78,6 +97,25 @@ void gfx_text_center_transparent(unsigned cx, unsigned cw, unsigned y,
 /* Draw a formatted string (printf-style) — uses a 256-byte stack buffer */
 void gfx_printf(unsigned x, unsigned y, unsigned fg, unsigned bg,
                 const char *fmt, ...);
+
+/* ── FreeType text metrics (Phase 7.2.4) ────────────────────────────────── */
+/*
+ * Pixel width of s at the current UI font size.
+ * Returns strlen(s) * 8 when FreeType is not available.
+ */
+int gfx_text_width(const char *s);
+
+/*
+ * Pixel width of the first n bytes of s.
+ * Useful for cursor positioning and clipped string rendering.
+ */
+int gfx_text_prefix_width(const char *s, int n);
+
+/*
+ * Line height in pixels (ascender + |descender|) at the current UI font size.
+ * Returns 16 when FreeType is not available.
+ */
+int gfx_font_height(void);
 
 /*
  * Draw the traffic-light close button (12×12) at pixel (x, y).

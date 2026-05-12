@@ -39,6 +39,26 @@ target_include_directories(libaether PUBLIC
 
 target_compile_options(libaether PRIVATE ${USER_COMPILE_FLAGS})
 
+# Phase 7.2.4: wire FreeType into gfx.c when the font wrapper is built.
+# libaether_font is defined later in this file; we use a deferred hook via
+# cmake_language(DEFER) so the dependency is added after the target exists.
+# We also export -DGFX_HAVE_FREETYPE=1 so gfx.c can conditionally compile the
+# FreeType paths, and add the aether_font header directory.
+function(libaether_wire_freetype)
+    if(TARGET libaether_font)
+        target_compile_definitions(libaether PRIVATE GFX_HAVE_FREETYPE=1)
+        target_include_directories(libaether PRIVATE lib/aether_font)
+        target_link_libraries(libaether PUBLIC libaether_font libaether_posix)
+        # libaether and libaether_posix both implement the standard C library
+        # (string, stdio, stdlib).  libaether is linked first so its versions
+        # win; the only exception is malloc/free/realloc which are __weak__ in
+        # libaether so libaether_posix's proper free-list heap is used instead
+        # of the 256 KB bump allocator (FreeType requires real free()).
+        target_link_options(libaether INTERFACE -Wl,--allow-multiple-definition)
+    endif()
+endfunction()
+cmake_language(DEFER CALL libaether_wire_freetype)
+
 # ── libwidget — retained widget toolkit (Phase 5.3) ──────────────────────────
 add_library(libwidget STATIC
     lib/libwidget/widget.c
@@ -1116,6 +1136,100 @@ else()
     set(HTML_TEST_TARGET "")
 endif()
 
+# ── Phase 7.4 — QuickJS ES2020 engine ────────────────────────────────────────
+#
+# QuickJS 2021-03-27 (Fabrice Bellard) — small embeddable ES2020 engine.
+# Fetch:  scripts/fetch_quickjs.sh
+#
+# Compiled files:
+#   quickjs.c      — main engine (includes dtoa.c internally)
+#   libregexp.c    — regexp engine
+#   libunicode.c   — Unicode support
+#   cutils.c       — basic utilities
+#   libbf.c        — bignum (required for BigInt / ES2020)
+#
+# Excluded:
+#   quickjs-libc.c — POSIX OS module (replaced by AetherOS shim)
+#   qjs.c / qjsc.c — standalone executables (host tools)
+
+set(QJS_GUARD ${CMAKE_CURRENT_SOURCE_DIR}/vendor/quickjs/quickjs.c)
+if(EXISTS ${QJS_GUARD})
+    set(QJS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/quickjs)
+
+    # Resolve the cross-compiler's libgcc.a so we can link it by full path
+    # after the other libraries (GNU ld is left-to-right; -lgcc via link_options
+    # lands before object files and fails to resolve back-references).
+    execute_process(
+        COMMAND ${CMAKE_C_COMPILER} -march=armv8-a -print-libgcc-file-name
+        OUTPUT_VARIABLE QJS_LIBGCC_PATH
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+
+    add_library(vendor_quickjs STATIC
+        ${QJS_DIR}/quickjs.c
+        ${QJS_DIR}/libregexp.c
+        ${QJS_DIR}/libunicode.c
+        ${QJS_DIR}/cutils.c
+        ${QJS_DIR}/libbf.c
+    )
+    target_include_directories(vendor_quickjs PUBLIC ${QJS_DIR})
+    target_include_directories(vendor_quickjs PRIVATE ${POSIX_INC_DIR})
+    target_compile_definitions(vendor_quickjs PRIVATE
+        CONFIG_VERSION="2021-03-27"
+        CONFIG_BIGNUM        # required for BigInt (ES2020); also enables BigFloat/BigDecimal
+                             # which are left unwired (only JS_AddIntrinsicBigInt is called)
+        # No CONFIG_ATOMICS → skip pthread/stdatomic (no worker threads)
+    )
+    target_compile_options(vendor_quickjs PRIVATE
+        ${USER_COMPILE_FLAGS}
+        -mno-outline-atomics   # inline LL/SC — avoids __aarch64_ldadd*_acq_rel from libgcc
+        -Wno-unused-parameter
+        -Wno-unused-function
+        -Wno-sign-compare
+        -Wno-missing-field-initializers
+        -Wno-implicit-fallthrough
+    )
+    target_link_libraries(vendor_quickjs PUBLIC libaether_posix)
+    message(STATUS "[Phase 7.4] QuickJS found — building vendor_quickjs")
+
+    # ── user_js_test — Phase 7.4 integration test (Task 7.4.5) ───────────────
+    #
+    # Exercises: JS string eval, arithmetic, arrow functions, closures, BigInt.
+    # Run in AetherOS:  js_test
+    add_executable(user_js_test
+        apps/js_test/main.c
+        lib/crt0.S
+    )
+    target_include_directories(user_js_test PRIVATE
+        ${QJS_DIR}
+        ${POSIX_INC_DIR}
+        lib/include
+    )
+    target_compile_options(user_js_test PRIVATE
+        ${USER_COMPILE_FLAGS}
+        -Wno-unused-result
+    )
+    target_link_libraries(user_js_test PRIVATE
+        vendor_quickjs
+        libaether_posix
+        ${QJS_LIBGCC_PATH}   # __udivti3 / __umodti3 — libbf.c 128-bit division
+    )
+    target_link_options(user_js_test PRIVATE
+        -T ${USER_LINKER_SCRIPT} -nostdlib -static -Wl,--build-id=none
+    )
+    set_target_properties(user_js_test PROPERTIES
+        OUTPUT_NAME "js_test" SUFFIX ""
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
+    )
+    set(JS_TEST_TARGET user_js_test)
+
+else()
+    message(STATUS
+        "[Phase 7.4] QuickJS not found in vendor/ — "
+        "run scripts/fetch_quickjs.sh then re-configure.")
+    set(JS_TEST_TARGET "")
+endif()
+
 # ── initrd CPIO archive ───────────────────────────────────────────────────────
 #
 # Step 1 — package all files from initrd_staging/ into a CPIO newc archive.
@@ -1141,6 +1255,7 @@ add_custom_command(
             ${INITRD_FILES_SRC}/apps/img_test.app
             ${INITRD_FILES_SRC}/apps/font_test.app
             ${INITRD_FILES_SRC}/apps/html_test.app
+            ${INITRD_FILES_SRC}/apps/js_test.app
     COMMENT "Copying initrd static files"
 )
 
@@ -1157,6 +1272,7 @@ add_custom_command(
             ${IMG_TEST_TARGET}
             ${FONT_TEST_TARGET}
             ${HTML_TEST_TARGET}
+            ${JS_TEST_TARGET}
             ${INITRD_STAGING}/motd.txt
     COMMENT "Packaging initrd.cpio"
 )

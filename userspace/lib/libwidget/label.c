@@ -23,9 +23,7 @@ static void label_draw(widget_t *w, int ax, int ay)
         gfx_text_center(ax, w->bounds.w, y, s, C_TEXT, C_WIN_BG);
         break;
     case WGT_ALIGN_RIGHT: {
-        int len = 0;
-        while (s[len]) len++;
-        int tx = ax + w->bounds.w - len * WGT_FONT_W;
+        int tx = ax + w->bounds.w - gfx_text_width(s);
         if (tx < ax) tx = ax;
         gfx_text(tx, y, s, C_TEXT, C_WIN_BG);
         break;

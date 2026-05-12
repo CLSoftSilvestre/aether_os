@@ -25,15 +25,17 @@ struct timezone {
 };
 
 struct tm {
-    int tm_sec;    /* seconds [0,60] */
-    int tm_min;    /* minutes [0,59] */
-    int tm_hour;   /* hour [0,23] */
-    int tm_mday;   /* day of month [1,31] */
-    int tm_mon;    /* months since January [0,11] */
-    int tm_year;   /* years since 1900 */
-    int tm_wday;   /* days since Sunday [0,6] */
-    int tm_yday;   /* days since January 1 [0,365] */
-    int tm_isdst;  /* Daylight Saving Time flag */
+    int  tm_sec;    /* seconds [0,60] */
+    int  tm_min;    /* minutes [0,59] */
+    int  tm_hour;   /* hour [0,23] */
+    int  tm_mday;   /* day of month [1,31] */
+    int  tm_mon;    /* months since January [0,11] */
+    int  tm_year;   /* years since 1900 */
+    int  tm_wday;   /* days since Sunday [0,6] */
+    int  tm_yday;   /* days since January 1 [0,365] */
+    int  tm_isdst;  /* Daylight Saving Time flag */
+    long tm_gmtoff; /* GNU extension: seconds east of UTC (always 0 on AetherOS) */
+    const char *tm_zone; /* GNU extension: timezone name (always "UTC") */
 };
 
 time_t     time(time_t *t);

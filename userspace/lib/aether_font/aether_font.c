@@ -8,7 +8,6 @@
 #include FT_FREETYPE_H
 
 #include <stdlib.h>
-#include <stdio.h>
 #include <string.h>
 #include <sys.h>   /* sys_fs_open / sys_fs_read / sys_fs_close */
 
@@ -85,10 +84,7 @@ int aether_font_init(void)
 {
     if (_ft_ready) return 0;
     FT_Error err = FT_Init_FreeType(&_ft_lib);
-    if (err) {
-        fprintf(stderr, "[font] FT_Init_FreeType error %d\n", (int)err);
-        return -1;
-    }
+    if (err) return -1;
     _ft_ready = 1;
     return 0;
 }
@@ -100,7 +96,6 @@ int aether_font_load(const char *path, aether_font_t **out)
     long file_size = 0;
     unsigned char *font_data = _load_file(path, &file_size);
     if (!font_data || file_size == 0) {
-        fprintf(stderr, "[font] cannot read '%s'\n", path);
         free(font_data);
         return -1;
     }
@@ -110,7 +105,6 @@ int aether_font_load(const char *path, aether_font_t **out)
 
     FT_Error err = FT_New_Memory_Face(_ft_lib, font_data, (FT_Long)file_size, 0, &f->face);
     if (err) {
-        fprintf(stderr, "[font] FT_New_Memory_Face('%s') error %d\n", path, (int)err);
         free(font_data);
         free(f);
         return -1;
@@ -219,4 +213,20 @@ int aether_font_measure_width(aether_font_t *font,
         width += face->glyph->advance.x >> 6;
     }
     return width;
+}
+
+int aether_font_get_ascent(aether_font_t *font, int px_size)
+{
+    if (!font || px_size <= 0) return px_size;
+    if (_set_size(font, px_size) != 0) return px_size;
+    return (int)((font->face->size->metrics.ascender + 63) >> 6);
+}
+
+int aether_font_get_height(aether_font_t *font, int px_size)
+{
+    if (!font || px_size <= 0) return px_size + 4;
+    if (_set_size(font, px_size) != 0) return px_size + 4;
+    int asc  = (int)((font->face->size->metrics.ascender  + 63) >> 6);
+    int desc = (int)((-font->face->size->metrics.descender + 63) >> 6);
+    return asc + desc;
 }

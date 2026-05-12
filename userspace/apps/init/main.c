@@ -787,30 +787,30 @@ static void draw_top_bar(void)
 {
     char tbuf[6];
     fmt_time(tbuf, sys_rtc_get());
-    int len = (int)strlen(tbuf);
 
     if (g_glass_ok) {
         sys_fb_blit((const unsigned *)g_topbar_glass,
                     0, (unsigned)TOPBAR_Y,
                     (unsigned)SCR_W, TOPBAR_H,
                     (unsigned)SCR_W * 4u);
-        gfx_text_transparent(14, TOPBAR_Y + 10, "AetherOS", C_TEXT);
-        gfx_text_transparent(14 + 8 * FONT_W + 8, TOPBAR_Y + 10,
-                             "v0.0.7", C_TEXT_DIM);
-        gfx_text_center_transparent(0, (unsigned)SCR_W, TOPBAR_Y + 10,
-                                    "Lumina Desktop  \xe2\x80\x94  Phase 6.2",
-                                    C_TEXT_DIM);
-        gfx_text_transparent((unsigned)(SCR_W - len * FONT_W - 14),
-                              TOPBAR_Y + 10, tbuf, C_TEXT_DIM);
+        /* FreeType with bg=C_PANEL — glass is C_PANEL-tinted so anti-aliasing is correct */
+        gfx_text(14, TOPBAR_Y + 10, "AetherOS", C_TEXT, C_PANEL);
+        gfx_text(14 + gfx_text_width("AetherOS") + 8, TOPBAR_Y + 10,
+                 "v0.0.7", C_TEXT_DIM, C_PANEL);
+        gfx_text_center(0, (unsigned)SCR_W, TOPBAR_Y + 10,
+                        "Lumina Desktop  \xe2\x80\x94  Phase 6.2",
+                        C_TEXT_DIM, C_PANEL);
+        gfx_text((unsigned)(SCR_W - gfx_text_width(tbuf) - 14),
+                  TOPBAR_Y + 10, tbuf, C_TEXT_DIM, C_PANEL);
     } else {
         gfx_fill(0, TOPBAR_Y, (unsigned)SCR_W, TOPBAR_H, C_PANEL);
         gfx_text(14, TOPBAR_Y + 10, "AetherOS", C_TEXT, C_PANEL);
-        gfx_text(14 + 8 * FONT_W + 8, TOPBAR_Y + 10,
+        gfx_text(14 + gfx_text_width("AetherOS") + 8, TOPBAR_Y + 10,
                  "v0.0.7", C_TEXT_DIM, C_PANEL);
         gfx_text_center(0, (unsigned)SCR_W, TOPBAR_Y + 10,
                         "Lumina Desktop  --  Phase 6.2",
                         C_TEXT_DIM, C_PANEL);
-        gfx_text((unsigned)(SCR_W - len * FONT_W - 14), TOPBAR_Y + 10,
+        gfx_text((unsigned)(SCR_W - gfx_text_width(tbuf) - 14), TOPBAR_Y + 10,
                  tbuf, C_TEXT_DIM, C_PANEL);
     }
     gfx_fill(0, ACCENT_Y, (unsigned)SCR_W, ACCENT_H, C_ACCENT);
@@ -828,8 +828,7 @@ static void draw_bot_bar(void)
     unsigned long free_mb    = free_pages * 4 / 1024;
     char mbuf[24];
     snprintf(mbuf, sizeof(mbuf), "Free: %lu MB", free_mb);
-    int mlen = (int)strlen(mbuf);
-    gfx_text(SCR_W - mlen * FONT_W - 14, BOTBAR_Y + 6,
+    gfx_text(SCR_W - gfx_text_width(mbuf) - 14, BOTBAR_Y + 6,
              mbuf, C_TEXT_DIM, C_PANEL);
 }
 
@@ -838,17 +837,18 @@ static void refresh_top_bar(void)
     char tbuf[6];
     fmt_time(tbuf, sys_rtc_get());
     int len = (int)strlen(tbuf);
-    int x = SCR_W - len * FONT_W - 14;
 
     /* Restore the right third of the topbar, then redraw time text */
     unsigned erase_x = (unsigned)(SCR_W * 2 / 3);
     if (g_glass_ok) {
+        int x = SCR_W - len * FONT_W - 14;  /* bitmap transparent — FONT_W correct */
         sys_fb_blit((const unsigned *)(g_topbar_glass + erase_x),
                     erase_x, (unsigned)TOPBAR_Y,
                     (unsigned)SCR_W - erase_x, TOPBAR_H,
                     (unsigned)SCR_W * 4u);
         gfx_text_transparent((unsigned)x, TOPBAR_Y + 10, tbuf, C_TEXT_DIM);
     } else {
+        int x = SCR_W - gfx_text_width(tbuf) - 14;  /* FreeType — use measured width */
         gfx_fill(erase_x, TOPBAR_Y,
                  (unsigned)SCR_W - erase_x, TOPBAR_H, C_PANEL);
         gfx_text((unsigned)x, TOPBAR_Y + 10, tbuf, C_TEXT_DIM, C_PANEL);
@@ -862,8 +862,7 @@ static void __attribute__((unused)) refresh_bot_bar(void)
     unsigned long free_mb    = free_pages * 4 / 1024;
     char mbuf[24];
     snprintf(mbuf, sizeof(mbuf), "Free: %lu MB", free_mb);
-    int mlen = (int)strlen(mbuf);
-    int x = SCR_W - mlen * FONT_W - 14;
+    int x = SCR_W - gfx_text_width(mbuf) - 14;
     gfx_fill(x - 2, BOTBAR_Y, SCR_W - (x - 2), BOTBAR_H, C_PANEL);
     gfx_text(x, BOTBAR_Y + 6, mbuf, C_TEXT_DIM, C_PANEL);
 }

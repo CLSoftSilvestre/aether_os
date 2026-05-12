@@ -9,13 +9,44 @@
 #include <string.h>
 #include <sys.h>
 
+/* Bitmap font cell size (used by gfx_char / terminal / widget grids) */
 #define FONT_W   8
 #define FONT_H  16
 
 static unsigned g_width;
 static unsigned g_height;
 
+/* ── Off-screen render target ───────────────────────────────────────────── */
+
+static unsigned *g_rt_buf;       /* NULL = write directly to framebuffer   */
+static unsigned  g_rt_w;
+static unsigned  g_rt_h;
+static int       g_rt_off_x;    /* screen X of buf origin                  */
+static int       g_rt_off_y;    /* screen Y of buf origin                  */
+static int       g_rt_dirty;    /* any pixel written since gfx_begin_frame? */
+
+/* Dirty rectangle in render-target-local coords — tracks the union of all
+ * written regions so gfx_end_frame() blits only the changed area rather
+ * than the full buffer.  Initialized to "empty" (x0>x1) in gfx_begin_frame. */
+static int       g_dr_x0, g_dr_y0;  /* inclusive top-left  */
+static int       g_dr_x1, g_dr_y1;  /* exclusive bot-right */
+
 #define SYS_FB_INFO  607   /* () → (fb_width << 32) | fb_height */
+
+/* ── FreeType integration (Phase 7.2.4) ───────────────────────────────────── */
+
+#if GFX_HAVE_FREETYPE
+#include "aether_font.h"
+
+#define GFX_FT_PX      14      /* UI render size — fits in 16-px grid rows */
+#define GFX_FT_SCR_W  1280    /* scratch buffer width  (= max screen width) */
+#define GFX_FT_SCR_H    32    /* scratch buffer height (enough for any 14-px font) */
+
+static aether_font_t *g_ft_font;
+static unsigned       g_ft_scratch[GFX_FT_SCR_W * GFX_FT_SCR_H];
+static int            g_ft_ascent;   /* baseline offset from top of scratch row */
+static int            g_ft_height;  /* ascender + |descender| in pixels */
+#endif /* GFX_HAVE_FREETYPE */
 
 void gfx_init(void)
 {
@@ -27,25 +58,90 @@ void gfx_init(void)
         g_width  = 1280;
         g_height = 720;
     }
+
+#if GFX_HAVE_FREETYPE
+    if (aether_font_init() == 0 &&
+        aether_font_load("/fonts/NotoSans-Regular.ttf", &g_ft_font) == 0) {
+        g_ft_ascent = aether_font_get_ascent(g_ft_font, GFX_FT_PX);
+        g_ft_height = aether_font_get_height(g_ft_font, GFX_FT_PX);
+        if (g_ft_ascent <= 0) g_ft_ascent = 11;
+        if (g_ft_height <= 0) g_ft_height = FONT_H;
+    }
+#endif
 }
 
 unsigned gfx_width(void)  { return g_width;  }
 unsigned gfx_height(void) { return g_height; }
 long     gfx_ticks(void)  { return sys_get_ticks(); }
 
+void gfx_begin_frame(unsigned *buf, unsigned w, unsigned h, int off_x, int off_y)
+{
+    g_rt_buf   = buf;
+    g_rt_w     = w;
+    g_rt_h     = h;
+    g_rt_off_x = off_x;
+    g_rt_off_y = off_y;
+    g_rt_dirty = 0;
+    /* Empty dirty rect: x0 > x1 */
+    g_dr_x0 = (int)w;  g_dr_y0 = (int)h;
+    g_dr_x1 = 0;       g_dr_y1 = 0;
+}
+
+void gfx_end_frame(void)
+{
+    if (g_rt_buf && g_rt_dirty && g_dr_x0 < g_dr_x1 && g_dr_y0 < g_dr_y1) {
+        /* Blit only the dirty sub-rectangle — avoids sending unchanged pixels. */
+        const unsigned *src = g_rt_buf + g_dr_y0 * (int)g_rt_w + g_dr_x0;
+        sys_fb_blit(src,
+                    (unsigned)(g_rt_off_x + g_dr_x0),
+                    (unsigned)(g_rt_off_y + g_dr_y0),
+                    (unsigned)(g_dr_x1 - g_dr_x0),
+                    (unsigned)(g_dr_y1 - g_dr_y0),
+                    g_rt_w * 4u);
+    }
+    g_rt_buf   = NULL;
+    g_rt_dirty = 0;
+}
+
+/* ── Render-target fill helper (inline for speed) ───────────────────────── */
+static void rt_fill(int rx0, int ry0, int rx1, int ry1, unsigned c32)
+{
+    if (rx0 < 0) rx0 = 0;
+    if (ry0 < 0) ry0 = 0;
+    if (rx1 > (int)g_rt_w) rx1 = (int)g_rt_w;
+    if (ry1 > (int)g_rt_h) ry1 = (int)g_rt_h;
+    if (rx0 >= rx1 || ry0 >= ry1) return;
+    /* Expand dirty rectangle */
+    if (rx0 < g_dr_x0) g_dr_x0 = rx0;
+    if (ry0 < g_dr_y0) g_dr_y0 = ry0;
+    if (rx1 > g_dr_x1) g_dr_x1 = rx1;
+    if (ry1 > g_dr_y1) g_dr_y1 = ry1;
+    for (int row = ry0; row < ry1; row++)
+        for (int col = rx0; col < rx1; col++)
+            g_rt_buf[row * g_rt_w + col] = c32;
+    g_rt_dirty = 1;
+}
+
 void gfx_fill(unsigned x, unsigned y, unsigned w, unsigned h, unsigned color)
 {
+    if (g_rt_buf) {
+        rt_fill((int)x - g_rt_off_x, (int)y - g_rt_off_y,
+                (int)x - g_rt_off_x + (int)w,
+                (int)y - g_rt_off_y + (int)h,
+                color & 0x00FFFFFFu);
+        return;
+    }
     sys_fb_fill(x, y, w, h, color);
 }
 
 void gfx_hline(unsigned x, unsigned y, unsigned w, unsigned color)
 {
-    sys_fb_fill(x, y, w, 1, color);
+    gfx_fill(x, y, w, 1, color);
 }
 
 void gfx_vline(unsigned x, unsigned y, unsigned h, unsigned color)
 {
-    sys_fb_fill(x, y, 1, h, color);
+    gfx_fill(x, y, 1, h, color);
 }
 
 void gfx_rect(unsigned x, unsigned y, unsigned w, unsigned h, unsigned color)
@@ -56,31 +152,104 @@ void gfx_rect(unsigned x, unsigned y, unsigned w, unsigned h, unsigned color)
     gfx_vline(x + w - 1, y,         h, color);   /* right  */
 }
 
+/* ── Metric helpers ─────────────────────────────────────────────────────────── */
+
+int gfx_text_width(const char *s)
+{
+#if GFX_HAVE_FREETYPE
+    if (g_ft_font && s)
+        return aether_font_measure_width(g_ft_font, s, GFX_FT_PX);
+#endif
+    return (int)(strlen(s) * FONT_W);
+}
+
+int gfx_text_prefix_width(const char *s, int n)
+{
+    if (!s || n <= 0) return 0;
+    char tmp[512];
+    if (n > 511) n = 511;
+    for (int i = 0; i < n; i++) tmp[i] = s[i];
+    tmp[n] = '\0';
+    return gfx_text_width(tmp);
+}
+
+int gfx_font_height(void)
+{
+#if GFX_HAVE_FREETYPE
+    if (g_ft_font) return g_ft_height;
+#endif
+    return FONT_H;
+}
+
+/* ── Single-character bitmap rendering (fixed-width — used by terminal / widgets) */
+
 void gfx_char(unsigned x, unsigned y, char ch, unsigned fg, unsigned bg)
 {
     sys_fb_char(x, y, (unsigned char)ch, fg, bg);
 }
 
+/* ── String rendering (FreeType when available, bitmap fallback) ─────────────── */
+
 void gfx_text(unsigned x, unsigned y, const char *s, unsigned fg, unsigned bg)
 {
-    unsigned cx = x;
-    for (; *s; s++) {
-        gfx_char(cx, y, *s, fg, bg);
-        cx += FONT_W;
+#if GFX_HAVE_FREETYPE
+    if (g_ft_font && s && *s) {
+        int w = aether_font_measure_width(g_ft_font, s, GFX_FT_PX);
+        if (w <= 0) return;
+        if (w > GFX_FT_SCR_W) w = GFX_FT_SCR_W;
+        int h = g_ft_height;
+        if (h > GFX_FT_SCR_H) h = GFX_FT_SCR_H;
+
+        if (g_rt_buf) {
+            /* Off-screen path: render directly into frame buffer, no blit. */
+            int rx = (int)x - g_rt_off_x;
+            int ry = (int)y - g_rt_off_y;
+            /* Early-out if the text rectangle is entirely outside the buffer */
+            if (rx >= (int)g_rt_w || ry >= (int)g_rt_h ||
+                rx + w <= 0 || ry + h <= 0)
+                return;
+            rt_fill(rx < 0 ? 0 : rx,
+                    ry < 0 ? 0 : ry,
+                    rx + w > (int)g_rt_w ? (int)g_rt_w : rx + w,
+                    ry + h > (int)g_rt_h ? (int)g_rt_h : ry + h,
+                    bg & 0x00FFFFFFu);
+            aether_font_draw(g_ft_font, s, GFX_FT_PX, fg & 0x00FFFFFFu,
+                             g_rt_buf, (int)g_rt_w, (int)g_rt_w, (int)g_rt_h,
+                             rx, ry + g_ft_ascent);
+            g_rt_dirty = 1;
+            return;
+        }
+
+        /* Live framebuffer path: render into scratch, blit in one call. */
+        unsigned bg32 = bg & 0x00FFFFFFu;
+        for (int row = 0; row < h; row++)
+            for (int col = 0; col < w; col++)
+                g_ft_scratch[row * GFX_FT_SCR_W + col] = bg32;
+        aether_font_draw(g_ft_font, s, GFX_FT_PX, fg & 0x00FFFFFFu,
+                         g_ft_scratch, GFX_FT_SCR_W, w, h, 0, g_ft_ascent);
+        sys_fb_blit((const unsigned *)g_ft_scratch, x, y,
+                    (unsigned)w, (unsigned)h,
+                    (unsigned)GFX_FT_SCR_W * 4u);
+        return;
     }
+#endif
+    /* Bitmap fallback */
+    unsigned cx = x;
+    for (; *s; s++) { sys_fb_char(cx, y, (unsigned char)*s, fg, bg); cx += FONT_W; }
 }
 
 void gfx_text_center(unsigned cx, unsigned cw, unsigned y,
                      const char *s, unsigned fg, unsigned bg)
 {
-    unsigned len = (unsigned)strlen(s);
-    unsigned text_w = len * FONT_W;
-    unsigned x = cx + (cw > text_w ? (cw - text_w) / 2 : 0);
+    int text_w = gfx_text_width(s);
+    unsigned x = cx + ((unsigned)text_w < cw ? (cw - (unsigned)text_w) / 2u : 0u);
     gfx_text(x, y, s, fg, bg);
 }
 
-/* Transparent text — foreground pixels only, no background rectangle.
- * Use over glass or image backgrounds so the glass shows through. */
+/* Transparent text — bitmap font only; foreground pixels only, no bg rectangle.
+ * FreeType anti-aliasing requires a known background for correct blending, which
+ * we cannot determine without framebuffer readback.  Use gfx_text() with an
+ * explicit bg color when FreeType rendering is wanted. */
 void gfx_char_transparent(unsigned x, unsigned y, char ch, unsigned fg)
 {
     sys_fb_char_nobg(x, y, (unsigned char)ch, fg);
@@ -90,7 +259,7 @@ void gfx_text_transparent(unsigned x, unsigned y, const char *s, unsigned fg)
 {
     unsigned cx = x;
     for (; *s; s++) {
-        gfx_char_transparent(cx, y, *s, fg);
+        sys_fb_char_nobg(cx, y, (unsigned char)*s, fg);
         cx += FONT_W;
     }
 }
@@ -634,10 +803,10 @@ void gfx_glass_window_frame(int wx, int wy, int ww, int wh,
                           (unsigned)(wy + (title_h - 12) / 2),
                           hovered_close);
 
-    /* 10. Window title — transparent over glass so the tinted surface shows through */
-    gfx_text_center_transparent((unsigned)wx, (unsigned)ww,
-                                (unsigned)(wy + (title_h - FONT_H) / 2),
-                                title, C_TEXT);
+    /* 10. Window title — opaque over C_TITLEBAR for correct FreeType anti-aliasing */
+    gfx_text_center((unsigned)wx, (unsigned)ww,
+                    (unsigned)(wy + (title_h - gfx_font_height()) / 2),
+                    title, C_TEXT, C_TITLEBAR);
 }
 
 /* ── BMP loader ──────────────────────────────────────────────────────────── */
@@ -846,6 +1015,8 @@ void gfx_icon_blit(const unsigned *pixels, unsigned src_w, unsigned src_h,
     if (!pixels || src_w == 0 || src_h == 0 || dst_w <= 0 || dst_h <= 0) return;
     if ((unsigned)dst_w > 64u) dst_w = 64;   /* clamp to scratch row size */
 
+    unsigned transp = GFX_ICON_TRANSPARENT & 0x00FFFFFFu;
+
     for (int dy = 0; dy < dst_h; dy++) {
         unsigned sy = (unsigned)dy * src_h / (unsigned)dst_h;
         if (sy >= src_h) sy = src_h - 1u;
@@ -857,24 +1028,35 @@ void gfx_icon_blit(const unsigned *pixels, unsigned src_w, unsigned src_h,
             s_icon_row[dx] = pixels[sy * src_w + sx] & 0x00FFFFFFu;
         }
 
-        /* Blit contiguous opaque runs — minimises sys_fb_blit call count */
-        int dx = 0;
-        while (dx < dst_w) {
-            /* Skip transparent pixels */
-            while (dx < dst_w &&
-                   s_icon_row[dx] == (GFX_ICON_TRANSPARENT & 0x00FFFFFFu))
-                dx++;
-            if (dx >= dst_w) break;
-
-            int run_start = dx;
-            while (dx < dst_w &&
-                   s_icon_row[dx] != (GFX_ICON_TRANSPARENT & 0x00FFFFFFu))
-                dx++;
-
-            sys_fb_blit(s_icon_row + run_start,
-                        (unsigned)(dst_x + run_start), (unsigned)(dst_y + dy),
-                        (unsigned)(dx - run_start), 1u,
-                        (unsigned)dst_w * 4u);
+        if (g_rt_buf) {
+            /* Render-target path: write opaque pixels directly into the buffer. */
+            int ry = dst_y + dy - g_rt_off_y;
+            if (ry < 0 || ry >= (int)g_rt_h) continue;
+            for (int dx = 0; dx < dst_w; dx++) {
+                if (s_icon_row[dx] == transp) continue;
+                int rx = dst_x + dx - g_rt_off_x;
+                if (rx < 0 || rx >= (int)g_rt_w) continue;
+                g_rt_buf[ry * (int)g_rt_w + rx] = s_icon_row[dx];
+                /* Expand dirty rect per written pixel */
+                if (rx     < g_dr_x0) g_dr_x0 = rx;
+                if (ry     < g_dr_y0) g_dr_y0 = ry;
+                if (rx + 1 > g_dr_x1) g_dr_x1 = rx + 1;
+                if (ry + 1 > g_dr_y1) g_dr_y1 = ry + 1;
+                g_rt_dirty = 1;
+            }
+        } else {
+            /* Live framebuffer: blit contiguous opaque runs — minimises syscalls. */
+            int dx = 0;
+            while (dx < dst_w) {
+                while (dx < dst_w && s_icon_row[dx] == transp) dx++;
+                if (dx >= dst_w) break;
+                int run_start = dx;
+                while (dx < dst_w && s_icon_row[dx] != transp) dx++;
+                sys_fb_blit(s_icon_row + run_start,
+                            (unsigned)(dst_x + run_start), (unsigned)(dst_y + dy),
+                            (unsigned)(dx - run_start), 1u,
+                            (unsigned)dst_w * 4u);
+            }
         }
     }
 }
