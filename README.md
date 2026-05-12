@@ -138,7 +138,13 @@ Application to demonstrate the several widgets available in the libwidget librar
 - Scrollbar
 - Textarea
 - Textinput
+- Tree view
+- Progress bar
 ![Alttext](./screenshots/widget_demo.png)
+
+### Aether Top
+Resource monitor and realtime process visualization tool.
+![Alttext](./screenshots/top.png)
 
 ## Contributing
 As this is a hobby OS project, contributions are welcome! If you have ideas for improvements, bug fixes, or new features, feel free to open an issue or submit a pull request.

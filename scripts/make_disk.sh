@@ -148,7 +148,7 @@ printf "name=Terminal\nicon=icon_term\nexec=/aether_term\ndescription=Terminal e
 printf "name=Files\nicon=icon_files\nexec=/files\ndescription=File browser\n" \
     | mcopy -i "${DISK}" - ::apps/files.app
 
-printf "name=AetherEditor\nicon=icon_editor\nexec=/aether_editor\ndescription=Script editor\n" \
+printf "name=Aether IDE\nicon=icon_editor\nexec=/aether_editor\ndescription=Script editor\n" \
     | mcopy -i "${DISK}" - ::apps/aether_editor.app
 
 echo "[DISK] Contents:"
