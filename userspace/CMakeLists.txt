@@ -679,6 +679,443 @@ else()
     set(IMG_TEST_TARGET "")
 endif()
 
+# ── vendor_freetype — FreeType 2.13.x (Phase 7.2) ────────────────────────────
+#
+# Minimal source set for TrueType rendering: sfnt, truetype, smooth, autofit,
+# psnames, raster.  LZW/BZip2/HarfBuzz/Brotli disabled via ftoption.h overrides
+# written by fetch_freetype.sh.
+#
+# FT2_BUILD_LIBRARY unlocks the FT_LOCAL / internal includes.
+# Each module dir is added to PRIVATE includes so "module.c" can #include its
+# companion source files via quoted paths (e.g. #include "sfobjs.c").
+
+set(FT_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/freetype)
+
+if(EXISTS ${FT_SRC_DIR}/include/freetype/freetype.h)
+
+    set(FT_BASE_SRCS
+        ${FT_SRC_DIR}/src/base/ftbase.c
+        ${FT_SRC_DIR}/src/base/ftbbox.c
+        ${FT_SRC_DIR}/src/base/ftbitmap.c
+        ${FT_SRC_DIR}/src/base/ftdebug.c
+        ${FT_SRC_DIR}/src/base/ftglyph.c
+        ${FT_SRC_DIR}/src/base/ftinit.c
+        ${FT_SRC_DIR}/src/base/ftmm.c
+        ${FT_SRC_DIR}/src/base/ftstroke.c
+        ${FT_SRC_DIR}/src/base/ftsystem.c
+        ${FT_SRC_DIR}/src/base/fttrigon.c
+        ${FT_SRC_DIR}/src/base/ftsynth.c
+        ${FT_SRC_DIR}/src/base/ftfstype.c
+    )
+
+    set(FT_MODULE_SRCS
+        ${FT_SRC_DIR}/src/sfnt/sfnt.c
+        ${FT_SRC_DIR}/src/truetype/truetype.c
+        ${FT_SRC_DIR}/src/smooth/smooth.c
+        ${FT_SRC_DIR}/src/autofit/autofit.c
+        ${FT_SRC_DIR}/src/psnames/psnames.c
+        ${FT_SRC_DIR}/src/raster/raster.c
+    )
+
+    # zlib stream support (for gzip-compressed fonts) — uses vendor_zlib
+    set(FT_GZIP_SRCS
+        ${FT_SRC_DIR}/src/gzip/ftgzip.c
+    )
+
+    add_library(vendor_freetype STATIC
+        ${FT_BASE_SRCS}
+        ${FT_MODULE_SRCS}
+        ${FT_GZIP_SRCS}
+    )
+
+    target_compile_definitions(vendor_freetype PRIVATE FT2_BUILD_LIBRARY)
+
+    target_include_directories(vendor_freetype PUBLIC
+        ${FT_SRC_DIR}/include
+    )
+
+    target_include_directories(vendor_freetype PRIVATE
+        ${FT_SRC_DIR}/include
+        ${FT_SRC_DIR}/src
+        ${FT_SRC_DIR}/src/base
+        ${FT_SRC_DIR}/src/sfnt
+        ${FT_SRC_DIR}/src/truetype
+        ${FT_SRC_DIR}/src/smooth
+        ${FT_SRC_DIR}/src/autofit
+        ${FT_SRC_DIR}/src/psnames
+        ${FT_SRC_DIR}/src/raster
+        ${FT_SRC_DIR}/src/gzip
+        # POSIX shim for stdio.h, stdlib.h, string.h etc.
+        ${POSIX_INC_DIR}
+        lib/include
+    )
+
+    target_compile_options(vendor_freetype PRIVATE
+        ${USER_COMPILE_FLAGS}
+        -Wno-implicit-function-declaration
+        -Wno-unused-parameter
+        -Wno-sign-compare
+        -Wno-unused-variable
+        -Wno-type-limits
+        -Wno-missing-field-initializers
+        -Wno-strict-aliasing
+    )
+
+    # Link vendor_zlib (for gzip font streams) and libaether_posix
+    # (for setjmp/longjmp/qsort/getenv used by FreeType internals)
+    target_link_libraries(vendor_freetype PUBLIC vendor_zlib libaether_posix)
+
+    set(FREETYPE_TARGET vendor_freetype)
+
+else()
+    message(STATUS "[Phase 7.2] FreeType not found — run scripts/fetch_freetype.sh")
+    set(FREETYPE_TARGET "")
+endif()
+
+# ── libaether_font — thin FreeType wrapper (Phase 7.2) ───────────────────────
+
+if(FREETYPE_TARGET)
+
+    add_library(libaether_font STATIC
+        lib/aether_font/aether_font.c
+    )
+
+    target_include_directories(libaether_font PUBLIC
+        lib/aether_font
+        ${FT_SRC_DIR}/include
+        ${POSIX_INC_DIR}
+    )
+
+    target_compile_options(libaether_font PRIVATE
+        ${USER_COMPILE_FLAGS}
+        -Wno-unused-parameter
+    )
+
+    target_link_libraries(libaether_font PUBLIC vendor_freetype libaether_posix)
+
+    # ── user_font_test — Phase 7.2 integration test (Task 7.2.5) ─────────────
+
+    add_executable(user_font_test
+        apps/font_test/main.c
+        lib/crt0.S
+    )
+
+    target_include_directories(user_font_test PRIVATE
+        lib/aether_font
+        ${FT_SRC_DIR}/include
+        ${POSIX_INC_DIR}
+        lib/include
+    )
+
+    target_compile_options(user_font_test PRIVATE
+        ${USER_COMPILE_FLAGS}
+        -Wno-unused-parameter
+    )
+
+    target_link_libraries(user_font_test PRIVATE libaether_font libaether_posix)
+
+    target_link_options(user_font_test PRIVATE
+        -T ${USER_LINKER_SCRIPT} -nostdlib -static -Wl,--build-id=none
+    )
+
+    set_target_properties(user_font_test PROPERTIES
+        OUTPUT_NAME "font_test" SUFFIX ""
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
+    )
+
+    set(FONT_TEST_TARGET user_font_test)
+
+else()
+    set(FONT_TEST_TARGET "")
+endif()
+
+# ── NetSurf support libraries (Phase 7.3) ────────────────────────────────────
+#
+# Eight pure-C libraries from the NetSurf project, ported to AetherOS
+# bare-metal via libaether_posix.  All compiled as static archives.
+#
+# Dependency order (low → high):
+#   libparserutils, libwapcaplet, libnsutils, libnsbmp, libnsgif
+#   → libhubbub (needs libparserutils)
+#   → libcss    (needs libparserutils + libwapcaplet)
+#   → libdom    (needs libhubbub + libwapcaplet + libparserutils)
+#
+# Prerequisites: run  scripts/fetch_netsurf_libs.sh  once.
+
+set(NETSURF_VENDOR ${CMAKE_CURRENT_SOURCE_DIR}/vendor)
+set(NETSURF_GUARD  ${NETSURF_VENDOR}/libparserutils/include/parserutils/parserutils.h)
+
+# Shared warning suppression for all third-party NetSurf code
+set(NETSURF_WARN_FLAGS
+    -w                              # suppress all warnings in vendor code
+    -Wno-undef
+)
+
+if(EXISTS ${NETSURF_GUARD})
+
+    # ── vendor_libparserutils ─────────────────────────────────────────────────
+    # WITHOUT_ICONV_FILTER: compile the filter.c iconv path out (no iconv on AetherOS)
+
+    set(LPUTILS_DIR ${NETSURF_VENDOR}/libparserutils)
+    add_library(vendor_libparserutils STATIC
+        ${LPUTILS_DIR}/src/charset/aliases.c
+        ${LPUTILS_DIR}/src/charset/codec.c
+        ${LPUTILS_DIR}/src/charset/codecs/codec_8859.c
+        ${LPUTILS_DIR}/src/charset/codecs/codec_ascii.c
+        ${LPUTILS_DIR}/src/charset/codecs/codec_ext8.c
+        ${LPUTILS_DIR}/src/charset/codecs/codec_utf16.c
+        ${LPUTILS_DIR}/src/charset/codecs/codec_utf8.c
+        ${LPUTILS_DIR}/src/charset/encodings/utf16.c
+        ${LPUTILS_DIR}/src/charset/encodings/utf8.c
+        ${LPUTILS_DIR}/src/input/filter.c
+        ${LPUTILS_DIR}/src/input/inputstream.c
+        ${LPUTILS_DIR}/src/utils/buffer.c
+        ${LPUTILS_DIR}/src/utils/errors.c
+        ${LPUTILS_DIR}/src/utils/stack.c
+        ${LPUTILS_DIR}/src/utils/vector.c
+    )
+    target_include_directories(vendor_libparserutils PUBLIC
+        ${LPUTILS_DIR}/include
+        ${POSIX_INC_DIR}
+        lib/include
+    )
+    target_include_directories(vendor_libparserutils PRIVATE
+        ${LPUTILS_DIR}/src
+    )
+    target_compile_definitions(vendor_libparserutils PRIVATE WITHOUT_ICONV_FILTER=1)
+    target_compile_options(vendor_libparserutils PRIVATE
+        ${USER_COMPILE_FLAGS} ${NETSURF_WARN_FLAGS}
+    )
+    target_link_libraries(vendor_libparserutils PUBLIC libaether_posix)
+
+    # ── vendor_libwapcaplet ───────────────────────────────────────────────────
+    # Single-file string interning pool; no initialization required.
+
+    set(LWAPCAP_DIR ${NETSURF_VENDOR}/libwapcaplet)
+    add_library(vendor_libwapcaplet STATIC
+        ${LWAPCAP_DIR}/src/libwapcaplet.c
+    )
+    target_include_directories(vendor_libwapcaplet PUBLIC
+        ${LWAPCAP_DIR}/include
+        ${POSIX_INC_DIR}
+        lib/include
+    )
+    target_compile_options(vendor_libwapcaplet PRIVATE
+        ${USER_COMPILE_FLAGS} ${NETSURF_WARN_FLAGS}
+    )
+    target_link_libraries(vendor_libwapcaplet PUBLIC libaether_posix)
+
+    # ── vendor_libnsutils ─────────────────────────────────────────────────────
+    # time.c needs _POSIX_TIMERS + _POSIX_MONOTONIC_CLOCK so it uses our
+    # clock_gettime(CLOCK_MONOTONIC) implementation from libaether_posix.
+
+    set(LNSUTILS_DIR ${NETSURF_VENDOR}/libnsutils)
+    add_library(vendor_libnsutils STATIC
+        ${LNSUTILS_DIR}/src/base64.c
+        ${LNSUTILS_DIR}/src/time.c
+        ${LNSUTILS_DIR}/src/unistd.c
+    )
+    target_include_directories(vendor_libnsutils PUBLIC
+        ${LNSUTILS_DIR}/include
+        ${POSIX_INC_DIR}
+        lib/include
+    )
+    target_compile_definitions(vendor_libnsutils PRIVATE
+        _POSIX_TIMERS=1
+        _POSIX_MONOTONIC_CLOCK=1
+    )
+    target_compile_options(vendor_libnsutils PRIVATE
+        ${USER_COMPILE_FLAGS} ${NETSURF_WARN_FLAGS}
+    )
+    target_link_libraries(vendor_libnsutils PUBLIC libaether_posix)
+
+    # ── vendor_libnsbmp ───────────────────────────────────────────────────────
+
+    set(LNSBMP_DIR ${NETSURF_VENDOR}/libnsbmp)
+    add_library(vendor_libnsbmp STATIC
+        ${LNSBMP_DIR}/src/libnsbmp.c
+    )
+    target_include_directories(vendor_libnsbmp PUBLIC
+        ${LNSBMP_DIR}/include
+        ${POSIX_INC_DIR}
+        lib/include
+    )
+    target_compile_options(vendor_libnsbmp PRIVATE
+        ${USER_COMPILE_FLAGS} ${NETSURF_WARN_FLAGS}
+    )
+    target_link_libraries(vendor_libnsbmp PUBLIC libaether_posix)
+
+    # ── vendor_libnsgif ───────────────────────────────────────────────────────
+    # gif.c #includes lzw.h from the same src/ dir → needs PRIVATE src include.
+
+    set(LNSGIF_DIR ${NETSURF_VENDOR}/libnsgif)
+    add_library(vendor_libnsgif STATIC
+        ${LNSGIF_DIR}/src/gif.c
+        ${LNSGIF_DIR}/src/lzw.c
+    )
+    target_include_directories(vendor_libnsgif PUBLIC
+        ${LNSGIF_DIR}/include
+        ${POSIX_INC_DIR}
+        lib/include
+    )
+    target_include_directories(vendor_libnsgif PRIVATE
+        ${LNSGIF_DIR}/src
+    )
+    target_compile_options(vendor_libnsgif PRIVATE
+        ${USER_COMPILE_FLAGS} ${NETSURF_WARN_FLAGS}
+    )
+    target_link_libraries(vendor_libnsgif PUBLIC libaether_posix)
+
+    # ── vendor_libhubbub ──────────────────────────────────────────────────────
+    # HTML5 parser; depends on libparserutils for charset detection + streams.
+
+    set(LHUBBUB_DIR ${NETSURF_VENDOR}/libhubbub)
+    add_library(vendor_libhubbub STATIC
+        ${LHUBBUB_DIR}/src/charset/detect.c
+        ${LHUBBUB_DIR}/src/parser.c
+        ${LHUBBUB_DIR}/src/tokeniser/entities.c
+        ${LHUBBUB_DIR}/src/tokeniser/tokeniser.c
+        ${LHUBBUB_DIR}/src/treebuilder/after_after_body.c
+        ${LHUBBUB_DIR}/src/treebuilder/after_after_frameset.c
+        ${LHUBBUB_DIR}/src/treebuilder/after_body.c
+        ${LHUBBUB_DIR}/src/treebuilder/after_frameset.c
+        ${LHUBBUB_DIR}/src/treebuilder/after_head.c
+        ${LHUBBUB_DIR}/src/treebuilder/before_head.c
+        ${LHUBBUB_DIR}/src/treebuilder/before_html.c
+        ${LHUBBUB_DIR}/src/treebuilder/element-type.c
+        ${LHUBBUB_DIR}/src/treebuilder/generic_rcdata.c
+        ${LHUBBUB_DIR}/src/treebuilder/in_body.c
+        ${LHUBBUB_DIR}/src/treebuilder/in_caption.c
+        ${LHUBBUB_DIR}/src/treebuilder/in_cell.c
+        ${LHUBBUB_DIR}/src/treebuilder/in_column_group.c
+        ${LHUBBUB_DIR}/src/treebuilder/in_foreign_content.c
+        ${LHUBBUB_DIR}/src/treebuilder/in_frameset.c
+        ${LHUBBUB_DIR}/src/treebuilder/in_head.c
+        ${LHUBBUB_DIR}/src/treebuilder/in_head_noscript.c
+        ${LHUBBUB_DIR}/src/treebuilder/in_row.c
+        ${LHUBBUB_DIR}/src/treebuilder/in_select.c
+        ${LHUBBUB_DIR}/src/treebuilder/in_select_in_table.c
+        ${LHUBBUB_DIR}/src/treebuilder/in_table.c
+        ${LHUBBUB_DIR}/src/treebuilder/in_table_body.c
+        ${LHUBBUB_DIR}/src/treebuilder/initial.c
+        ${LHUBBUB_DIR}/src/treebuilder/treebuilder.c
+        ${LHUBBUB_DIR}/src/utils/errors.c
+        ${LHUBBUB_DIR}/src/utils/string.c
+    )
+    target_include_directories(vendor_libhubbub PUBLIC
+        ${LHUBBUB_DIR}/include
+        ${POSIX_INC_DIR}
+        lib/include
+    )
+    target_include_directories(vendor_libhubbub PRIVATE
+        ${LHUBBUB_DIR}/src
+    )
+    target_compile_options(vendor_libhubbub PRIVATE
+        ${USER_COMPILE_FLAGS} ${NETSURF_WARN_FLAGS}
+    )
+    target_link_libraries(vendor_libhubbub PUBLIC vendor_libparserutils libaether_posix)
+
+    # ── vendor_libcss ─────────────────────────────────────────────────────────
+    # 183 source files (184 total minus css_property_parser_gen.c tool).
+    # Uses GLOB_RECURSE + filter; CONFIGURE_DEPENDS re-globs on any src change.
+
+    set(LCSS_DIR ${NETSURF_VENDOR}/libcss)
+    file(GLOB_RECURSE LIBCSS_SRCS CONFIGURE_DEPENDS "${LCSS_DIR}/src/*.c")
+    list(FILTER LIBCSS_SRCS EXCLUDE REGEX ".*/css_property_parser_gen\\.c$")
+
+    add_library(vendor_libcss STATIC ${LIBCSS_SRCS})
+    target_include_directories(vendor_libcss PUBLIC
+        ${LCSS_DIR}/include
+        ${POSIX_INC_DIR}
+        lib/include
+    )
+    target_include_directories(vendor_libcss PRIVATE
+        ${LCSS_DIR}/src
+    )
+    target_compile_options(vendor_libcss PRIVATE
+        ${USER_COMPILE_FLAGS} ${NETSURF_WARN_FLAGS}
+    )
+    target_link_libraries(vendor_libcss PUBLIC
+        vendor_libparserutils
+        vendor_libwapcaplet
+        libaether_posix
+    )
+
+    # ── vendor_libdom ─────────────────────────────────────────────────────────
+    # W3C DOM: 94 files across core/, events/, html/, utils/.
+
+    set(LDOM_DIR ${NETSURF_VENDOR}/libdom)
+    file(GLOB_RECURSE LIBDOM_SRCS CONFIGURE_DEPENDS "${LDOM_DIR}/src/*.c")
+
+    add_library(vendor_libdom STATIC ${LIBDOM_SRCS})
+    target_include_directories(vendor_libdom PUBLIC
+        ${LDOM_DIR}/include
+        ${POSIX_INC_DIR}
+        lib/include
+    )
+    target_include_directories(vendor_libdom PRIVATE
+        ${LDOM_DIR}/src
+    )
+    target_compile_options(vendor_libdom PRIVATE
+        ${USER_COMPILE_FLAGS} ${NETSURF_WARN_FLAGS}
+    )
+    target_link_libraries(vendor_libdom PUBLIC
+        vendor_libhubbub
+        vendor_libwapcaplet
+        vendor_libparserutils
+        libaether_posix
+    )
+
+    set(NETSURF_LIBS_TARGETS
+        vendor_libparserutils vendor_libwapcaplet vendor_libnsutils
+        vendor_libnsbmp vendor_libnsgif vendor_libhubbub
+        vendor_libcss vendor_libdom
+    )
+    message(STATUS "[Phase 7.3] NetSurf support libraries found — building all 8 targets")
+
+    # ── user_html_test — Phase 7.3 integration test (Task 7.3.7) ─────────────
+    #
+    # Tests libwapcaplet string interning and libhubbub HTML5 parsing.
+    # Run in AetherOS:  html_test
+
+    add_executable(user_html_test
+        apps/html_test/main.c
+        lib/crt0.S
+    )
+    target_include_directories(user_html_test PRIVATE
+        ${LHUBBUB_DIR}/include
+        ${LWAPCAP_DIR}/include
+        ${LPUTILS_DIR}/include
+        ${POSIX_INC_DIR}
+        lib/include
+    )
+    target_compile_options(user_html_test PRIVATE
+        ${USER_COMPILE_FLAGS}
+        -Wno-unused-parameter
+    )
+    target_link_libraries(user_html_test PRIVATE
+        vendor_libhubbub
+        vendor_libwapcaplet
+        vendor_libparserutils
+        libaether_posix
+    )
+    target_link_options(user_html_test PRIVATE
+        -T ${USER_LINKER_SCRIPT} -nostdlib -static -Wl,--build-id=none
+    )
+    set_target_properties(user_html_test PROPERTIES
+        OUTPUT_NAME "html_test" SUFFIX ""
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
+    )
+    set(HTML_TEST_TARGET user_html_test)
+
+else()
+    message(STATUS
+        "[Phase 7.3] NetSurf libs not found in vendor/ — "
+        "run scripts/fetch_netsurf_libs.sh then re-configure.")
+    set(NETSURF_LIBS_TARGETS "")
+    set(HTML_TEST_TARGET "")
+endif()
+
 # ── initrd CPIO archive ───────────────────────────────────────────────────────
 #
 # Step 1 — package all files from initrd_staging/ into a CPIO newc archive.
@@ -702,6 +1139,8 @@ add_custom_command(
             ${INITRD_FILES_SRC}/apps/aether_top.app
             ${INITRD_FILES_SRC}/apps/posix_test.app
             ${INITRD_FILES_SRC}/apps/img_test.app
+            ${INITRD_FILES_SRC}/apps/font_test.app
+            ${INITRD_FILES_SRC}/apps/html_test.app
     COMMENT "Copying initrd static files"
 )
 
@@ -716,6 +1155,8 @@ add_custom_command(
             user_aether_http user_telnet user_aether_top user_posix_test
             ${INTERP_TARGET}
             ${IMG_TEST_TARGET}
+            ${FONT_TEST_TARGET}
+            ${HTML_TEST_TARGET}
             ${INITRD_STAGING}/motd.txt
     COMMENT "Packaging initrd.cpio"
 )

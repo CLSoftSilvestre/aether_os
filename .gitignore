@@ -4,3 +4,21 @@ build/
 *.o
 *.a
 .DS_Store
+
+# Downloaded vendor libraries (unmodified upstream — use fetch scripts to restore)
+# Custom code lives in userspace/vendor/libaether_posix/ (always tracked)
+# lua54 is tracked because it contains aether/ custom files
+userspace/vendor/freetype
+userspace/vendor/zlib
+userspace/vendor/libpng
+userspace/vendor/libjpeg
+
+# NetSurf support libraries (Phase 7.3) — fetched by scripts/fetch_netsurf_libs.sh
+userspace/vendor/libparserutils
+userspace/vendor/libwapcaplet
+userspace/vendor/libnsutils
+userspace/vendor/libnsbmp
+userspace/vendor/libnsgif
+userspace/vendor/libhubbub
+userspace/vendor/libcss
+userspace/vendor/libdom

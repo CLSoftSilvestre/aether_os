@@ -28,6 +28,10 @@ pid_t   getppid(void);
 unsigned int sleep(unsigned int seconds);
 int          usleep(unsigned int usec);
 
+/* Positional I/O (AetherOS: ENOSYS — VFS seek added in Phase 7.6) */
+ssize_t pread(int fd, void *buf, size_t count, off_t offset);
+ssize_t pwrite(int fd, const void *buf, size_t count, off_t offset);
+
 /* Working directory */
 char  *getcwd(char *buf, size_t size);
 

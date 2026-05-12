@@ -80,6 +80,27 @@ else
     echo "[DISK] Note: gen_test_images.py failed — /images/ will be empty (img_test will skip JPEG)"
 fi
 
+# /fonts/ — TrueType fonts for Phase 7.2 FreeType rendering
+mmd -i "${DISK}" ::fonts
+
+FONTS_ASSET_DIR="${SCRIPT_DIR}/../assets/fonts"
+if [ -d "${FONTS_ASSET_DIR}" ]; then
+    font_count=0
+    for font in "${FONTS_ASSET_DIR}"/*.ttf "${FONTS_ASSET_DIR}"/*.otf; do
+        [ -f "$font" ] || continue
+        fname="$(basename "${font}")"
+        mcopy -i "${DISK}" "${font}" "::fonts/${fname}"
+        font_count=$((font_count + 1))
+    done
+    if [ "${font_count}" -gt 0 ]; then
+        echo "[DISK] Copied ${font_count} font(s) to /fonts/"
+    else
+        echo "[DISK] Note: no fonts in assets/fonts/ — run scripts/fetch_fonts.sh"
+    fi
+else
+    echo "[DISK] Note: assets/fonts/ not found — run scripts/fetch_fonts.sh"
+fi
+
 # /apps/ — app manifests for desktop icon launcher (Phase 5.4)
 mmd -i "${DISK}" ::apps
 

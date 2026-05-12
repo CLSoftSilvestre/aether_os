@@ -414,3 +414,9 @@ float sinf(float x)   { return (float)_unsupported((double)x); }
 float cosf(float x)   { return (float)_unsupported((double)x); }
 float tanf(float x)   { return (float)_unsupported((double)x); }
 float fmodf(float x, float y) { (void)y; return (float)_unsupported((double)x); }
+
+ssize_t pread(int fd, void *buf, size_t count, off_t offset)
+{ (void)fd; (void)buf; (void)count; (void)offset; errno = ENOSYS; return -1; }
+
+ssize_t pwrite(int fd, const void *buf, size_t count, off_t offset)
+{ (void)fd; (void)buf; (void)count; (void)offset; errno = ENOSYS; return -1; }
