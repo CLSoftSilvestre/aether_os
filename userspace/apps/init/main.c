@@ -858,7 +858,8 @@ static void refresh_top_bar(void)
                     erase_x, (unsigned)TOPBAR_Y,
                     (unsigned)SCR_W - erase_x, TOPBAR_H,
                     (unsigned)SCR_W * 4u);
-        gfx_text_transparent((unsigned)x, TOPBAR_Y + 10, tbuf, C_TEXT_DIM);
+        // gfx_text_transparent((unsigned)x, TOPBAR_Y + 10, tbuf, C_TEXT_DIM);
+        gfx_text((unsigned)x, TOPBAR_Y + 10, tbuf, C_TEXT_DIM, C_PANEL);
     } else {
         int x = SCR_W - gfx_text_width(tbuf) - 14;  /* FreeType — use measured width */
         gfx_fill(erase_x, TOPBAR_Y,
