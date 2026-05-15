@@ -64,6 +64,33 @@
 /* Window Manager (Phase 5.3) */
 #define SYS_WM_PUSH_EVENT  28  /* (pid, event_u64) → 0; injects into PID's ring */
 
+/* Window Manager — compositing extension (wmanager branch) */
+#define SYS_WM_SET_ZINDEX      31  /* (win_id, z_index) → 0                      */
+#define SYS_WM_SET_OPACITY     32  /* (win_id, opacity 0-255) → 0                */
+#define SYS_WM_SET_BLUR        33  /* (win_id, blur_radius 0-255) → 0            */
+#define SYS_WM_SET_BUFFER      35  /* (win_id, gpu_bo_handle) → 0                */
+#define SYS_WM_DAMAGE          36  /* (win_id) → 0; marks dirty + pings compositor*/
+#define SYS_WM_ENUM            37  /* (entries_ptr, max) → count of active wins  */
+#define SYS_WM_GET_BUFFER      38  /* (win_id) → buf_handle or 0                 */
+#define SYS_WM_SET_COMPOSITOR  39  /* (compositor_pid) → 0; registers compositor */
+#define SYS_WM_DAMAGE_CLEAR    40  /* (win_id) → 0; compositor clears dirty flag */
+#define SYS_WM_SET_VISIBLE     41  /* (win_id, visible 0/1) → 0                  */
+#define SYS_WM_GET_ZINDEX      42  /* (win_id) → z_index                         */
+
+/* WM5.5: close-animation protocol */
+#define SYS_WM_REQUEST_CLOSE   43  /* (win_id) → 0; marks closing=1, notifies compositor  */
+#define SYS_WM_CLOSE_DONE      44  /* (win_id) → 0; compositor ACK: unregister + free BO  */
+
+/* WM7a: minimize/restore protocol */
+#define SYS_WM_MINIMIZE        45  /* (win_id) → 0; marks minimized=1, sends WM_EV_MINIMIZE */
+#define SYS_WM_RESTORE         46  /* (win_id) → 0; marks minimized=0, sends WM_EV_RESTORE  */
+
+/* WM7b: live-resize protocol */
+#define SYS_WM_RESIZE          47  /* (win_id, new_w<<32|new_h) → 0; update size, notify app */
+
+/* WM9: window behaviour flags */
+#define SYS_WM_SET_FLAGS       48  /* (win_id, flags) → 0; set WM_FLAG_* bitmask on window  */
+
 /* Process argv (Phase 5.5) */
 #define SYS_SPAWN_ARGS     29  /* (path, argv[], argc) → child PID or -1        */
 
@@ -160,6 +187,17 @@
                                 *   Single-pass: restore wallpaper bg over nat_rect*
                                 *   then composite scaled BO inside anim_rect.     *
                                 *   Eliminates flicker from two-step restore+blit. */
+
+/* WM3: batch compositor + double-buffer page flip */
+#define SYS_GPU_COMPOSITE_FRAME 913  /* (layers_ptr, count) → 0/-1               *
+                                      *   layers_ptr: user pointer to v3d_layer_t[]*
+                                      *   count:      number of entries (may be 0) *
+                                      *   Fills the back buffer with wallpaper bg, *
+                                      *   then blits each layer in order.          *
+                                      *   1 syscall per frame vs N per window.     */
+#define SYS_FB_FLIP             914  /* () → 0                                    *
+                                      *   Present back buffer → framebuffer.       *
+                                      *   No-op if double buffer not initialised.  */
 
 /* File descriptor numbers */
 #define FD_STDIN   0

@@ -453,6 +453,9 @@ int main(void)
     ctx.win_y         = &g_win_y;
     ctx.content_dx    = SIDE_PAD;
     ctx.content_dy    = TITLE_H + CONT_PAD;
+    ctx.win_id        = (int)g_win_id;
+    ctx.win_w         = WIN_W;
+    ctx.win_h         = WIN_H;
     ctx.on_reposition = on_reposition;
     ctx.userdata      = NULL;
     ctx.running       = 1;
@@ -460,6 +463,6 @@ int main(void)
     widget_run(&g_root, &ctx);
 
     if (g_fd >= 0) sys_net_close(g_fd);
-    sys_wm_unregister(g_win_id);
+    sys_wm_request_close(g_win_id);
     return 0;
 }

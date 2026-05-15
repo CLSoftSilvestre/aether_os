@@ -16,6 +16,7 @@
 #include <sys.h>
 #include <input.h>
 #include <gfx.h>
+#include <gpu.h>
 
 /* ── Global focus state ──────────────────────────────────────────────────── */
 
@@ -283,16 +284,47 @@ void widget_run(widget_t *root, widget_ctx_t *ctx)
 {
     long last_tick_event = 0;
 
-    /* Persistent off-screen frame buffer — reused across frames so non-dirty
-     * widget pixels are preserved between partial redraws. */
-    unsigned frame_w   = (unsigned)root->bounds.w;
-    unsigned frame_h   = (unsigned)root->bounds.h;
-    unsigned *frame_buf = (unsigned *)malloc(frame_w * frame_h * sizeof(unsigned));
+    /* BO must cover the full window (WIN_W × WIN_H) so the compositor
+     * reads the correct stride and finds both chrome and content pixels.
+     * Apps must set win_w/win_h in widget_ctx_t to the registered
+     * sys_wm_register() dimensions; fallback to root bounds when 0. */
+    unsigned frame_w = (ctx->win_w > 0) ? (unsigned)ctx->win_w
+                                        : (unsigned)root->bounds.w;
+    unsigned frame_h = (ctx->win_h > 0) ? (unsigned)ctx->win_h
+                                        : (unsigned)root->bounds.h;
+    unsigned frame_bytes = frame_w * frame_h * sizeof(unsigned);
 
-    /* Initial draw — force=1 paints every widget into the fresh buffer. */
+    /* Try to allocate a GPU BO for this window so the compositor can
+     * composite it with full z-order, opacity, and animation support.
+     * Fall back to a plain malloc buffer when no GPU BO is available. */
+    gpu_bo_t frame_bo  = GPU_BO_INVALID;
+    unsigned *frame_buf = (unsigned *)0;
+    int use_bo = 0;
+
+    if (ctx->win_id >= 0) {
+        frame_bo = gpu_alloc(frame_bytes);
+        if (frame_bo != GPU_BO_INVALID) {
+            frame_buf = (unsigned *)gpu_map(frame_bo);
+            if (frame_buf) {
+                sys_wm_set_buffer(ctx->win_id, frame_bo);
+                gfx_set_damage_target(ctx->win_id);
+                use_bo = 1;
+            } else {
+                gpu_free(frame_bo);
+                frame_bo = GPU_BO_INVALID;
+            }
+        }
+    }
+    if (!use_bo)
+        frame_buf = (unsigned *)malloc(frame_bytes);
+
+    /* Initial draw — force=1 paints every widget into the fresh buffer.
+     * Frame origin is (win_x, win_y) so the BO aligns with the registered
+     * window.  Chrome is drawn first via on_reposition, then widgets. */
     int cx = *ctx->win_x + ctx->content_dx;
     int cy = *ctx->win_y + ctx->content_dy;
-    FRAME_BEGIN(frame_buf, frame_w, frame_h, cx, cy);
+    FRAME_BEGIN(frame_buf, frame_w, frame_h, *ctx->win_x, *ctx->win_y);
+    if (ctx->on_reposition) ctx->on_reposition(ctx->userdata);
     draw_recursive(root, cx, cy, 1);
     FRAME_END(frame_buf);
 
@@ -305,17 +337,16 @@ void widget_run(widget_t *root, widget_ctx_t *ctx)
             had_event = 1;
 
             if (wm_event_is_redraw(raw)) {
-                /* Window dragged — update position, notify app, redraw all */
+                /* Window dragged — update position, redraw chrome + all widgets. */
                 int new_wx = wm_event_redraw_x(raw);
                 int new_wy = wm_event_redraw_y(raw);
                 *ctx->win_x = new_wx;
                 *ctx->win_y = new_wy;
-                if (ctx->on_reposition)
-                    ctx->on_reposition(ctx->userdata);
                 cx = *ctx->win_x + ctx->content_dx;
                 cy = *ctx->win_y + ctx->content_dy;
                 widget_invalidate_all(root);
-                FRAME_BEGIN(frame_buf, frame_w, frame_h, cx, cy);
+                FRAME_BEGIN(frame_buf, frame_w, frame_h, *ctx->win_x, *ctx->win_y);
+                if (ctx->on_reposition) ctx->on_reposition(ctx->userdata);
                 draw_recursive(root, cx, cy, 1);
                 FRAME_END(frame_buf);
                 continue;
@@ -358,7 +389,7 @@ void widget_run(widget_t *root, widget_ctx_t *ctx)
         /* ── Redraw dirty widgets ───────────────────────────────────────── */
         cx = *ctx->win_x + ctx->content_dx;
         cy = *ctx->win_y + ctx->content_dy;
-        FRAME_BEGIN(frame_buf, frame_w, frame_h, cx, cy);
+        FRAME_BEGIN(frame_buf, frame_w, frame_h, *ctx->win_x, *ctx->win_y);
         draw_recursive(root, cx, cy, 0);
         FRAME_END(frame_buf);
 
@@ -372,5 +403,11 @@ void widget_run(widget_t *root, widget_ctx_t *ctx)
             sys_sched_yield();  /* cooperative yield every iteration */
     }
 
-    free(frame_buf);
+    if (use_bo) {
+        gfx_clear_damage_target();
+        sys_wm_set_buffer(ctx->win_id, GPU_BO_INVALID);
+        gpu_free(frame_bo);
+    } else {
+        free(frame_buf);
+    }
 }

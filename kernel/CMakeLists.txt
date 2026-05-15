@@ -111,3 +111,9 @@ set_target_properties(aether_kernel PROPERTIES
     OUTPUT_NAME  aether_kernel
     SUFFIX       ".elf"
 )
+
+# ── Compositing WM feature flags ──────────────────────────────────────────────
+# AETHER_KAWASE_BLUR: enable Dual Kawase glassmorphism blur in v3d_composite_layers.
+target_compile_definitions(aether_kernel PRIVATE
+    AETHER_KAWASE_BLUR
+)

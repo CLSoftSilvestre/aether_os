@@ -139,6 +139,7 @@
 #define VMM_USER_L2_START   384UL          /* L2 index where user region begins */
 #define VMM_USER_BASE       0x70000000UL   /* start of user virtual address space */
 #define VMM_USER_STACK_TOP  0x7FFFF000UL   /* EL0 SP_EL0 initial value           */
+#define VMM_USER_BO_BASE    0x74000000UL   /* base VA for per-process GPU BO mappings */
 
 /* ── Public API ──────────────────────────────────────────────────────── */
 

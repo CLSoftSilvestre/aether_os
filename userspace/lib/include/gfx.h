@@ -55,6 +55,16 @@ long       gfx_ticks(void);       /* 100Hz ticks since boot */
 void gfx_begin_frame(unsigned *buf, unsigned w, unsigned h, int off_x, int off_y);
 void gfx_end_frame(void);
 
+/*
+ * GPU-BO damage mode.
+ * Call gfx_set_damage_target(win_id) once after allocating a GPU BO for the
+ * window.  While active, gfx_end_frame() signals sys_wm_damage() instead of
+ * calling sys_fb_blit() — the compositor composites from the BO each frame.
+ * Call gfx_clear_damage_target() to revert to direct-FB (legacy) mode.
+ */
+void gfx_set_damage_target(int win_id);
+void gfx_clear_damage_target(void);
+
 /* ── Drawing primitives ─────────────────────────────────────────────── */
 void gfx_fill(unsigned x, unsigned y, unsigned w, unsigned h, unsigned color);
 void gfx_hline(unsigned x, unsigned y, unsigned w, unsigned color);
@@ -124,6 +134,13 @@ int gfx_font_height(void);
  */
 void gfx_draw_close_button(unsigned x, unsigned y, int hovered);
 
+/*
+ * Draw the traffic-light minimize button (12×12) at pixel (x, y).
+ * Yellow (C_YELLOW). hovered=1 draws a brighter yellow.
+ * Corners are clipped with C_TITLEBAR to approximate a circle.
+ */
+void gfx_draw_minimize_button(unsigned x, unsigned y, int hovered);
+
 /* ── Glass window chrome ────────────────────────────────────────────────────── */
 
 /*
@@ -137,8 +154,9 @@ void gfx_draw_close_button(unsigned x, unsigned y, int hovered);
  *     4. Outer glass rim   (1 px rounded rect in C_ACCENT — the visible "edge")
  *     5. Inner border line (1 px rounded rect, darker — adds depth)
  *     6. Accent separator  (C_ACCENT, 1 px, under titlebar)
- *     7. Traffic-light close button
- *     8. Title text        (centered, transparent over glass)
+ *     7. Traffic-light close button  (red, at wx+10)
+ *     8. Traffic-light minimize button (yellow, at wx+26)
+ *     9. Title text        (centered, transparent over glass)
  *
  *   hovered_close: pass 1 when the cursor is over the close button.
  *

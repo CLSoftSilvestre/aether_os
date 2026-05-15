@@ -236,7 +236,10 @@ typedef struct {
     int  *win_y;          /* pointer to current window abs-y */
     int   content_dx;     /* content_area.x = *win_x + content_dx */
     int   content_dy;     /* content_area.y = *win_y + content_dy */
-    void (*on_reposition)(void *userdata); /* app redraws frame at new position */
+    int   win_id;         /* WM window handle from sys_wm_register(); -1 = legacy */
+    int   win_w;          /* full window width  (0 = use root bounds) */
+    int   win_h;          /* full window height (0 = use root bounds) */
+    void (*on_reposition)(void *userdata); /* draw chrome + handle new position */
     void *userdata;
     int   running;        /* set to 0 from a callback to exit widget_run() */
 } widget_ctx_t;

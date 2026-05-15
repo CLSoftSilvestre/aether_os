@@ -11,6 +11,7 @@
  */
 
 #include <gfx.h>
+#include <gpu.h>
 #include <widget.h>
 #include <stdio.h>
 #include <string.h>
@@ -45,6 +46,26 @@ static int g_win_y = WIN_Y_INIT;
 /* WM window handle */
 static long g_win_id = -1;
 
+/* GPU BO for compositor path (NULL = legacy FB) */
+static gpu_bo_t      g_term_bo  = GPU_BO_INVALID;
+static unsigned int *g_bo_ptr   = NULL;
+
+/* Nested frame depth counter — only the outermost begin/end call gfx APIs */
+static int g_frame_depth = 0;
+
+static void term_frame_begin(void)
+{
+    if (g_bo_ptr && g_frame_depth == 0)
+        gfx_begin_frame(g_bo_ptr, WIN_W, WIN_H, g_win_x, g_win_y);
+    g_frame_depth++;
+}
+
+static void term_frame_end(void)
+{
+    if (--g_frame_depth == 0 && g_bo_ptr)
+        gfx_end_frame();
+}
+
 /* Position accessors used throughout (single point of offset) */
 #define WX  g_win_x
 #define WY  g_win_y
@@ -66,20 +87,20 @@ static int  t_row;
 
 static void blit_term_bg(void)
 {
-    sys_wp_blend_fill((unsigned)(WX + 2), (unsigned)(WY + TITLE_H + 1),
-                      (unsigned)(WIN_W - 4), (unsigned)(CONTENT_H - 2), C_TERM_BG);
+    gfx_fill((unsigned)(WX + 2), (unsigned)(WY + TITLE_H + 1),
+             (unsigned)(WIN_W - 4), (unsigned)(CONTENT_H - 2), C_TERM_BG);
 }
 
 static void blit_term_bg_row(int row)
 {
-    sys_wp_blend_fill((unsigned)(WX + 2), (unsigned)(TY + row * FONT_H),
-                      (unsigned)(WIN_W - 4), (unsigned)FONT_H, C_TERM_BG);
+    gfx_fill((unsigned)(TX), (unsigned)(TY + row * FONT_H),
+             (unsigned)(WIN_W - 16), (unsigned)FONT_H, C_TERM_BG);
 }
 
 static void blit_term_bg_cell(int row, int col)
 {
-    sys_wp_blend_fill((unsigned)(TX + col * FONT_W), (unsigned)(TY + row * FONT_H),
-                      (unsigned)FONT_W, (unsigned)FONT_H, C_TERM_BG);
+    gfx_fill((unsigned)(TX + col * FONT_W), (unsigned)(TY + row * FONT_H),
+             (unsigned)FONT_W, (unsigned)FONT_H, C_TERM_BG);
 }
 
 static void term_clear_row(int row)
@@ -96,12 +117,14 @@ static void term_init(void)
 
 static void term_render_row(int row)
 {
+    term_frame_begin();
     blit_term_bg_row(row);
     for (int c = 0; c < TERM_COLS; c++) {
         if (t_buf[row][c] != ' ')
             gfx_char_transparent(TX + c * FONT_W, TY + row * FONT_H,
                                  t_buf[row][c], C_TEXT);
     }
+    term_frame_end();
 }
 
 static void term_redraw_all(void)
@@ -123,14 +146,17 @@ static void term_scroll(void)
 
 static void term_erase_cursor(void)
 {
+    term_frame_begin();
     blit_term_bg_cell(t_row, t_col);
     if (t_buf[t_row][t_col] != ' ')
         gfx_char_transparent(TX + t_col * FONT_W, TY + t_row * FONT_H,
                              t_buf[t_row][t_col], C_TEXT);
+    term_frame_end();
 }
 
 static void term_draw_cursor(void)
 {
+    term_frame_begin();
     gfx_fill(TX + t_col * FONT_W,
              TY + t_row * FONT_H,
              FONT_W, FONT_H, C_ACCENT);
@@ -138,6 +164,7 @@ static void term_draw_cursor(void)
         gfx_char(TX + t_col * FONT_W,
                  TY + t_row * FONT_H,
                  t_buf[t_row][t_col], C_TERM_BG, C_ACCENT);
+    term_frame_end();
 }
 
 static void term_putc(char c)
@@ -152,15 +179,19 @@ static void term_putc(char c)
     if ((c == '\b' || c == 127) && t_col > 0) {
         t_col--;
         t_buf[t_row][t_col] = ' ';
+        term_frame_begin();
         blit_term_bg_cell(t_row, t_col);
+        term_frame_end();
         return;
     }
     if ((unsigned char)c < 32) return;
 
     t_buf[t_row][t_col] = c;
+    term_frame_begin();
     blit_term_bg_cell(t_row, t_col);
     gfx_char_transparent(TX + t_col * FONT_W, TY + t_row * FONT_H,
                          c, C_TEXT);
+    term_frame_end();
     t_col++;
     if (t_col >= TERM_COLS) {
         t_col = 0;
@@ -225,15 +256,19 @@ static char term_key_to_char(key_event_t ev)
 
 static void draw_window(void)
 {
+    term_frame_begin();
     gfx_glass_window_frame(WX, WY, WIN_W, WIN_H,
                             TITLE_H, "Aether Terminal  --  aesh", 0);
     blit_term_bg();
+    term_frame_end();
 }
 
 static void redraw_after_child(void)
 {
+    term_frame_begin();
     draw_window();
     term_redraw_all();
+    term_frame_end();
 }
 
 /* ── Time formatting ─────────────────────────────────────────────────────── */
@@ -268,9 +303,11 @@ static int term_readline(char *buf, int max)
         if (wm_event_is_redraw(raw)) {
             g_win_x = wm_event_redraw_x(raw);
             g_win_y = wm_event_redraw_y(raw);
+            term_frame_begin();
             draw_window();
             term_redraw_all();
             term_draw_cursor();
+            term_frame_end();
             continue;
         }
 
@@ -298,6 +335,7 @@ static int term_readline(char *buf, int max)
             n--; pos--;
             buf[n] = '\0';
             t_col--;  /* move to the deleted character's screen position */
+            term_frame_begin();
             for (int i = pos; i < n; i++) {
                 t_buf[t_row][t_col] = buf[i];
                 gfx_char(TX + t_col * FONT_W, TY + t_row * FONT_H,
@@ -308,6 +346,7 @@ static int term_readline(char *buf, int max)
             gfx_char(TX + t_col * FONT_W, TY + t_row * FONT_H,
                      ' ', C_TEXT, C_TERM_BG);
             t_col -= (n - pos);
+            term_frame_end();
             term_draw_cursor();
             continue;
         }
@@ -338,6 +377,7 @@ static int term_readline(char *buf, int max)
         n++; pos++;
         buf[n] = '\0';
         int save_col = t_col;
+        term_frame_begin();
         for (int i = pos - 1; i < n; i++) {
             t_buf[t_row][t_col] = buf[i];
             gfx_char(TX + t_col * FONT_W, TY + t_row * FONT_H,
@@ -345,6 +385,7 @@ static int term_readline(char *buf, int max)
             t_col++;
         }
         t_col = save_col + 1;
+        term_frame_end();
         term_draw_cursor();
     }
     buf[n] = '\0';
@@ -960,23 +1001,29 @@ static void cmd_wget(const char *addr)
 int main(void)
 {
     gfx_init();
-    draw_window();
     term_init();
 
     /* Register with the WM; take focus immediately */
     g_win_id = sys_wm_register(WX, WY, WIN_W, WIN_H, "AetherTerm");
     sys_wm_focus_set(sys_getpid());
 
-    /* Window open animation (scale 0.85→1.0, alpha 0→1, ~120ms) */
+    /* Allocate GPU BO so the compositor can composite the terminal window */
     {
-        win_anim_t open_a;
-        if (win_anim_open(&open_a, WX, WY, WIN_W, WIN_H) == 0) {
-            while (win_anim_tick(&open_a));
-            win_anim_free(&open_a);
-            /* Restore live window content over the final BO composite */
-            draw_window();
+        unsigned bo_bytes = (unsigned)WIN_W * (unsigned)WIN_H * 4u;
+        g_term_bo = gpu_alloc(bo_bytes);
+        if (g_term_bo != GPU_BO_INVALID) {
+            g_bo_ptr = (unsigned int *)gpu_map(g_term_bo);
+            if (g_bo_ptr) {
+                sys_wm_set_buffer(g_win_id, g_term_bo);
+                gfx_set_damage_target((int)g_win_id);
+            } else {
+                gpu_free(g_term_bo);
+                g_term_bo = GPU_BO_INVALID;
+            }
         }
     }
+
+    draw_window();
 
     {
         /*
@@ -1045,15 +1092,7 @@ int main(void)
         else if (strcmp(cmd, "exit")  == 0) {
             int code = (argc > 1) ? atoi(argv[1]) : 0;
             term_puts("Goodbye!\n");
-            /* Window close animation (scale 1.0→0.85, alpha 1→0, ~80ms) */
-            {
-                win_anim_t close_a;
-                if (win_anim_close(&close_a, WX, WY, WIN_W, WIN_H) == 0) {
-                    while (win_anim_tick(&close_a));
-                    win_anim_free(&close_a);
-                }
-            }
-            if (g_win_id >= 0) sys_wm_unregister(g_win_id);
+            if (g_win_id >= 0) sys_wm_request_close(g_win_id);
             exit(code);
         } else {
             char path[64];

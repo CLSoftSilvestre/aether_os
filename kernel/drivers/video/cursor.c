@@ -127,6 +127,13 @@ void cursor_move(unsigned int x, unsigned int y)
     }
 }
 
+void cursor_redraw(void)
+{
+    if (!cur_visible) return;
+    save_bg(cur_x, cur_y);
+    draw_sprite(cur_x, cur_y);
+}
+
 void cursor_get_pos(unsigned int *x, unsigned int *y)
 {
     *x = cur_x;

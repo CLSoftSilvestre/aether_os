@@ -377,12 +377,15 @@ int main(int argc, const char *const *argv)
     g_ctx.win_y         = &g_win_y;
     g_ctx.content_dx    = SIDE_PAD;
     g_ctx.content_dy    = TITLE_H + CONT_PAD;
+    g_ctx.win_id        = (int)g_win_id;
+    g_ctx.win_w         = WIN_W;
+    g_ctx.win_h         = WIN_H;
     g_ctx.on_reposition = on_reposition;
     g_ctx.userdata      = NULL;
     g_ctx.running       = 1;
 
     widget_run(&g_root, &g_ctx);
 
-    sys_wm_unregister(g_win_id);
+    sys_wm_request_close(g_win_id);
     return 0;
 }

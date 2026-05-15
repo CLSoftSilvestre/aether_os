@@ -140,6 +140,7 @@ static task_t *alloc_task(void (*entry_fn)(void), const char *name)
     t->user_code_pages  = 0;
     t->user_stack_phys  = 0;
     t->user_stack_pages = 0;
+    t->bo_va_next       = VMM_USER_BO_BASE;
 
     for (u32 i = 0; i < PROC_MAX_FD; i++) {
         t->fd_table[i].type     = FD_TYPE_CLOSED;
@@ -304,8 +305,9 @@ void task_exit(void)
     kinfo("Scheduler: task[%lu] '%s' exited (ppid=%lu)\n",
           (unsigned long)t->pid, t->name, (unsigned long)t->ppid);
 
-    /* Remove any WM window before freeing memory so the rect is still valid */
-    wm_unregister_by_pid(t->pid);
+    /* Remove any WM window before freeing memory so the rect is still valid.
+     * Gentle (force=0): if closing=1, leave the window alive for compositor anim. */
+    wm_unregister_by_pid(t->pid, 0);
 
     /* Switch back to global PT before freeing process-specific tables.
      * This closes the window where we'd hold TTBR0 pointing to freed pages. */
@@ -432,8 +434,9 @@ int task_kill(u32 pid, int exit_code)
     kinfo("Scheduler: task_kill pid=%lu by pid=%lu\n",
           (unsigned long)pid, (unsigned long)cur->pid);
 
-    /* Remove any WM window before freeing memory so the rect is still valid */
-    wm_unregister_by_pid(pid);
+    /* Remove any WM window before freeing memory so the rect is still valid.
+     * Force (force=1): always unregister even if closing=1 (external kill, no anim). */
+    wm_unregister_by_pid(pid, 1);
 
     /* Free process page tables (safe: we're on the caller's PT, not the target's) */
     if (t->l1_table_phys) {
@@ -469,6 +472,20 @@ u32 task_current_pid(void)
 const char *task_current_name(void)
 {
     return g_tasks[g_current_idx].name;
+}
+
+uintptr_t task_current_l1(void)
+{
+    uintptr_t l1 = g_tasks[g_current_idx].l1_table_phys;
+    return l1 ? l1 : vmm_get_global_l1();
+}
+
+uintptr_t task_alloc_bo_va(u32 n_pages)
+{
+    task_t *t = current_task();
+    uintptr_t va = t->bo_va_next;
+    t->bo_va_next += (uintptr_t)n_pages * PMM_PAGE_SIZE;
+    return va;
 }
 
 fd_entry_t *task_get_fd(u32 fd)

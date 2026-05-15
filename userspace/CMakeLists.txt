@@ -108,6 +108,74 @@ set_target_properties(user_init PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
 )
 
+# ── dock — WM8 dock subprocess (spawned by init after compositor) ─────────────
+add_executable(user_dock
+    apps/dock/main.c
+    lib/crt0.S
+)
+target_include_directories(user_dock PRIVATE lib/include)
+target_compile_options(user_dock PRIVATE ${USER_COMPILE_FLAGS})
+target_link_libraries(user_dock PRIVATE libwidget libaether)
+target_link_options(user_dock PRIVATE
+    -T ${USER_LINKER_SCRIPT} -nostdlib -static -Wl,--build-id=none
+)
+set_target_properties(user_dock PROPERTIES
+    OUTPUT_NAME "dock" SUFFIX ""
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
+)
+
+# ── topbar — macOS-style menu bar daemon (spawned by init after compositor) ───
+add_executable(user_topbar
+    apps/topbar/main.c
+    lib/crt0.S
+)
+target_include_directories(user_topbar PRIVATE lib/include)
+target_compile_options(user_topbar PRIVATE ${USER_COMPILE_FLAGS})
+target_link_libraries(user_topbar PRIVATE libwidget libaether)
+target_link_options(user_topbar PRIVATE
+    -T ${USER_LINKER_SCRIPT} -nostdlib -static -Wl,--build-id=none
+)
+set_target_properties(user_topbar PROPERTIES
+    OUTPUT_NAME "topbar" SUFFIX ""
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
+)
+
+# ── desktop — Lumina desktop layer: wallpaper + icons (spawned by init) ───────
+add_executable(user_desktop
+    apps/desktop/main.c
+    lib/crt0.S
+)
+target_include_directories(user_desktop PRIVATE lib/include)
+target_compile_options(user_desktop PRIVATE ${USER_COMPILE_FLAGS})
+target_link_libraries(user_desktop PRIVATE libwidget libaether)
+target_link_options(user_desktop PRIVATE
+    -T ${USER_LINKER_SCRIPT} -nostdlib -static -Wl,--build-id=none
+)
+set_target_properties(user_desktop PROPERTIES
+    OUTPUT_NAME "desktop" SUFFIX ""
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
+)
+
+# ── compositor — Lumina compositing window manager (wmanager branch) ─────────
+add_executable(user_compositor
+    apps/compositor/main.c
+    lib/crt0.S
+)
+target_include_directories(user_compositor PRIVATE lib/include)
+target_compile_options(user_compositor PRIVATE ${USER_COMPILE_FLAGS}
+    -DAETHER_GPU_COMPOSITOR   # WM3: batch GPU compositing path
+    -DAETHER_KAWASE_BLUR      # WM4: Dual Kawase blur (compositor passes blur_radius)
+    -DAETHER_SPRING_ANIM      # WM5: spring-physics open animations (Q12 fixed-point)
+)
+target_link_libraries(user_compositor PRIVATE libaether)
+target_link_options(user_compositor PRIVATE
+    -T ${USER_LINKER_SCRIPT} -nostdlib -static -Wl,--build-id=none
+)
+set_target_properties(user_compositor PROPERTIES
+    OUTPUT_NAME "compositor" SUFFIX ""
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
+)
+
 # ── aether_term — Phase 4.4 terminal process ─────────────────────────────────
 add_executable(user_aether_term
     apps/aether_term/main.c
@@ -1256,6 +1324,7 @@ add_custom_command(
             ${INITRD_FILES_SRC}/apps/font_test.app
             ${INITRD_FILES_SRC}/apps/html_test.app
             ${INITRD_FILES_SRC}/apps/js_test.app
+            ${INITRD_FILES_SRC}/apps/compositor.app
     COMMENT "Copying initrd static files"
 )
 
@@ -1265,9 +1334,10 @@ add_custom_command(
     COMMAND ${CMAKE_SOURCE_DIR}/scripts/make_initrd.sh
                 ${INITRD_STAGING}
                 ${INITRD_CPIO}
-    DEPENDS user_init user_aether_term user_statusbar user_files user_textviewer
-            user_calculator user_tictactoe user_widget_demo user_aether_editor
-            user_aether_http user_telnet user_aether_top user_posix_test
+    DEPENDS user_init user_dock user_topbar user_desktop user_compositor user_aether_term user_statusbar user_files
+            user_textviewer user_calculator user_tictactoe user_widget_demo
+            user_aether_editor user_aether_http user_telnet user_aether_top
+            user_posix_test
             ${INTERP_TARGET}
             ${IMG_TEST_TARGET}
             ${FONT_TEST_TARGET}
