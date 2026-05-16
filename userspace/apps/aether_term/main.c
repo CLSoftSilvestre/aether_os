@@ -212,7 +212,24 @@ static void term_printf(const char *fmt, ...)
     term_puts(buf);
 }
 
-/* keycode → ASCII (unshifted / shifted) */
+/*
+ * keycode → ASCII — Portuguese (PT-PT) layout, matching QEMU -k pt
+ *
+ * Unshifted differences from US:
+ *   KEY_MINUS    → '   (apostrophe;  US: -)
+ *   KEY_LBRACKET → +               (US: [)
+ *   KEY_GRAVE    → \               (US: `)
+ *   KEY_SLASH    → -               (US: /)
+ *   KEY_SEMICOLON, KEY_APOSTROPHE, KEY_RBRACKET, KEY_EQUALS → 0 (non-ASCII)
+ *
+ * Shifted differences from US:
+ *   KEY_2  → "   (US: @)     KEY_6  → &   (US: ^)
+ *   KEY_7  → /   (US: &)     KEY_8  → (   (US: *)
+ *   KEY_9  → )   (US: ()     KEY_0  → =   (US: ))
+ *   KEY_MINUS  → ?  (US: _)  KEY_LBRACKET → *  (US: {)
+ *   KEY_GRAVE  → |  (US: ~)  KEY_COMMA    → ;  (US: <)
+ *   KEY_DOT    → :  (US: >)  KEY_SLASH    → _  (US: ?)
+ */
 static const char kc_ascii[KEY_MAX] = {
     [KEY_A]='a',[KEY_B]='b',[KEY_C]='c',[KEY_D]='d',[KEY_E]='e',
     [KEY_F]='f',[KEY_G]='g',[KEY_H]='h',[KEY_I]='i',[KEY_J]='j',
@@ -223,9 +240,10 @@ static const char kc_ascii[KEY_MAX] = {
     [KEY_0]='0',[KEY_1]='1',[KEY_2]='2',[KEY_3]='3',[KEY_4]='4',
     [KEY_5]='5',[KEY_6]='6',[KEY_7]='7',[KEY_8]='8',[KEY_9]='9',
     [KEY_ENTER]='\n',[KEY_BACKSPACE]='\b',[KEY_TAB]='\t',[KEY_SPACE]=' ',
-    [KEY_MINUS]='-',[KEY_EQUALS]='=',[KEY_LBRACKET]='[',[KEY_RBRACKET]=']',
-    [KEY_BACKSLASH]='\\',[KEY_SEMICOLON]=';',[KEY_APOSTROPHE]='\'',
-    [KEY_COMMA]=',',[KEY_DOT]='.',[KEY_SLASH]='/',[KEY_GRAVE]='`',
+    /* PT: ' on minus key, + on lbracket, \ on grave, - on slash */
+    [KEY_MINUS]='\'',[KEY_EQUALS]=0,[KEY_LBRACKET]='+',[KEY_RBRACKET]=0,
+    [KEY_BACKSLASH]=0,[KEY_SEMICOLON]=0,[KEY_APOSTROPHE]=0,
+    [KEY_COMMA]=',',[KEY_DOT]='.',[KEY_SLASH]='-',[KEY_GRAVE]='\\',
 };
 static const char kc_ascii_shift[KEY_MAX] = {
     [KEY_A]='A',[KEY_B]='B',[KEY_C]='C',[KEY_D]='D',[KEY_E]='E',
@@ -234,12 +252,14 @@ static const char kc_ascii_shift[KEY_MAX] = {
     [KEY_P]='P',[KEY_Q]='Q',[KEY_R]='R',[KEY_S]='S',[KEY_T]='T',
     [KEY_U]='U',[KEY_V]='V',[KEY_W]='W',[KEY_X]='X',[KEY_Y]='Y',
     [KEY_Z]='Z',
-    [KEY_0]=')',[KEY_1]='!',[KEY_2]='@',[KEY_3]='#',[KEY_4]='$',
-    [KEY_5]='%',[KEY_6]='^',[KEY_7]='&',[KEY_8]='*',[KEY_9]='(',
+    /* PT number row shift: " & / ( ) = ? */
+    [KEY_0]='=',[KEY_1]='!',[KEY_2]='"',[KEY_3]='#',[KEY_4]='$',
+    [KEY_5]='%',[KEY_6]='&',[KEY_7]='/',[KEY_8]='(',[KEY_9]=')',
     [KEY_ENTER]='\n',[KEY_BACKSPACE]='\b',[KEY_TAB]='\t',[KEY_SPACE]=' ',
-    [KEY_MINUS]='_',[KEY_EQUALS]='+',[KEY_LBRACKET]='{',[KEY_RBRACKET]='}',
-    [KEY_BACKSLASH]='|',[KEY_SEMICOLON]=':',[KEY_APOSTROPHE]='"',
-    [KEY_COMMA]='<',[KEY_DOT]='>',[KEY_SLASH]='?',[KEY_GRAVE]='~',
+    /* PT: ? on minus, * on lbracket, | on grave, ; on comma, : on dot, _ on slash */
+    [KEY_MINUS]='?',[KEY_EQUALS]=0,[KEY_LBRACKET]='*',[KEY_RBRACKET]=0,
+    [KEY_BACKSLASH]=0,[KEY_SEMICOLON]=0,[KEY_APOSTROPHE]=0,
+    [KEY_COMMA]=';',[KEY_DOT]=':',[KEY_SLASH]='_',[KEY_GRAVE]='|',
 };
 
 static char term_key_to_char(key_event_t ev)

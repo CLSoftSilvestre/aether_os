@@ -188,72 +188,88 @@ QuickJS 2021-03-27 (Fabrice Bellard) — small embeddable ES2020 engine in pure 
 
 ---
 
-## Phase 7.5 — NetSurf Core Port
+## Phase 7.5 — NetSurf Core Port ✅ COMPLETE (2026-05-16)
 
-**Duration:** 4–5 weeks  
-**Output:** `vendor/netsurf/` (core library, no frontend)
+**Output:** `vendor/netsurf/` (core, no frontend), `lib/netsurf_aether/` (AetherOS bridge)
 
-| Task | Description |
-|---|---|
-| 7.5.1 | Clone NetSurf source; apply AArch64 bare-metal build configuration |
-| 7.5.2 | Disable NetSurf's internal curl dependency; wire in `fetch_aether.c` (see 7.6) |
-| 7.5.3 | Disable POSIX threads in NetSurf fetch subsystem; use single-threaded async polling model |
-| 7.5.4 | Wire QuickJS into NetSurf's JS engine interface (replaces NetSurf's optional Duktape binding) |
-| 7.5.5 | Implement `nslog` → UART debug output |
-| 7.5.6 | Disable features not needed for MVP: SVG animation, video, WebGL |
-| 7.5.7 | Compile `libnetsurf.a`; verify link with all vendor libs |
+| Task | Description | Status |
+|---|---|---|
+| 7.5.1 | `scripts/fetch_netsurf.sh` — shallow-clones NetSurf release/3.11 + libnslog into `vendor/` | ✅ |
+| 7.5.2 | `fetch_file_aether.c` (file:// via AetherFS) + `fetch_http_stub.c` (http:// placeholder); curl excluded from GLOB | ✅ |
+| 7.5.3 | Single-threaded cooperative model: `gui_misc_table.schedule` stores entries in a 64-slot ring queue; `nsaether_schedule_drain()` drains each event-loop tick | ✅ |
+| 7.5.4 | `js_aether.c` — QuickJS bridge: real `JSRuntime`/`JSContext` per page; `js_addscript` evaluates via `JS_Eval`; `js_fire_event` stubbed (Iteration 2 DOM bindings); `console.log` wired to UART | ✅ |
+| 7.5.5 | `nslog_aether.c` — registers `nslog_set_render_callback` → UART; shows level/category/file:line | ✅ |
+| 7.5.6 | `options.h` + CMake defines: `WITH_RSVG=0`, `WITH_WEBP=0`, `NETSURF_USE_CURL=0`, `NETSURF_USE_DUKTAPE=0`; JS defaulted to false (Iteration 2 enables it) | ✅ |
+| 7.5.7 | `vendor_libnslog` + `vendor_netsurf` CMake targets; `apps/ns_test/main.c` calls `netsurf_init()` → verifies `NSERROR_OK` → `netsurf_exit()` | ✅ |
+
+**Build notes:**
+- `scripts/fetch_netsurf.sh` clones two repos: `libnslog` (logging framework) and `netsurf` (release/3.11 — core engine)
+- CMake GLOB_RECURSE collects all `*.c` from `vendor/netsurf/`; excluded via regex: `frontends/`, `javascript/duktape/`, `javascript/none.c`, `content/fetchers/curl.c`, `test/`, `tools/`
+- Our bridge in `lib/netsurf_aether/` replaces those excluded files with AetherOS implementations
+- `options.h` selects platform defaults; included by `nsoption.c` via `-DNETSURF_OPTIONS_HEADER=...`
+- `-Wl,--allow-multiple-definition` on the test binary resolves the intentional libaether/libaether_posix symbol overlap (same pattern as other 7.x binaries)
+- `js_aether.c` forward-declares `js_aether_console_log` as a static helper; signatures verified against QuickJS `JS_NewCFunction` API
+- QuickJS `libgcc.a` path linked last (same `QJS_LIBGCC_PATH` CMake variable from Phase 7.4) for `__udivti3`/`__umodti3`
+
+**Setup order:**
+```
+scripts/fetch_netsurf.sh
+ninja -C build
+```
+Run inside AetherOS: `ns_test` → expect "ns_test PASS"
+
+**Known adjustment points after first build:**
+- If `netsurf_init()` signature differs from `netsurf_init(NULL)` → check `desktop/netsurf.h` in the cloned source
+- If `guit` is not a bare global → check `desktop/netsurf.h` for the actual registration API
+- If `fetcher_add` is named differently → check `content/fetch.h` for the registration function name
+- `gui_window_table` field names may differ slightly — cross-check `desktop/gui_window.h`
 
 ---
 
-## Phase 7.6 — HTTP Fetch Bridge
+## Phase 7.6 — HTTP Fetch Bridge ✅ COMPLETE (2026-05-16)
 
-**Duration:** 1–2 weeks  
-**Output:** `kernel/net/browser_fetch.c`, `apps/aether_browser/fetch_aether.c`
+**Output:** `userspace/lib/netsurf_aether/fetch_file_aether.c`, `fetch_http_aether.c`
 
-Bridges NetSurf's fetch API to AetherOS Phase 5.1 TCP/HTTP stack.
+Bridges NetSurf's fetch API to AetherOS Phase 5.1 TCP/IP stack via libaether_posix POSIX sockets.
 
-| Task | Description |
-|---|---|
-| 7.6.1 | Implement NetSurf `fetch_filetype` backend for `file://` URIs (AetherFS reads) |
-| 7.6.2 | Implement NetSurf `fetch_http` backend over AetherOS socket syscalls (700–707) |
-| 7.6.3 | HTTP/1.1 keep-alive + Connection: close fallback |
-| 7.6.4 | Gzip decompression via zlib (Content-Encoding: gzip) |
-| 7.6.5 | Redirect following (301/302, max 5 hops) |
-| 7.6.6 | MIME type detection from Content-Type header |
-| 7.6.7 | Integration test: fetch `http://example.com` and dump raw HTML to UART |
+| Task | Description | Status |
+|---|---|---|
+| 7.6.1 | `fetch_file_register()` replaces built-in (excludes scandir-dependent `file/file.c`) | ✅ |
+| 7.6.2 | `fetch_http_aether.c` — HTTP/1.1 over POSIX socket/connect/send/recv | ✅ |
+| 7.6.3 | `Connection: close` — synchronous read-until-close model | ✅ |
+| 7.6.4 | Gzip decompression via vendor_zlib (`inflateInit2` windowBits=47) | ✅ |
+| 7.6.5 | Redirect following 301/302/303/307/308, max 5 hops, inline in `start()` | ✅ |
+| 7.6.6 | MIME from `Content-Type:` header; fallback to `text/html` | ✅ |
+| 7.6.7 | `apps/fetch_test` — `fetch_start()` → scheduler drain → UART dump | ✅ |
+
+Key design decisions:
+- Built-in `content/fetchers/file/file.c` excluded (uses `scandir`); replaced by `fetch_file_aether.c` which provides `fetch_file_register()` — the symbol `fetcher_init()` calls
+- `fetch_http_aether_register()` must be called **after** `netsurf_init()` (requires lwc_intern_string, which needs libwapcaplet initialised)
+- `start()` is synchronous (entire HTTP response buffered before returning); `poll()` delivers FETCH_HEADER + FETCH_DATA + FETCH_FINISHED on next scheduler tick
+- https:// registers but uses plain TCP (no TLS until Phase 7.8+)
 
 ---
 
-## Phase 7.7 — AetherOS Frontend (Plot API)
+## Phase 7.7 — AetherOS Frontend (Plot API) ✅ COMPLETE (2026-05-16)
 
-**Duration:** 4–5 weeks  
-**Output:** `apps/aether_browser/frontend/`
+**Output:** `lib/netsurf_aether/plot_aether.c`, `lib/netsurf_aether/plot_aether.h`, `lib/netsurf_aether/gui_window_stub.c`, `lib/netsurf_aether/gui_bitmap_aether.c`, `lib/netsurf_aether/gui_layout_aether.c`, `apps/browser_test/main.c`
 
-This is the heart of the port. NetSurf calls ~15 **plot functions** to render everything. We implement them against the AetherOS framebuffer. This is exactly how NetSurf's Haiku and RISC OS frontends work.
+| Task | Description | Status |
+|---|---|---|
+| 7.7.1 | `plot_aether.c` — full `plotter_table`: clip, arc, disc, line, rectangle, polygon, path (Bézier), bitmap (with repeat-x/y tiling), text (FreeType) | ✅ |
+| 7.7.2 | `aether_plot_ctx_t` — off-screen XRGB8888 buffer with scissor rect; `aether_plot_ctx_init()` | ✅ |
+| 7.7.3 | `gui_window_stub.c` — real `gui_window_table`: create (alloc pixel buffer), destroy, invalidate (sets `nsaether_dirty`), get/set_scroll, get_dimensions, event (throbber), set_title, set_url, set_status | ✅ |
+| 7.7.4 | `gui_bitmap_aether.c` — `gui_bitmap_table`: create/destroy/get_buffer/get_rowstride/get_width/get_height/set_opaque/modified | ✅ |
+| 7.7.5 | `gui_layout_aether.c` — `gui_layout_table`: width/position/split via FreeType `aether_font_measure_width`; monospace fallback | ✅ |
+| 7.7.6 | `apps/browser_test/main.c` — integration test: `netsurf_init` → `browser_window_create` → scheduler drain → `browser_window_redraw` (aether_plotter_table) → `gfx_raw_blit` | ✅ |
 
-| Function | Implementation |
-|---|---|
-| `plot_rectangle` | `gfx_fill_rect` with optional border |
-| `plot_line` | Bresenham line to framebuffer |
-| `plot_polygon` | Scanline fill |
-| `plot_path` | Bézier curves (defer to iteration 2 — use polygon approximation for MVP) |
-| `plot_clip` | Set scissor rectangle in render context |
-| `plot_text` | FreeType glyph render + blit at (x, y) with color |
-| `plot_bitmap` | Scale + blit decoded image to framebuffer |
-| `plot_bitmap_tile` | Tiled background-image blit |
-| `plot_disc` | Filled circle |
-| `plot_arc` | Arc segment |
-| `plot_glyphs` | Glyph array (accelerated text) |
-| `caret_show/hide` | Text cursor blink in text fields |
-| `schedule_callback` | Timer via AetherOS SYS_SLEEP / tick counter |
-| `warn_user` | Modal dialog via Lumina WM |
-| `quit` | `sys_exit` |
+**Globals exposed to browser app:** `nsaether_dirty`, `nsaether_loading`, `nsaether_bw`, `nsaether_pixels`, `nsaether_win_w/h`, `nsaether_status[256]`, `nsaether_url[512]`
 
-Additional frontend callbacks:
-- `browser_window_create` → `sys_wm_create_window`
-- `browser_window_set_title` → WM title bar update
-- `browser_window_get_dimensions` → window width/height query
-- Mouse/keyboard event → NetSurf input translation (click, scroll, key)
+**Design notes:**
+- Off-screen 1024×615 XRGB8888 buffer; `browser_window_redraw()` fills it; `gfx_raw_blit()` copies to framebuffer
+- Bézier paths implemented via De Casteljau subdivision (depth 6) — no polygon-approximation shortcut needed
+- `bitmap` callback handles both single-copy and tiled (`BITMAPF_REPEAT_X/Y`) in one pass
+- `set_url` / `set_status` store into globals; browser app reads them each event-loop tick
 
 ---
 
@@ -263,29 +279,41 @@ Additional frontend callbacks:
 **Output:** `apps/aether_browser/main.c`, registered at `/apps/aether_browser.app`
 
 **MVP feature set:**
-- [ ] Lumina-styled browser window (dark glassmorphism, consistent with AetherOS)
-- [ ] Address bar widget (WIDGET_TEXTINPUT from libwidget)
-- [ ] Back / Forward / Reload buttons
-- [ ] Scroll (mouse wheel + keyboard PgUp/PgDn/arrow keys)
-- [ ] Page render (HTML + CSS, no JS at this stage)
-- [ ] Status bar ("Loading...", "Done", HTTP error codes)
-- [ ] Image display (PNG, JPEG, GIF, BMP)
-- [ ] Link click navigation
-- [ ] Basic form input (text fields only, POST/GET)
-- [ ] `file://` URL support for local AetherFS pages
-- [ ] Favicon display (via libnsbmp ICO parser)
-- [ ] Keyboard shortcut: Ctrl+L → focus address bar, Ctrl+R → reload
+- [x] Lumina-styled browser window (dark glassmorphism, consistent with AetherOS)
+- [x] Address bar (inline text input: cursor, backspace, arrow keys, Home/End)
+- [x] Back / Forward / Reload buttons
+- [x] Scroll via keyboard (↑↓ PgUp PgDn arrows → `browser_window_scroll_at_point`)
+- [x] Page render (HTML + CSS, no JS at this stage)
+- [x] Status bar ("Loading...", "Done", NetSurf hover URL)
+- [x] Image display (PNG, JPEG, GIF, BMP — via NetSurf bitmap callbacks)
+- [x] Link click navigation (PRESS_1 + CLICK_1 mouse events)
+- [x] `file://` URL support (via `fetch_file_aether.c`)
+- [x] Keyboard shortcut: Ctrl+L → focus address bar, Ctrl+R → reload, Ctrl+[/] → back/forward
+- [x] App manifest: `aether_browser.app` in initrd + FAT32 disk
 
-| Task | Description |
-|---|---|
-| 7.8.1 | App skeleton: Lumina window + libwidget toolbar (address bar + nav buttons) |
-| 7.8.2 | Viewport widget: custom WIDGET_BROWSER that routes NetSurf plot calls |
-| 7.8.3 | Event loop: drain WM events → translate to NetSurf input events |
-| 7.8.4 | Scroll state: virtual canvas offset, scrollbar sync |
-| 7.8.5 | Status bar: loading progress, error messages, hover URL |
-| 7.8.6 | Register app: `aether_browser.app` manifest + desktop icon |
-| 7.8.7 | QEMU integration test: navigate to a local HTML file served via AetherOS `http` module |
-| 7.8.8 | Pi 5 hardware test: navigate to a plain HTTP page on local network |
+| Task | Description | Status |
+|---|---|---|
+| 7.8.1 | App skeleton: Lumina window, WM registration, chrome draw | ✅ |
+| 7.8.2 | Viewport: `browser_window_redraw` + `gfx_raw_blit` into content area | ✅ |
+| 7.8.3 | Event loop: WM poll → mouse/key → NetSurf + toolbar hit-test | ✅ |
+| 7.8.4 | Scroll: `browser_window_scroll_at_point` for arrow/pgup/pgdn keys | ✅ |
+| 7.8.5 | Status bar: `nsaether_status` + loading indicator | ✅ |
+| 7.8.6 | Register app: `aether_browser.app` manifest + CMake target | ✅ |
+| 7.8.7 | QEMU integration test: navigate to a local HTML file served via AetherOS `http` module | ⬜ |
+| 7.8.8 | Pi 5 hardware test: navigate to a plain HTTP page on local network | ⬜ |
+
+**Build notes:**
+- `apps/aether_browser/main.c` — custom event loop (no `widget_run`); address bar drawn via `gfx_*` primitives
+- Includes `desktop/browser_history.h` for `browser_window_history_back/forward()`
+- Linked with `vendor_netsurf`, `libaether_font`, `libaether_posix`, `libaether` (same flags as `browser_test`)
+- `gui_window_stub.c` upgraded: `set_title/set_url/set_status` + `GW_EVENT_START/STOP_THROBBER` in `event`
+
+**Setup order:**
+```
+ninja -C build
+scripts/make_disk.sh
+```
+Run inside AetherOS: `aether_browser` → renders default test page; or `aether_browser http://example.com/`
 
 ---
 

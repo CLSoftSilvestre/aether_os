@@ -18,6 +18,7 @@
 #include <sys/socket.h>
 #include <fcntl.h>
 #include <inttypes.h>
+#include <dirent.h>
 #include <sys.h>   /* AetherOS syscalls */
 
 /* ── stdlib extras ───────────────────────────────────────────────────── */
@@ -90,10 +91,26 @@ int rand(void)
 
 void srand(unsigned int seed) { _rng = (unsigned long long)seed; }
 
-/* ── Exit / Abort ────────────────────────────────────────────────────── */
+/* ── Exit / Abort / atexit ───────────────────────────────────────────── */
+
+#define ATEXIT_MAX 32
+static void (*_atexit_fns[ATEXIT_MAX])(void);
+static int   _atexit_n;
+
+int atexit(void (*fn)(void))
+{
+    if (_atexit_n >= ATEXIT_MAX) return -1;
+    _atexit_fns[_atexit_n++] = fn;
+    return 0;
+}
 
 __attribute__((noreturn))
-void exit(int code) { sys_exit(code); }
+void exit(int code)
+{
+    for (int i = _atexit_n - 1; i >= 0; i--)
+        if (_atexit_fns[i]) _atexit_fns[i]();
+    sys_exit(code);
+}
 
 __attribute__((noreturn))
 void abort(void) { sys_exit(134); }
@@ -460,3 +477,23 @@ ssize_t pread(int fd, void *buf, size_t count, off_t offset)
 
 ssize_t pwrite(int fd, const void *buf, size_t count, off_t offset)
 { (void)fd; (void)buf; (void)count; (void)offset; errno = ENOSYS; return -1; }
+
+/* ── POSIX directory-fd helpers (used by NetSurf utils/file.c cleanup) ── */
+
+int dirfd(DIR *dirp) { (void)dirp; errno = ENOSYS; return -1; }
+
+int fstatat(int dirfd_, const char *path, struct stat *buf, int flags)
+{ (void)dirfd_; (void)flags; return stat(path, buf); }
+
+int unlinkat(int dirfd_, const char *path, int flags)
+{ (void)dirfd_; (void)flags; errno = ENOSYS; return -1; }
+
+int rmdir(const char *path) { (void)path; errno = ENOSYS; return -1; }
+
+/* ── zlib gz* stubs (NetSurf hashtable/messages; gzip messages not supported) */
+/* The gzFile type is defined in zlib.h as struct gzFile_s * — we never open
+ * any file so NULL is returned and callers handle it gracefully. */
+typedef struct gzFile_s *gzFile;
+gzFile gzopen(const char *path, const char *mode) { (void)path;(void)mode; return (gzFile)0; }
+char  *gzgets(gzFile f, char *buf, int len) { (void)f;(void)buf;(void)len; return (char*)0; }
+int    gzclose(gzFile f) { (void)f; return 0; }

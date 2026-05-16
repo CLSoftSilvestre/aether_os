@@ -25,3 +25,7 @@ userspace/vendor/libnsgif
 userspace/vendor/libhubbub
 userspace/vendor/libcss
 userspace/vendor/libdom
+
+# NetSurf core + logging framework (Phase 7.5) — fetched by scripts/fetch_netsurf.sh
+userspace/vendor/netsurf
+userspace/vendor/libnslog

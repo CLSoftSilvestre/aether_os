@@ -154,6 +154,16 @@ double difftime(time_t t1, time_t t0)
     return (double)(t1 - t0);
 }
 
+/* ── ctime() — non-reentrant time_t → "Www Mmm Dd HH:MM:SS YYYY\n" ─────── */
+
+char *ctime(const time_t *timep)
+{
+    static char buf[32];
+    struct tm *tm = gmtime(timep);
+    strftime(buf, sizeof(buf), "%a %b %d %H:%M:%S %Y\n", tm);
+    return buf;
+}
+
 /* ── gmtime() / localtime() — non-reentrant wrappers ─────────────────── */
 
 static struct tm _gmtime_buf;
