@@ -112,6 +112,17 @@ static const uint8_t aether_default_css_data[] =
     "article, aside, figcaption, figure, footer, header, main, nav, section { display: block; }\n"
     ;
 
+/* ── internal.css: minimal stub for NetSurf error/query pages ─────────── */
+
+static const uint8_t aether_internal_css_data[] =
+    "body { font-family: sans-serif; margin: 20px; }\n"
+    ".ns-even-bg { background: #f8f8f8; }\n"
+    ".ns-even-fg { color: #333; }\n"
+    ".ns-border  { border: 1px solid #ccc; padding: 8px; }\n"
+    ".ns-odd-fg-bad { color: #900; }\n"
+    "#buttons { margin-top: 12px; }\n"
+    ;
+
 /* ── resource data (served in-memory, no filesystem required) ────────────── */
 
 static nserror aether_get_resource_data(const char *path,
@@ -120,7 +131,12 @@ static nserror aether_get_resource_data(const char *path,
 {
     if (path && strcmp(path, "default.css") == 0) {
         *data     = aether_default_css_data;
-        *data_len = sizeof(aether_default_css_data) - 1; /* exclude NUL */
+        *data_len = sizeof(aether_default_css_data) - 1;
+        return NSERROR_OK;
+    }
+    if (path && strcmp(path, "internal.css") == 0) {
+        *data     = aether_internal_css_data;
+        *data_len = sizeof(aether_internal_css_data) - 1;
         return NSERROR_OK;
     }
     return NSERROR_NOT_FOUND;

@@ -131,8 +131,13 @@ static void dns_udp_handler(u32 src_ip, u16 src_port,
 {
     (void)src_ip; (void)src_port;
     if (g_dns_done) return;
-    u32 ip = dns_parse_response(data, (int)data_len, g_dns_query_id);
-    if (ip) { g_dns_result = ip; g_dns_done = 1; }
+    if ((int)data_len < DNS_HDR_LEN) return;
+    const dns_hdr_t *hdr = (const dns_hdr_t *)data;
+    /* Accept any response (QR=1) matching our ID — stops immediately on NXDOMAIN */
+    if (!(net_ntohs(hdr->flags) & 0x8000u)) return;
+    if (net_ntohs(hdr->id) != g_dns_query_id) return;
+    g_dns_result = dns_parse_response(data, (int)data_len, g_dns_query_id);
+    g_dns_done   = 1;
 }
 
 /* ── Public: dns_resolve ─────────────────────────────────────────────────── */

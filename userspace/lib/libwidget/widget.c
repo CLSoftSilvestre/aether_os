@@ -195,6 +195,17 @@ static void dispatch_mouse(widget_t *root, int content_x, int content_y,
         }
     }
 
+    /* Mouse move: always forward to hovered widget for hover effects */
+    if (g_hovered && g_hovered->event_fn) {
+        widget_event_t mev;
+        memset(&mev, 0, sizeof(mev));
+        mev.type    = WEV_MOUSE_MOVE;
+        mev.mx      = mx;
+        mev.my      = my;
+        mev.buttons = buttons;
+        g_hovered->event_fn(g_hovered, &mev);
+    }
+
     int left_down    = (buttons & 1) && !(prev_buttons & 1);
     int left_up      = !(buttons & 1) && (prev_buttons & 1);
 
@@ -352,6 +363,12 @@ void widget_run(widget_t *root, widget_ctx_t *ctx)
                 continue;
             }
 
+            /* Close request from init (close button or sys_wm_close call) */
+            if ((raw >> 56) == WM_EV_CLOSE_REQUEST) {
+                ctx->running = 0;
+                break;
+            }
+
             /* Mouse events forwarded by init via SYS_WM_PUSH_EVENT */
             if (wm_event_is_mouse(raw)) {
                 mouse_event_t mev = wm_event_mouse_unpack(raw);
@@ -385,6 +402,9 @@ void widget_run(widget_t *root, widget_ctx_t *ctx)
             last_tick_event = now;
             tick_recursive(root, now);
         }
+
+        /* ── Per-frame app hook (NetSurf scheduler, dirty checks, etc.) ── */
+        if (ctx->per_frame_fn) ctx->per_frame_fn(ctx->userdata);
 
         /* ── Redraw dirty widgets ───────────────────────────────────────── */
         cx = *ctx->win_x + ctx->content_dx;

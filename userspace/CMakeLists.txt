@@ -1643,6 +1643,7 @@ if(EXISTS ${NSLOG_VENDOR}/include/nslog/nslog.h AND
 
     target_link_libraries(user_aether_browser PRIVATE
         vendor_netsurf
+        libwidget
         libaether_font
         libaether_posix
         libaether
@@ -1721,6 +1722,7 @@ add_custom_command(
             ${NS_TEST_TARGET}
             ${FETCH_TEST_TARGET}
             ${BROWSER_TEST_TARGET}
+            ${AETHER_BROWSER_TARGET}
             ${INITRD_STAGING}/motd.txt
     COMMENT "Packaging initrd.cpio"
 )

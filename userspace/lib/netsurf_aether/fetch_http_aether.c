@@ -183,11 +183,39 @@ static void do_http(fetch_http_ctx_t *ctx)
 
     for (int hop = 0; hop < 5; hop++) {
 
+        /* ── HTTPS guard — TLS not implemented ──────────────── */
+        if (cur_port == 443) {
+            static const char body[] =
+                "<html><body style='font-family:sans-serif;padding:20px'>"
+                "<h2>HTTPS Not Supported</h2>"
+                "<p>This page requires a secure (HTTPS) connection, which "
+                "is not yet implemented in AetherBrowser.<br><br>"
+                "Try an <b>http://</b> address instead.</p>"
+                "</body></html>";
+            size_t blen = sizeof(body) - 1;
+            ctx->body = (uint8_t *)malloc(blen + 1);
+            if (ctx->body) { memcpy(ctx->body, body, blen + 1); ctx->body_len = blen; }
+            strncpy(ctx->content_type, "text/html", sizeof(ctx->content_type) - 1);
+            ctx->http_code = 200;
+            return;
+        }
+
         /* ── DNS ────────────────────────────────────────────── */
         struct hostent *he = gethostbyname(cur_host);
         if (!he) {
             NSLOG(netsurf, WARNING, "HTTP: DNS fail for %s", cur_host);
-            ctx->http_code = 503;
+            char errbody[512];
+            int elen = snprintf(errbody, sizeof(errbody),
+                "<html><body style='font-family:sans-serif;padding:20px'>"
+                "<h2>DNS Lookup Failed</h2>"
+                "<p>Could not resolve hostname: <b>%s</b></p>"
+                "</body></html>", cur_host);
+            if (elen > 0) {
+                ctx->body = (uint8_t *)malloc((size_t)elen + 1);
+                if (ctx->body) { memcpy(ctx->body, errbody, (size_t)elen + 1); ctx->body_len = (size_t)elen; }
+            }
+            strncpy(ctx->content_type, "text/html", sizeof(ctx->content_type) - 1);
+            ctx->http_code = 200;
             return;
         }
 
@@ -204,7 +232,18 @@ static void do_http(fetch_http_ctx_t *ctx)
         if (connect(fd, (const struct sockaddr *)&sa, sizeof(sa)) < 0) {
             close(fd);
             NSLOG(netsurf, WARNING, "HTTP: connect fail %s:%d", cur_host, cur_port);
-            ctx->http_code = 503;
+            char errbody[512];
+            int elen = snprintf(errbody, sizeof(errbody),
+                "<html><body style='font-family:sans-serif;padding:20px'>"
+                "<h2>Connection Failed</h2>"
+                "<p>Could not connect to: <b>%s:%d</b></p>"
+                "</body></html>", cur_host, cur_port);
+            if (elen > 0) {
+                ctx->body = (uint8_t *)malloc((size_t)elen + 1);
+                if (ctx->body) { memcpy(ctx->body, errbody, (size_t)elen + 1); ctx->body_len = (size_t)elen; }
+            }
+            strncpy(ctx->content_type, "text/html", sizeof(ctx->content_type) - 1);
+            ctx->http_code = 200;
             return;
         }
 
@@ -227,7 +266,15 @@ static void do_http(fetch_http_ctx_t *ctx)
 
         if (!raw || total < 12) {
             free(raw);
-            ctx->http_code = 503;
+            static const char nobody[] =
+                "<html><body style='font-family:sans-serif;padding:20px'>"
+                "<h2>No Response</h2>"
+                "<p>The server sent no valid response.</p></body></html>";
+            size_t blen = sizeof(nobody) - 1;
+            ctx->body = (uint8_t *)malloc(blen + 1);
+            if (ctx->body) { memcpy(ctx->body, nobody, blen + 1); ctx->body_len = blen; }
+            strncpy(ctx->content_type, "text/html", sizeof(ctx->content_type) - 1);
+            ctx->http_code = 200;
             return;
         }
 
@@ -445,12 +492,17 @@ static void fetch_http_poll(lwc_string *scheme)
             dbg_write("fetch_http_poll: delivering\n");
             ctx->delivered = true;
 
-            fetch_set_http_code(ctx->parent, ctx->http_code);
+            /* Always report 200 to NetSurf when we have a body.
+             * Reporting 4xx/5xx causes NetSurf to navigate to
+             * about:query?fetcherror which waits for resource:internal.css
+             * and locks the content permanently, breaking subsequent loads. */
+            long report_code = (ctx->body_len > 0) ? 200L : ctx->http_code;
+            fetch_set_http_code(ctx->parent, report_code);
 
             /* Status line */
             {
                 char line[64];
-                snprintf(line, sizeof(line), "HTTP/1.1 %ld OK\r\n", ctx->http_code);
+                snprintf(line, sizeof(line), "HTTP/1.1 %ld OK\r\n", report_code);
                 fetch_msg msg = {0};
                 msg.type = FETCH_HEADER;
                 msg.data.header_or_data.buf = (const uint8_t *)line;

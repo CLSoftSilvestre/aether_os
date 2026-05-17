@@ -240,6 +240,7 @@ typedef struct {
     int   win_w;          /* full window width  (0 = use root bounds) */
     int   win_h;          /* full window height (0 = use root bounds) */
     void (*on_reposition)(void *userdata); /* draw chrome + handle new position */
+    void (*per_frame_fn)(void *userdata);  /* called each loop iter, before redraw */
     void *userdata;
     int   running;        /* set to 0 from a callback to exit widget_run() */
 } widget_ctx_t;

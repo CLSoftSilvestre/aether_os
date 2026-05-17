@@ -1,18 +1,14 @@
 /*
- * Phase 7.8 — aether_browser MVP
+ * Phase 7.8 — aether_browser (compositor WM, libwidget chrome)
  *
- * Full browser application integrating:
- *   - Lumina glassmorphism window chrome
- *   - Toolbar: Back / Forward / Reload buttons + address bar
- *   - Viewport: NetSurf → aether_plotter_table → gfx_raw_blit
- *   - Status bar: NetSurf status messages
- *   - Event loop: WM events → toolbar hit-test + NetSurf input
+ * Window chrome is drawn by on_reposition (gfx_glass_window_frame).
+ * init handles close / minimize / focus / drag — no WM_FLAG_NO_CHROME.
+ * Widget tree covers the content area below the title bar:
  *
- * Test inside AetherOS:
- *   aether_browser                        → http://10.0.2.2:8080/index.html
- *   aether_browser http://example.com/    → navigate to given URL
- *
- * QEMU: python3 -m http.server 8080 --directory tests/browser/ (on host Mac)
+ *   [0 .. TOOLBAR_H-1]  toolbar panel (back / fwd / reload / address bar)
+ *   [TOOLBAR_H]         1-px separator (drawn by toolbar draw_fn)
+ *   [TOOLBAR_H+1 ..]    viewport (NetSurf pixel blit)
+ *   [.. win_h-TITLE_H-STATUS_H .. win_h-TITLE_H-1]  status bar
  */
 
 #include <stddef.h>
@@ -45,10 +41,12 @@
 
 /* AetherOS system */
 #include "gfx.h"
+#include "gpu.h"
 #include "sys.h"
 #include "input.h"
+#include "widget.h"
 
-/* ── externs from bridge ─────────────────────────────────────────────────── */
+/* ── externs from NetSurf bridge ─────────────────────────────────────────── */
 
 extern volatile bool          nsaether_dirty;
 extern volatile bool          nsaether_loading;
@@ -69,43 +67,35 @@ extern void nslog_aether_init(void);
 extern void fetch_http_aether_register(void);
 extern void nsaether_schedule_drain(void);
 
-/* ── Layout constants ────────────────────────────────────────────────────── */
+/* ── Shell layout constants (must match topbar / dock) ───────────────────── */
 
-#define WIN_W       1024
-#define WIN_H        700
+#define TOPBAR_H      36
+#define ACCENT_H       2
+#define DOCK_H        56
+#define DOCK_BB_STRIP 40
+
+/* ── Window chrome constants ─────────────────────────────────────────────── */
+
 #define TITLE_H       28
 #define TOOLBAR_H     36
 #define SEPARATOR_H    1
 #define STATUS_H      20
 
-/* VIEWPORT_Y is where the content area begins (below title + toolbar + sep) */
-#define VIEWPORT_Y  (TITLE_H + TOOLBAR_H + SEPARATOR_H)
-#define VIEWPORT_W  WIN_W
-#define VIEWPORT_H  (WIN_H - VIEWPORT_Y - STATUS_H)   /* 615 */
+/* Y offset from content-area top to viewport (toolbar + separator) */
+#define VP_OFF  (TOOLBAR_H + SEPARATOR_H)   /* 37 */
 
-/* Initial window position: below topbar (36px) + accent (2px) + margin */
-#define WIN_X_INIT   80
-#define WIN_Y_INIT   50
-
-/* Toolbar button geometry (toolbar-relative coords) */
+/* Toolbar button geometry (content-area-relative) */
 #define BTN_Y         7
 #define BTN_H        22
 #define BTN_W        30
-
 #define BTN_BACK_X    8
 #define BTN_FWD_X    42
 #define BTN_RLD_X    76
 
-/* Address bar (toolbar-relative) */
+/* Address bar (content-area-relative) */
 #define ADDR_X      112
 #define ADDR_Y        7
 #define ADDR_H       22
-#define ADDR_W      (WIN_W - ADDR_X - 10)   /* 902 */
-
-/* Close button (window-relative, drawn by gfx_glass_window_frame at wx+10) */
-#define CLOSE_REL_X  10
-#define CLOSE_REL_Y   8
-#define CLOSE_SIZE   12
 
 /* ── NetSurf table ───────────────────────────────────────────────────────── */
 
@@ -117,24 +107,30 @@ static struct netsurf_table g_ns_table = {
     .layout = &aether_layout_table,
 };
 
-/* ── Window state ────────────────────────────────────────────────────────── */
+/* ── Window geometry ─────────────────────────────────────────────────────── */
 
-static int  g_win_x = WIN_X_INIT;
-static int  g_win_y = WIN_Y_INIT;
+static int  g_win_x;
+static int  g_win_y;
+static int  g_win_w;
+static int  g_win_h;
+static int  g_viewport_h;   /* pixel rows available for NetSurf */
+static int  g_addr_w;       /* address bar pixel width */
 static long g_win_id = -1;
-static int  g_running = 1;
 
-/* ── Address bar state ───────────────────────────────────────────────────── */
+/* ── Widget tree ─────────────────────────────────────────────────────────── */
 
-static char g_url[512];
-static int  g_url_len;
-static int  g_url_cursor;
-static int  g_url_focused;
+static widget_t g_root;
+static widget_t g_toolbar;
+static widget_t g_btn_back;
+static widget_t g_btn_fwd;
+static widget_t g_btn_reload;
+static widget_t g_addr_input;
+static widget_t g_viewport;
+static widget_t g_status;
 
-/* ── Mouse tracking ──────────────────────────────────────────────────────── */
+/* ── widget_run context (global so callbacks can set running=0) ──────────── */
 
-static unsigned g_prev_btns = 0;
-static int      g_hover_close = 0;   /* 1 = cursor over close button */
+static widget_ctx_t g_ctx;
 
 /* ── UART helper ─────────────────────────────────────────────────────────── */
 
@@ -149,102 +145,17 @@ static void uart(const char *s)
         : "=r"(r) : "r"(s), "r"((long)len) : "x0","x1","x2","x8","memory");
 }
 
-/* ── Drawing helpers ─────────────────────────────────────────────────────── */
+/* ── NetSurf viewport render ─────────────────────────────────────────────── */
 
-static void draw_btn(int rel_x, int rel_y, const char *label, int active)
-{
-    int ax = g_win_x + rel_x;
-    int ay = g_win_y + TITLE_H + rel_y;
-    unsigned bg = active ? GFX_RGB(52, 48, 90) : GFX_RGB(34, 32, 58);
-    unsigned bd = active ? C_ACCENT : C_SEP;
-    gfx_fill_rounded((unsigned)ax, (unsigned)ay,
-                     (unsigned)BTN_W, (unsigned)BTN_H, GFX_WIDGET_R, bg);
-    gfx_rect_rounded((unsigned)ax, (unsigned)ay,
-                     (unsigned)BTN_W, (unsigned)BTN_H, GFX_WIDGET_R, bd);
-    /* Center label in button */
-    int lw = gfx_text_width(label);
-    int tx = ax + (BTN_W - lw) / 2;
-    int ty = ay + (BTN_H - gfx_font_height()) / 2;
-    gfx_text_transparent((unsigned)tx, (unsigned)ty, label,
-                         active ? C_TEXT : C_TEXT_DIM);
-}
-
-static void draw_toolbar(void)
-{
-    int ty = g_win_y + TITLE_H;
-
-    /* Toolbar background */
-    gfx_fill((unsigned)g_win_x, (unsigned)ty,
-              (unsigned)WIN_W, (unsigned)TOOLBAR_H, C_PANEL);
-
-    /* Separator line below toolbar */
-    gfx_hline((unsigned)g_win_x,
-               (unsigned)(ty + TOOLBAR_H),
-               (unsigned)WIN_W, C_SEP);
-
-    /* Nav buttons */
-    int back_on  = nsaether_bw && browser_window_back_available(nsaether_bw);
-    int fwd_on   = nsaether_bw && browser_window_forward_available(nsaether_bw);
-    int rld_on   = nsaether_bw && browser_window_reload_available(nsaether_bw);
-    draw_btn(BTN_BACK_X, BTN_Y, "<", back_on);
-    draw_btn(BTN_FWD_X,  BTN_Y, ">", fwd_on);
-    draw_btn(BTN_RLD_X,  BTN_Y, nsaether_loading ? "." : "R", rld_on);
-
-    /* Address bar box */
-    int ax = g_win_x + ADDR_X;
-    int ay = ty + ADDR_Y;
-    unsigned addr_bg = g_url_focused ? GFX_RGB(18, 18, 30) : GFX_RGB(12, 12, 22);
-    unsigned addr_bd = g_url_focused ? C_ACCENT : C_SEP;
-    gfx_fill_rounded((unsigned)ax, (unsigned)ay,
-                     (unsigned)ADDR_W, (unsigned)ADDR_H, GFX_INPUT_R, addr_bg);
-    gfx_rect_rounded((unsigned)ax, (unsigned)ay,
-                     (unsigned)ADDR_W, (unsigned)ADDR_H, GFX_INPUT_R, addr_bd);
-
-    /* URL text (clip to ADDR_W - 12px padding) */
-    int text_x = ax + 6;
-    int text_y = ay + (ADDR_H - gfx_font_height()) / 2;
-    gfx_text((unsigned)text_x, (unsigned)text_y, g_url, C_TEXT, addr_bg);
-
-    /* Cursor when focused */
-    if (g_url_focused) {
-        int cx    = gfx_text_prefix_width(g_url, g_url_cursor);
-        int cur_x = text_x + cx;
-        int cur_y = ay + 4;
-        int cur_h = ADDR_H - 8;
-        gfx_vline((unsigned)cur_x, (unsigned)cur_y, (unsigned)cur_h, C_TEXT);
-    }
-}
-
-static void draw_status(void)
-{
-    int sy = g_win_y + WIN_H - STATUS_H;
-    gfx_fill((unsigned)g_win_x, (unsigned)sy,
-              (unsigned)WIN_W, (unsigned)STATUS_H, C_PANEL);
-    gfx_hline((unsigned)g_win_x, (unsigned)sy, (unsigned)WIN_W, C_SEP);
-
-    const char *txt = nsaether_status[0] ? nsaether_status
-                                         : (nsaether_loading ? "Loading..." : "Done");
-    int ty = sy + (STATUS_H - gfx_font_height()) / 2;
-    gfx_text_transparent((unsigned)(g_win_x + 8), (unsigned)ty, txt, C_TEXT_DIM);
-}
-
-static void draw_chrome(void)
-{
-    gfx_glass_window_frame(g_win_x, g_win_y, WIN_W, WIN_H,
-                            TITLE_H, "AetherOS Browser", g_hover_close);
-    draw_toolbar();
-    draw_status();
-}
-
-static void draw_viewport(void)
+static void render_viewport(void)
 {
     if (!nsaether_pixels || !nsaether_bw) return;
 
     memset(nsaether_pixels, 0xFF,
-           (size_t)VIEWPORT_W * (size_t)VIEWPORT_H * 4);
+           (size_t)g_win_w * (size_t)g_viewport_h * 4);
 
     aether_plot_ctx_t plot_ctx;
-    aether_plot_ctx_init(&plot_ctx, nsaether_pixels, VIEWPORT_W, VIEWPORT_H);
+    aether_plot_ctx_init(&plot_ctx, nsaether_pixels, g_win_w, g_viewport_h);
 
     struct redraw_context rctx = {
         .interactive       = true,
@@ -253,341 +164,275 @@ static void draw_viewport(void)
         .priv              = &plot_ctx,
     };
 
-    struct rect content_rect = { 0, 0, VIEWPORT_W, VIEWPORT_H };
-    browser_window_redraw(nsaether_bw, 0, 0, &content_rect, &rctx);
-
-    gfx_raw_blit(nsaether_pixels, (unsigned)VIEWPORT_W,
-                 g_win_x, g_win_y + VIEWPORT_Y,
-                 (unsigned)VIEWPORT_W, (unsigned)VIEWPORT_H);
+    struct rect cr = { 0, 0, g_win_w, g_viewport_h };
+    browser_window_redraw(nsaether_bw, 0, 0, &cr, &rctx);
 }
 
-/* ── Navigation ──────────────────────────────────────────────────────────── */
+/* ── Navigation helpers ──────────────────────────────────────────────────── */
 
 static void navigate_to(const char *url_str)
 {
     if (!nsaether_bw || !url_str || !url_str[0]) return;
 
-    struct nsurl *nsurl = NULL;
-    if (nsurl_create(url_str, &nsurl) != NSERROR_OK || !nsurl) {
+    struct nsurl *nav_url = NULL;
+    if (nsurl_create(url_str, &nav_url) != NSERROR_OK || !nav_url) {
         uart("aether_browser: nsurl_create failed\n");
         return;
     }
-    browser_window_navigate(nsaether_bw, nsurl,
+    browser_window_navigate(nsaether_bw, nav_url,
                             NULL, BW_NAVIGATE_HISTORY,
                             NULL, NULL, NULL);
-    nsurl_unref(nsurl);
-
-    /* Optimistic status update — NetSurf will overwrite via set_status */
-    snprintf(nsaether_status, sizeof(nsaether_status), "Loading...");
-    draw_toolbar();
-    draw_status();
+    nsurl_unref(nav_url);
 }
 
-static void sync_url_from_ns(void)
+static void sync_url_to_widget(void)
 {
-    /* Copy NetSurf's current URL into our address bar buffer */
     if (!nsaether_bw) return;
     struct nsurl *url = NULL;
     if (browser_window_get_url(nsaether_bw, false, &url) == NSERROR_OK && url) {
         const char *s = nsurl_access(url);
-        if (s) {
-            size_t i = 0;
-            while (s[i] && i < sizeof(g_url) - 1) { g_url[i] = s[i]; i++; }
-            g_url[i] = '\0';
-            g_url_len = (int)i;
-            g_url_cursor = g_url_len;
-        }
+        if (s) textinput_set_text(&g_addr_input, s);
         nsurl_unref(url);
     }
 }
 
-/* ── Address bar text input ──────────────────────────────────────────────── */
+/* ── Custom widget draw functions ────────────────────────────────────────── */
 
-static int keycode_to_char(const key_event_t *ke)
+static void toolbar_draw(widget_t *w, int ax, int ay)
 {
-    static const char base[] = {
-        /* A–Z → a–z (0x01..0x1A) */
-        'a','b','c','d','e','f','g','h','i','j','k','l','m',
-        'n','o','p','q','r','s','t','u','v','w','x','y','z',
-        /* KEY_0..9 → '0'..'9' */
-        '0','1','2','3','4','5','6','7','8','9',
-    };
-    static const char shifted[] = {
-        'A','B','C','D','E','F','G','H','I','J','K','L','M',
-        'N','O','P','Q','R','S','T','U','V','W','X','Y','Z',
-        ')','!','@','#','$','%','^','&','*','(',
-    };
-
-    keycode_t k = ke->keycode;
-    int shift = (ke->modifiers & MOD_SHIFT) || (ke->modifiers & MOD_CAPS);
-
-    if (k >= KEY_A && k <= KEY_9) {
-        return shift ? (unsigned char)shifted[k - KEY_A]
-                     : (unsigned char)base[k - KEY_A];
-    }
-    if (k == KEY_SPACE)       return ' ';
-    if (k == KEY_DOT)         return shift ? '>' : '.';
-    if (k == KEY_SLASH)       return shift ? '?' : '/';
-    if (k == KEY_SEMICOLON)   return shift ? ':' : ';';
-    if (k == KEY_MINUS)       return shift ? '_' : '-';
-    if (k == KEY_EQUALS)      return shift ? '+' : '=';
-    return 0;
+    (void)w;
+    /* Background + separator line 1px below toolbar */
+    gfx_fill((unsigned)ax, (unsigned)ay,
+              (unsigned)g_win_w, (unsigned)TOOLBAR_H, C_PANEL);
+    gfx_hline((unsigned)ax, (unsigned)(ay + TOOLBAR_H),
+               (unsigned)g_win_w, C_SEP);
 }
 
-static void handle_addr_key(const key_event_t *ke)
+static void viewport_draw(widget_t *w, int ax, int ay)
 {
-    if (!ke->is_press) return;
-
-    switch (ke->keycode) {
-
-    case KEY_ENTER:
-        navigate_to(g_url);
-        g_url_focused = 0;
-        break;
-
-    case KEY_ESC:
-        /* Restore URL from current page */
-        sync_url_from_ns();
-        g_url_focused = 0;
-        break;
-
-    case KEY_BACKSPACE:
-        if (g_url_cursor > 0) {
-            memmove(g_url + g_url_cursor - 1,
-                    g_url + g_url_cursor,
-                    (size_t)(g_url_len - g_url_cursor) + 1);
-            g_url_cursor--;
-            g_url_len--;
-        }
-        break;
-
-    case KEY_DELETE:
-        if (g_url_cursor < g_url_len) {
-            memmove(g_url + g_url_cursor,
-                    g_url + g_url_cursor + 1,
-                    (size_t)(g_url_len - g_url_cursor));
-            g_url_len--;
-            g_url[g_url_len] = '\0';
-        }
-        break;
-
-    case KEY_LEFT:
-        if (g_url_cursor > 0) g_url_cursor--;
-        break;
-    case KEY_RIGHT:
-        if (g_url_cursor < g_url_len) g_url_cursor++;
-        break;
-    case KEY_HOME:
-        g_url_cursor = 0;
-        break;
-    case KEY_END:
-        g_url_cursor = g_url_len;
-        break;
-
-    default: {
-        int ch = keycode_to_char(ke);
-        if (ch && g_url_len < (int)(sizeof(g_url) - 1)) {
-            memmove(g_url + g_url_cursor + 1,
-                    g_url + g_url_cursor,
-                    (size_t)(g_url_len - g_url_cursor) + 1);
-            g_url[g_url_cursor++] = (char)ch;
-            g_url_len++;
-        }
-        break;
-    }
-    } /* switch */
-
-    draw_toolbar();
+    (void)w;
+    if (nsaether_pixels)
+        gfx_raw_blit(nsaether_pixels, (unsigned)g_win_w,
+                     ax, ay,
+                     (unsigned)g_win_w, (unsigned)g_viewport_h);
+    else
+        gfx_fill((unsigned)ax, (unsigned)ay,
+                 (unsigned)g_win_w, (unsigned)g_viewport_h, 0xFFFFFFFFu);
 }
 
-/* ── Viewport keyboard (scroll) ──────────────────────────────────────────── */
-
-static void handle_viewport_key(const key_event_t *ke)
+static int viewport_event(widget_t *w, const widget_event_t *ev)
 {
-    if (!ke->is_press || !nsaether_bw) return;
+    (void)w;
+    if (!nsaether_bw) return 0;
 
-    int cx = VIEWPORT_W / 2;
-    int cy = VIEWPORT_H / 2;
-    int step = 48;
+    /* Screen-absolute → viewport-relative coordinates */
+    int vx = ev->mx - g_win_x;
+    int vy = ev->my - (g_win_y + TITLE_H + VP_OFF);
 
-    /* Map AetherOS keycodes to NetSurf scroll */
-    switch (ke->keycode) {
-    case KEY_UP:
-        browser_window_scroll_at_point(nsaether_bw, cx, cy, 0, -step);
-        break;
-    case KEY_DOWN:
-        browser_window_scroll_at_point(nsaether_bw, cx, cy, 0,  step);
-        break;
-    case KEY_LEFT:
-        browser_window_scroll_at_point(nsaether_bw, cx, cy, -step, 0);
-        break;
-    case KEY_RIGHT:
-        browser_window_scroll_at_point(nsaether_bw, cx, cy,  step, 0);
-        break;
-    case KEY_PGUP:
-        browser_window_scroll_at_point(nsaether_bw, cx, cy, 0, -VIEWPORT_H);
-        break;
-    case KEY_PGDN:
-        browser_window_scroll_at_point(nsaether_bw, cx, cy, 0,  VIEWPORT_H);
-        break;
-    default: {
-        /* Pass printable characters into NetSurf (for form fields, etc.) */
-        int ch = keycode_to_char(ke);
-        if (ch) browser_window_key_press(nsaether_bw, (uint32_t)ch);
-        break;
-    }
-    }
-}
-
-/* ── Hit-test helpers ────────────────────────────────────────────────────── */
-
-static int in_rect(int px, int py, int rx, int ry, int rw, int rh)
-{
-    return px >= rx && px < rx + rw && py >= ry && py < ry + rh;
-}
-
-/* ── Mouse handler ───────────────────────────────────────────────────────── */
-
-static void handle_mouse(mouse_event_t me)
-{
-    int mx = (int)me.x, my = (int)me.y;
-    unsigned btns = me.buttons;
-    int click = (btns & 1) && !(g_prev_btns & 1);   /* left rising edge */
-    int release = !(btns & 1) && (g_prev_btns & 1); /* left falling edge */
-    g_prev_btns = btns;
-
-    /* Close button hover */
-    int new_hover = in_rect(mx, my,
-                            g_win_x + CLOSE_REL_X, g_win_y + CLOSE_REL_Y,
-                            CLOSE_SIZE, CLOSE_SIZE);
-    if (new_hover != g_hover_close) {
-        g_hover_close = new_hover;
-        /* Redraw title bar with updated hover state */
-        gfx_glass_window_frame(g_win_x, g_win_y, WIN_W, WIN_H,
-                                TITLE_H, "AetherOS Browser", g_hover_close);
-    }
-
-    /* Close button click */
-    if (click && g_hover_close) {
-        g_running = 0;
-        return;
-    }
-
-    /* Toolbar area */
-    int ty = g_win_y + TITLE_H;
-    if (my >= ty && my < ty + TOOLBAR_H) {
-        if (!click) return;
-        int rx = mx - g_win_x;
-        int ry = my - ty;
-
-        if (in_rect(rx, ry, BTN_BACK_X, BTN_Y, BTN_W, BTN_H)) {
-            if (nsaether_bw && browser_window_back_available(nsaether_bw))
-                browser_window_history_back(nsaether_bw, false);
-        } else if (in_rect(rx, ry, BTN_FWD_X, BTN_Y, BTN_W, BTN_H)) {
-            if (nsaether_bw && browser_window_forward_available(nsaether_bw))
-                browser_window_history_forward(nsaether_bw, false);
-        } else if (in_rect(rx, ry, BTN_RLD_X, BTN_Y, BTN_W, BTN_H)) {
-            if (nsaether_bw) browser_window_reload(nsaether_bw, false);
-        } else if (in_rect(rx, ry, ADDR_X, ADDR_Y, ADDR_W, ADDR_H)) {
-            g_url_focused = 1;
-            g_url_cursor  = g_url_len;
-            draw_toolbar();
+    switch (ev->type) {
+    case WEV_MOUSE_DOWN:
+        widget_set_focused(&g_viewport);
+        browser_window_mouse_click(nsaether_bw, BROWSER_MOUSE_PRESS_1, vx, vy);
+        return 1;
+    case WEV_MOUSE_UP:
+        browser_window_mouse_click(nsaether_bw, BROWSER_MOUSE_CLICK_1, vx, vy);
+        return 1;
+    case WEV_MOUSE_MOVE:
+        browser_window_mouse_click(nsaether_bw, BROWSER_MOUSE_HOVER, vx, vy);
+        return 0;    /* non-consuming: let hover redraw proceed normally */
+    case WEV_KEY_DOWN:
+        if (ev->modifiers & MOD_CTRL) {
+            switch (ev->keycode) {
+            case KEY_L:
+                widget_set_focused(&g_addr_input);
+                return 1;
+            case KEY_R:
+                browser_window_reload(nsaether_bw, false);
+                return 1;
+            case KEY_LBRACKET:
+                if (browser_window_back_available(nsaether_bw))
+                    browser_window_history_back(nsaether_bw, false);
+                return 1;
+            case KEY_RBRACKET:
+                if (browser_window_forward_available(nsaether_bw))
+                    browser_window_history_forward(nsaether_bw, false);
+                return 1;
+            default: break;
+            }
         }
-        return;
-    }
-
-    /* Viewport area */
-    int vp_top    = g_win_y + VIEWPORT_Y;
-    int vp_bottom = g_win_y + WIN_H - STATUS_H;
-    if (my >= vp_top && my < vp_bottom && nsaether_bw) {
-        int vx = mx - g_win_x;
-        int vy = my - vp_top;
-
-        if (click) {
-            g_url_focused = 0;
-            /* PRESS on button down */
-            browser_window_mouse_click(nsaether_bw,
-                                       BROWSER_MOUSE_PRESS_1, vx, vy);
-        } else if (release) {
-            /* CLICK on button up (completes the click) */
-            browser_window_mouse_click(nsaether_bw,
-                                       BROWSER_MOUSE_CLICK_1, vx, vy);
-        } else {
-            /* Hover — NetSurf updates status with link URL */
-            browser_window_mouse_click(nsaether_bw,
-                                       BROWSER_MOUSE_HOVER, vx, vy);
+        {
+            int cx   = g_win_w     / 2;
+            int cy_v = g_viewport_h / 2;
+            int step = 48;
+            switch (ev->keycode) {
+            case KEY_UP:
+                browser_window_scroll_at_point(nsaether_bw, cx, cy_v, 0, -step);
+                return 1;
+            case KEY_DOWN:
+                browser_window_scroll_at_point(nsaether_bw, cx, cy_v, 0,  step);
+                return 1;
+            case KEY_PGUP:
+                browser_window_scroll_at_point(nsaether_bw, cx, cy_v, 0, -g_viewport_h);
+                return 1;
+            case KEY_PGDN:
+                browser_window_scroll_at_point(nsaether_bw, cx, cy_v, 0,  g_viewport_h);
+                return 1;
+            default: break;
+            }
+            int ch = (int)(unsigned char)ev->keycode;
+            if (ch >= 32 && ch < 127)
+                browser_window_key_press(nsaether_bw, (uint32_t)ch);
         }
-    }
-}
-
-/* ── Keyboard handler ────────────────────────────────────────────────────── */
-
-static void handle_key(const key_event_t *ke)
-{
-    if (!ke->is_press) return;
-
-    /* Global shortcuts */
-    if (ke->modifiers & MOD_CTRL) {
-        switch (ke->keycode) {
-        case KEY_L:
-            /* Focus address bar and select all */
-            g_url_focused = 1;
-            g_url_cursor  = g_url_len;
-            draw_toolbar();
-            return;
-        case KEY_R:
-            if (nsaether_bw) browser_window_reload(nsaether_bw, false);
-            return;
-        case KEY_LBRACKET:  /* Ctrl+[ = back */
-            if (nsaether_bw && browser_window_back_available(nsaether_bw))
-                browser_window_history_back(nsaether_bw, false);
-            return;
-        case KEY_RBRACKET:  /* Ctrl+] = forward */
-            if (nsaether_bw && browser_window_forward_available(nsaether_bw))
-                browser_window_history_forward(nsaether_bw, false);
-            return;
-        default: break;
-        }
-    }
-
-    if (g_url_focused) {
-        handle_addr_key(ke);
-    } else {
-        handle_viewport_key(ke);
-    }
-}
-
-/* ── WM event handler ────────────────────────────────────────────────────── */
-
-static void handle_wm_event(unsigned long long ev)
-{
-    if (ev == 0) return;
-
-    /* Window dragged to new position */
-    if (wm_event_is_redraw(ev)) {
-        g_win_x = wm_event_redraw_x(ev);
-        g_win_y = wm_event_redraw_y(ev);
-        draw_chrome();
-        draw_viewport();
-        return;
-    }
-
-    /* Mouse forwarded by compositor */
-    if (wm_event_is_mouse(ev)) {
-        mouse_event_t me = wm_event_mouse_unpack(ev);
-        handle_mouse(me);
-        return;
-    }
-
-    /* Compositor WM events */
-    unsigned type = (unsigned)(ev >> 32) & 0xFFu;
-    switch (type) {
-    case WM_EV_CLOSE_REQUEST:
-        g_running = 0;
-        break;
+        return 0;
     default:
-        break;
+        return 0;
     }
+}
+
+static void status_draw(widget_t *w, int ax, int ay)
+{
+    (void)w;
+    gfx_hline((unsigned)ax, (unsigned)ay, (unsigned)g_win_w, C_SEP);
+    gfx_fill((unsigned)ax, (unsigned)(ay + 1),
+              (unsigned)g_win_w, (unsigned)(STATUS_H - 1), C_PANEL);
+    const char *txt = nsaether_status[0] ? nsaether_status
+                                         : (nsaether_loading ? "Loading..." : "Done");
+    int ty = ay + 1 + ((STATUS_H - 1) - (int)gfx_font_height()) / 2;
+    gfx_text_transparent(8, (unsigned)ty, txt, C_TEXT_DIM);
+}
+
+/* ── Button callbacks ────────────────────────────────────────────────────── */
+
+static void on_back(widget_t *w)
+{
+    (void)w;
+    if (nsaether_bw && browser_window_back_available(nsaether_bw))
+        browser_window_history_back(nsaether_bw, false);
+}
+
+static void on_fwd(widget_t *w)
+{
+    (void)w;
+    if (nsaether_bw && browser_window_forward_available(nsaether_bw))
+        browser_window_history_forward(nsaether_bw, false);
+}
+
+static void on_reload(widget_t *w)
+{
+    (void)w;
+    if (nsaether_bw) browser_window_reload(nsaether_bw, false);
+}
+
+static void on_addr_submit(widget_t *w)
+{
+    navigate_to(textinput_get_text(w));
+    widget_set_focused(&g_viewport);
+}
+
+/* ── Per-frame hook: NetSurf scheduler + viewport sync ───────────────────── */
+
+static void browser_per_frame(void *ud)
+{
+    (void)ud;
+
+    nsaether_schedule_drain();
+
+    if (nsaether_dirty && nsaether_bw &&
+            browser_window_redraw_ready(nsaether_bw)) {
+        render_viewport();
+        sys_sched_yield();          /* compositor refreshes cursor here */
+        nsaether_dirty = false;
+        if (widget_get_focused() != &g_addr_input)
+            sync_url_to_widget();
+        widget_invalidate(&g_viewport);
+        widget_invalidate(&g_toolbar);
+        widget_invalidate(&g_status);
+    }
+
+    /* Throbber animation + one-shot load-complete update */
+    static int  s_was_loading = 0;
+    static long s_last_tick   = 0;
+    if (nsaether_loading) {
+        long now = gfx_ticks();
+        if (now - s_last_tick >= 10) {
+            s_last_tick = now;
+            g_btn_reload.data.button.text[0] = '.';
+            g_btn_reload.data.button.text[1] = '\0';
+            widget_invalidate(&g_btn_reload);
+            widget_invalidate(&g_status);
+            sys_sched_yield();
+        }
+    } else if (s_was_loading) {
+        /* Loading just finished: update nav buttons + reload label */
+        g_btn_reload.data.button.text[0] = 'R';
+        g_btn_reload.data.button.text[1] = '\0';
+        if (nsaether_bw) {
+            g_btn_back.state =
+                browser_window_back_available(nsaether_bw) ? WS_NORMAL : WS_DISABLED;
+            g_btn_fwd.state =
+                browser_window_forward_available(nsaether_bw) ? WS_NORMAL : WS_DISABLED;
+        }
+        widget_invalidate(&g_btn_back);
+        widget_invalidate(&g_btn_fwd);
+        widget_invalidate(&g_btn_reload);
+        widget_invalidate(&g_status);
+    }
+    s_was_loading = (int)nsaether_loading;
+}
+
+/* ── Window chrome (called by widget_run on init + drag) ─────────────────── */
+
+static void draw_chrome(void)
+{
+    gfx_glass_window_frame(g_win_x, g_win_y, g_win_w, g_win_h,
+                           TITLE_H, "AetherOS Browser", 0);
+}
+
+static void on_reposition(void *ud) { (void)ud; draw_chrome(); }
+
+/* ── Build widget tree ───────────────────────────────────────────────────── */
+
+static void build_ui(void)
+{
+    int content_h = g_win_h - TITLE_H;
+    int status_y  = content_h - STATUS_H;
+
+    /* Root: transparent container covering the content area */
+    widget_init(&g_root, WIDGET_PANEL, 0, 0, g_win_w, content_h);
+    /* draw_fn = NULL: don't overwrite the glass window border */
+
+    /* Toolbar panel with custom draw (background + separator) */
+    widget_init(&g_toolbar, WIDGET_PANEL, 0, 0, g_win_w, TOOLBAR_H + SEPARATOR_H);
+    g_toolbar.draw_fn = toolbar_draw;
+    widget_add_child(&g_root, &g_toolbar);
+
+    /* Navigation buttons */
+    widget_init_button(&g_btn_back,   BTN_BACK_X, BTN_Y, BTN_W, BTN_H, "<",  on_back);
+    widget_init_button(&g_btn_fwd,    BTN_FWD_X,  BTN_Y, BTN_W, BTN_H, ">",  on_fwd);
+    widget_init_button(&g_btn_reload, BTN_RLD_X,  BTN_Y, BTN_W, BTN_H, "R",  on_reload);
+    g_btn_back.state   = WS_DISABLED;
+    g_btn_fwd.state    = WS_DISABLED;
+    widget_add_child(&g_toolbar, &g_btn_back);
+    widget_add_child(&g_toolbar, &g_btn_fwd);
+    widget_add_child(&g_toolbar, &g_btn_reload);
+
+    /* Address bar */
+    widget_init_textinput(&g_addr_input, ADDR_X, ADDR_Y, g_addr_w, ADDR_H,
+                          NULL, on_addr_submit);
+    widget_add_child(&g_toolbar, &g_addr_input);
+
+    /* Viewport: custom draw (blit NetSurf pixels) + event forwarding */
+    widget_init(&g_viewport, WIDGET_PANEL,
+                0, VP_OFF, g_win_w, g_viewport_h);
+    g_viewport.draw_fn  = viewport_draw;
+    g_viewport.event_fn = viewport_event;
+    g_viewport.focusable = 1;
+    widget_add_child(&g_root, &g_viewport);
+
+    /* Status bar: custom draw (separator + panel + text) */
+    widget_init(&g_status, WIDGET_PANEL, 0, status_y, g_win_w, STATUS_H);
+    g_status.draw_fn = status_draw;
+    widget_add_child(&g_root, &g_status);
 }
 
 /* ── Main ────────────────────────────────────────────────────────────────── */
@@ -601,7 +446,6 @@ int main(int argc, char **argv)
 
     /* 1. Init NetSurf */
     nslog_aether_init();
-
     if (netsurf_register(&g_ns_table) != NSERROR_OK) {
         uart("aether_browser FAIL: netsurf_register\n");
         return 1;
@@ -613,115 +457,93 @@ int main(int argc, char **argv)
     nserror ni = netsurf_init(NULL);
     if (ni != NSERROR_OK) {
         char buf[64];
-        snprintf(buf, sizeof(buf), "aether_browser FAIL: netsurf_init err=%d\n", (int)ni);
+        snprintf(buf, sizeof(buf),
+                 "aether_browser FAIL: netsurf_init err=%d\n", (int)ni);
         uart(buf);
         return 1;
     }
     fetch_http_aether_register();
 
-    /* 2. Framebuffer + window */
+    /* 2. Screen dimensions and window geometry */
     gfx_init();
+    int scr_w = (int)gfx_width();
+    int scr_h = (int)gfx_height();
 
-    int sw = (int)gfx_width();
-    int sh = (int)gfx_height();
+    g_win_x      = 0;
+    g_win_y      = TOPBAR_H + ACCENT_H;            /* 38 px */
+    g_win_w      = scr_w;
+    g_win_h      = scr_h - TOPBAR_H - ACCENT_H - DOCK_H - DOCK_BB_STRIP;  /* 586 px */
+    g_viewport_h = g_win_h - TITLE_H - VP_OFF - STATUS_H;
+    g_addr_w     = g_win_w - ADDR_X - 10;
 
-    /* Center window on screen */
-    g_win_x = (sw - WIN_W) / 2;
-    if (g_win_x < 0) g_win_x = 0;
-    g_win_y = WIN_Y_INIT;
-    if (g_win_y + WIN_H > sh) g_win_y = sh - WIN_H;
-    if (g_win_y < 0) g_win_y = 0;
-
-    /* Configure NetSurf viewport size */
-    nsaether_win_w = VIEWPORT_W;
-    nsaether_win_h = VIEWPORT_H;
-
-    /* Register WM window */
-    g_win_id = sys_wm_register(g_win_x, g_win_y, WIN_W, WIN_H, "AetherOS Browser");
-
-    /* 3. Pre-load initial URL into address bar */
-    size_t ui = 0;
-    while (start_url[ui] && ui < sizeof(g_url) - 1) {
-        g_url[ui] = start_url[ui]; ui++;
+    {
+        char dbg[80];
+        snprintf(dbg, sizeof(dbg),
+                 "aether_browser: scr=%dx%d win=%dx%d vp_h=%d\n",
+                 scr_w, scr_h, g_win_w, g_win_h, g_viewport_h);
+        uart(dbg);
     }
-    g_url[ui] = '\0';
-    g_url_len = (int)ui;
-    g_url_cursor = g_url_len;
 
-    /* 4. Draw initial chrome */
+    nsaether_win_w = g_win_w;
+    nsaether_win_h = g_viewport_h;
+
+    /* 3. Register WM window (no WM_FLAG_NO_CHROME: init handles
+     *    close / minimize / focus / drag) */
+    g_win_id = sys_wm_register(g_win_x, g_win_y, g_win_w, g_win_h,
+                               "AetherOS Browser");
+    if (g_win_id >= 0) {
+        /* z=1: above desktop (z=0); init's raise_to_front raises further on click */
+        sys_wm_set_zindex(g_win_id, 1);
+    }
+
+    /* 4. Draw initial chrome before widget_run allocates the BO */
     draw_chrome();
-    gfx_fill((unsigned)g_win_x, (unsigned)(g_win_y + VIEWPORT_Y),
-              (unsigned)VIEWPORT_W, (unsigned)VIEWPORT_H, 0x00FFFFFF);
 
-    /* 5. Create browser window + navigate */
-    struct nsurl *nsurl = NULL;
-    if (nsurl_create(start_url, &nsurl) != NSERROR_OK || !nsurl) {
+    /* 5. Build widget tree */
+    build_ui();
+
+    /* 6. Create NetSurf browser window + start navigation */
+    struct nsurl *start_nsurl = NULL;
+    if (nsurl_create(start_url, &start_nsurl) != NSERROR_OK || !start_nsurl) {
         uart("aether_browser FAIL: nsurl_create\n");
         netsurf_exit();
         return 1;
     }
-
     struct browser_window *bw = NULL;
     nserror be = browser_window_create(
             BW_CREATE_HISTORY | BW_CREATE_FOREGROUND,
-            nsurl, NULL, NULL, &bw);
-    nsurl_unref(nsurl);
-
+            start_nsurl, NULL, NULL, &bw);
+    nsurl_unref(start_nsurl);
     if (be != NSERROR_OK || !bw) {
         uart("aether_browser FAIL: browser_window_create\n");
         netsurf_exit();
         return 1;
     }
 
-    uart("aether_browser: event loop started\n");
+    /* Pre-fill address bar with the start URL */
+    textinput_set_text(&g_addr_input, start_url);
 
-    /* 6. Event loop */
-    long last_toolbar_tick = 0;
+    /* Default focus: viewport (allows keyboard scroll without clicking) */
+    widget_set_focused(&g_viewport);
 
-    while (g_running) {
+    uart("aether_browser: starting widget_run\n");
 
-        /* Drain NetSurf cooperative scheduler */
-        nsaether_schedule_drain();
+    /* 7. Run widget event loop */
+    g_ctx.win_x         = &g_win_x;
+    g_ctx.win_y         = &g_win_y;
+    g_ctx.content_dx    = 0;
+    g_ctx.content_dy    = TITLE_H;
+    g_ctx.win_id        = (int)g_win_id;
+    g_ctx.win_w         = g_win_w;
+    g_ctx.win_h         = g_win_h;
+    g_ctx.on_reposition = on_reposition;
+    g_ctx.per_frame_fn  = browser_per_frame;
+    g_ctx.userdata      = NULL;
+    g_ctx.running       = 1;
 
-        /* Redraw viewport when content changed */
-        if (nsaether_dirty && nsaether_bw && browser_window_redraw_ready(nsaether_bw)) {
-            draw_viewport();
-            nsaether_dirty = false;
+    widget_run(&g_root, &g_ctx);
 
-            /* Sync address bar from NetSurf (URL may have changed on navigate) */
-            if (!g_url_focused) {
-                sync_url_from_ns();
-                draw_toolbar();
-            }
-            draw_status();
-        }
-
-        /* Poll WM events (reposition, mouse, close) */
-        unsigned long long ev;
-        while ((ev = sys_wm_event_poll()) != 0)
-            handle_wm_event(ev);
-
-        /* Poll keyboard */
-        unsigned long long kev;
-        while ((kev = sys_key_poll()) != 0) {
-            key_event_t ke = key_event_unpack(kev);
-            handle_key(&ke);
-        }
-
-        /* Periodic toolbar refresh (throbber animation, button state) */
-        long now = gfx_ticks();
-        if (now - last_toolbar_tick >= 10) {   /* ~100 ms */
-            last_toolbar_tick = now;
-            if (nsaether_loading || !g_url_focused) {
-                draw_toolbar();
-                draw_status();
-            }
-        }
-
-        sys_sched_yield();
-    }
-
-    /* 7. Cleanup */
+    /* 8. Cleanup */
     netsurf_exit();
     sys_wm_request_close(g_win_id);
     return 0;
