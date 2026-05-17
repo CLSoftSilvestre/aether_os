@@ -262,21 +262,24 @@ static int viewport_event(widget_t *w, const widget_event_t *ev)
             }
         }
         {
-            int cx   = g_win_w     / 2;
-            int cy_v = g_viewport_h / 2;
-            int step = 48;
             switch (ev->keycode) {
             case KEY_UP:
-                browser_window_scroll_at_point(nsaether_bw, cx, cy_v, 0, -step);
+                browser_window_key_press(nsaether_bw, NS_KEY_UP);
                 return 1;
             case KEY_DOWN:
-                browser_window_scroll_at_point(nsaether_bw, cx, cy_v, 0,  step);
+                browser_window_key_press(nsaether_bw, NS_KEY_DOWN);
                 return 1;
             case KEY_PGUP:
-                browser_window_scroll_at_point(nsaether_bw, cx, cy_v, 0, -g_viewport_h);
+                browser_window_key_press(nsaether_bw, NS_KEY_PAGE_UP);
                 return 1;
             case KEY_PGDN:
-                browser_window_scroll_at_point(nsaether_bw, cx, cy_v, 0,  g_viewport_h);
+                browser_window_key_press(nsaether_bw, NS_KEY_PAGE_DOWN);
+                return 1;
+            case KEY_HOME:
+                browser_window_key_press(nsaether_bw, NS_KEY_TEXT_START);
+                return 1;
+            case KEY_END:
+                browser_window_key_press(nsaether_bw, NS_KEY_TEXT_END);
                 return 1;
             default: break;
             }

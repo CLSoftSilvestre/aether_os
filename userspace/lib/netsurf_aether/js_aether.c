@@ -42,6 +42,15 @@
 #include "dom/core/string.h"
 #include "dom/core/text.h"
 
+/*
+ * html/private.h gives us html_content which contains the dom_document*.
+ * js_newthread receives doc_priv = hlcache_handle_get_content(c), i.e.
+ * struct content* pointing at an html_content.  We cast and read ->document.
+ */
+#include "html/private.h"
+
+extern char nsaether_url[512];
+
 /* ── QuickJS class IDs (global, assigned once in js_initialise) ──────────── */
 
 static JSClassID g_dom_node_class_id;
@@ -971,8 +980,6 @@ static void setup_window(JSContext *jsc, struct jsthread *thread,
     /* window.location */
     {
         JSValue loc = JS_NewObject(jsc);
-        /* href is read from nsaether_url at call time — simplified static snapshot */
-        extern char nsaether_url[512];
         JS_SetPropertyStr(jsc, loc, "href", JS_NewString(jsc, nsaether_url));
         JS_SetPropertyStr(jsc, global, "location", loc);
     }
@@ -1060,8 +1067,20 @@ nserror js_newthread(jsheap *heap, void *win_priv, void *doc_priv,
 
     t->heap           = heap;
     t->closed         = false;
-    t->doc            = (struct dom_document *)doc_priv;
     t->next_timer_id  = 1;
+
+    /*
+     * doc_priv is html_content* (struct content* that is actually html_content*).
+     * win_priv is browser_window*.
+     * Extract the real dom_document* from the html_content struct.
+     */
+    {
+        html_content *html = (html_content *)doc_priv;
+        t->doc = (html && html->document) ? html->document : NULL;
+    }
+
+    NSLOG(netsurf, INFO, "js_newthread: win=%p doc_priv=%p dom_doc=%p",
+          win_priv, doc_priv, (void *)t->doc);
 
     /* Set up element class prototype for this context */
     {
