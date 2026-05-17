@@ -66,6 +66,7 @@ extern struct gui_layout_table aether_layout_table;
 extern void nslog_aether_init(void);
 extern void fetch_http_aether_register(void);
 extern void nsaether_schedule_drain(void);
+extern void js_timers_tick(void);
 
 /* ── Shell layout constants (must match topbar / dock) ───────────────────── */
 
@@ -336,6 +337,7 @@ static void browser_per_frame(void *ud)
     (void)ud;
 
     nsaether_schedule_drain();
+    js_timers_tick();
 
     if (nsaether_dirty && nsaether_bw &&
             browser_window_redraw_ready(nsaether_bw)) {

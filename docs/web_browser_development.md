@@ -299,7 +299,7 @@ Key design decisions:
 | 7.8.4 | Scroll: `browser_window_scroll_at_point` for arrow/pgup/pgdn keys | ✅ |
 | 7.8.5 | Status bar: `nsaether_status` + loading indicator | ✅ |
 | 7.8.6 | Register app: `aether_browser.app` manifest + CMake target | ✅ |
-| 7.8.7 | QEMU integration test: navigate to a local HTML file served via AetherOS `http` module | ⬜ |
+| 7.8.7 | QEMU integration test: navigate to a local HTML file served via AetherOS `http` module | ✅ |
 | 7.8.8 | Pi 5 hardware test: navigate to a plain HTTP page on local network | ⬜ |
 
 **Build notes:**

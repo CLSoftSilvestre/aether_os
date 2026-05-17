@@ -13,9 +13,8 @@
  *         NSOPTION_STRING(name, default)  — default is char* or NULL
  */
 
-/* JavaScript: enabled (Phase 7.5 QuickJS bridge compiles; DOM bindings
-   arrive in Iteration 2 — set false until then for safe MVP) */
-NSOPTION_BOOL(enable_javascript, false)
+/* JavaScript: enabled — Iteration 2 DOM bindings active */
+NSOPTION_BOOL(enable_javascript, true)
 
 /* Memory limits — generous on Pi 5, sane in QEMU -m 1G */
 NSOPTION_INTEGER(memory_cache_size, 16 * 1024 * 1024)   /* 16 MB */
