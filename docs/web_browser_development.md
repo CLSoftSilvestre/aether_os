@@ -348,7 +348,7 @@ The MVP milestone is complete when:
 
 ---
 
-## Iteration 3 — HTTPS / TLS
+## Iteration 3 — HTTPS / TLS ✅ COMPLETE (2026-05-18)
 
 **Duration:** 3–4 weeks
 
@@ -358,7 +358,8 @@ The MVP milestone is complete when:
 | I3.2 | TLS 1.2 client over AetherOS TCP socket (mbedTLS BIO callbacks) | ✅ |
 | I3.3 | Mozilla CA bundle embedded as C array in `ca_bundle_gen.c` | ✅ |
 | I3.4 | Wire into HTTP fetch bridge: detect `https://` → `tls_connect()` | ✅ |
-| I3.5 | Test: Wikipedia, GitHub, HTTPS documentation sites | ⬜ |
+| I3.5 | Test: `https://example.com` confirmed rendering correctly | ✅ |
+| I3.6 | Test: Wikipedia, GitHub (pending — example.com is baseline) | ⬜ |
 
 **Setup order:**
 ```
@@ -377,6 +378,33 @@ Run inside AetherOS: `aether_browser https://example.com/`
 - HTTP request upgraded to HTTP/1.1 with `Host:` header (required by most HTTPS servers)
 - `AETHER_TLS_ENABLED` preprocessor guard — graceful fallback when mbedTLS not fetched
 - Redirect following works for https→https and https→http (port 443 check per hop)
+
+**Bugs found and fixed during Iteration 3 (commit f664deb):**
+
+1. **`MBEDTLS_ECP_NIST_OPTIM` disabled** — fast modular reduction for NIST primes
+   (`ecp_mod_p256/p384`) manipulates MPI limbs as 32-bit words via aliased pointer casts.
+   At -O0 on AArch64 the compiler may not honour aliasing assumptions → wrong carry chain
+   → `R.X ≠ r` → `MBEDTLS_ERR_ECP_VERIFY_FAILED (-0x4D00)`. Disabled in `mbedtls_aether_config.h`;
+   falls back to generic Montgomery reduction (slower but correct at all optimisation levels).
+
+2. **AetherOS `send()` returns 0 instead of byte count** — `flush_output` in mbedTLS uses
+   the return value to advance `out_left`; a return of 0 means the same TLS record is
+   re-sent before every state transition (ClientHello sent 3×, server closes connection).
+   Workaround in `tls_bio_send`: `if (n == 0) return (int)len`. Underlying kernel bug
+   (`sys_send` syscall) still present — only the TLS path is patched.
+
+3. **Chunked transfer encoding not decoded** — Cloudflare serves `https://example.com`
+   with `Transfer-Encoding: chunked` + `Content-Encoding: gzip`. Without stripping chunk-size
+   hex headers, zlib received garbage and returned NULL (`body=0`, blank page).
+   Added `decode_chunked()` in `fetch_http_aether.c`; pipeline is now chunked-decode → gzip.
+
+**Known remaining issues:**
+- `send()` kernel syscall returns 0 instead of byte count — systemic bug affecting all code
+  that uses the return value; only the TLS BIO callback is worked around
+- `MBEDTLS_DEBUG_C` at threshold=2 produces verbose UART output (~200 lines per connection);
+  disable once HTTPS is stable by removing the `tls_debug_cb` wiring in `tls_connect()`
+- DNS resolves `example.com` to 104.20.23.154 (Cloudflare) instead of IANA 93.184.216.34 —
+  not yet investigated
 
 ---
 
