@@ -170,6 +170,7 @@ static int                g_tls_init_done = 0;
 
 struct tls_conn {
     int                      fd;
+    int                      peer_closed;  /* server sent close_notify — skip our echo */
     mbedtls_ssl_context      ssl;
     mbedtls_ssl_config       conf;
     mbedtls_entropy_context  entropy;
@@ -371,6 +372,10 @@ uint8_t *tls_read_all(tls_conn_t *conn, size_t *out_len)
         if (n == MBEDTLS_ERR_SSL_WANT_READ ||
             n == MBEDTLS_ERR_SSL_WANT_WRITE)
             continue;
+        if (n == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY) {
+            conn->peer_closed = 1;  /* server done — skip close_notify echo in tls_close */
+            break;
+        }
         if (n <= 0) break;   /* EOF or error — done */
         used += (size_t)n;
     }
@@ -382,7 +387,9 @@ uint8_t *tls_read_all(tls_conn_t *conn, size_t *out_len)
 void tls_close(tls_conn_t *conn)
 {
     if (!conn) return;
-    mbedtls_ssl_close_notify(&conn->ssl);
+    /* Skip close_notify echo when the server already sent theirs and closed the
+     * TCP connection — send() would return -1 and produce spurious error noise. */
+    if (!conn->peer_closed) mbedtls_ssl_close_notify(&conn->ssl);
     mbedtls_ssl_free(&conn->ssl);
     mbedtls_ssl_config_free(&conn->conf);
     mbedtls_entropy_free(&conn->entropy);

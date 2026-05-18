@@ -548,7 +548,12 @@ static bool fetch_http_start(void *ctx_)
 {
     fetch_http_ctx_t *ctx = ctx_;
     if (!ctx->aborted) {
-        dbg_write("fetch_http: do_http starting\n");
+        {
+            char sbuf[512];
+            snprintf(sbuf, sizeof(sbuf), "fetch_http: do_http starting %s\n",
+                     nsurl_access(ctx->url));
+            dbg_write(sbuf);
+        }
         do_http(ctx);
         char buf[96];
         snprintf(buf, sizeof(buf),
