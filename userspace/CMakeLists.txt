@@ -1300,6 +1300,85 @@ else()
     set(JS_TEST_TARGET "")
 endif()
 
+# ── Iteration 3 — mbedTLS 3.6 (HTTPS/TLS) ───────────────────────────────────
+#
+# Pure-C TLS 1.2 library, ~300 KB, designed for embedded targets.
+# Fetch:  scripts/fetch_mbedtls.sh
+#   → vendor/mbedtls/   (gitignored — unmodified upstream)
+#   → lib/netsurf_aether/ca_bundle_gen.c  (generated + committed)
+#
+# Bridge files (always tracked):
+#   lib/netsurf_aether/mbedtls_aether_config.h  — minimal TLS 1.2 config
+#   lib/netsurf_aether/tls_aether.h / .c        — connect/read/write/close API
+#   lib/netsurf_aether/ca_bundle_gen.c           — Mozilla CA bundle as C array
+#
+# Excluded source files (not usable on AetherOS):
+#   net_sockets.c   — POSIX socket API (we use custom BIO callbacks)
+#   timing.c        — uses setitimer / SIGALRM (not in libaether_posix)
+#   threading.c     — pthreads (single-threaded model)
+#   entropy_poll.c  — reads /dev/urandom; replaced by mbedtls_hardware_poll()
+#                     in tls_aether.c (MBEDTLS_ENTROPY_HARDWARE_ALT)
+# PSA crypto files compile to nothing when MBEDTLS_PSA_CRYPTO_C is undefined
+# (guarded by #if inside each file) — we don't exclude them explicitly.
+
+set(MBEDTLS_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/mbedtls)
+set(MBEDTLS_BRIDGE  ${CMAKE_CURRENT_SOURCE_DIR}/lib/netsurf_aether)
+
+if(EXISTS ${MBEDTLS_SRC_DIR}/include/mbedtls/ssl.h)
+
+    # Collect all library sources then strip the four AetherOS-incompatible files
+    file(GLOB MBEDTLS_SRCS "${MBEDTLS_SRC_DIR}/library/*.c")
+    list(FILTER MBEDTLS_SRCS EXCLUDE REGEX
+        "/(net_sockets|timing|threading|entropy_poll)\\.c$")
+
+    add_library(vendor_mbedtls STATIC
+        ${MBEDTLS_SRCS}
+        ${MBEDTLS_BRIDGE}/tls_aether.c          # TLS API wrapper
+        ${MBEDTLS_BRIDGE}/ca_bundle_gen.c        # Mozilla CA bundle (generated)
+    )
+
+    target_include_directories(vendor_mbedtls PUBLIC
+        ${MBEDTLS_SRC_DIR}/include   # <mbedtls/ssl.h>, <mbedtls/entropy.h>, …
+        ${MBEDTLS_BRIDGE}            # mbedtls_aether_config.h, tls_aether.h
+        ${POSIX_INC_DIR}             # stdlib.h, string.h, stdint.h, …
+        lib/include                  # sys.h (sys_rtc_get, sys_get_ticks)
+    )
+
+    target_compile_definitions(vendor_mbedtls PRIVATE
+        # Tell mbedTLS to use our custom config header instead of the default
+        MBEDTLS_CONFIG_FILE="mbedtls_aether_config.h"
+    )
+
+    target_compile_options(vendor_mbedtls PRIVATE
+        ${USER_COMPILE_FLAGS}
+        # Suppress NEON intrinsic path: aarch64-elf-gcc defines __ARM_NEON
+        # (mandatory on AArch64) but arm_neon.h is not available under -nostdinc.
+        # mbedTLS falls back to pure-C implementations without NEON — correct for us.
+        -U__ARM_NEON
+        -Wno-implicit-function-declaration
+        -Wno-unused-function
+        -Wno-unused-variable
+        -Wno-sign-compare
+        -Wno-type-limits
+        -Wno-missing-field-initializers
+        -Wno-array-bounds
+        -Wno-stringop-overflow
+        -w   # suppress remaining vendor warnings
+    )
+
+    target_link_libraries(vendor_mbedtls PUBLIC libaether_posix)
+
+    set(MBEDTLS_TARGET vendor_mbedtls)
+    message(STATUS "[Iter 3] mbedTLS 3.6 found — building vendor_mbedtls (TLS 1.2 client)")
+
+else()
+    message(STATUS
+        "[Iter 3] mbedTLS not found in vendor/mbedtls/ — "
+        "run scripts/fetch_mbedtls.sh then re-configure.  "
+        "HTTPS will remain disabled (HTTP-only browsing).")
+    set(MBEDTLS_TARGET "")
+endif()
+
 # ── Phase 7.5 — NetSurf core port ────────────────────────────────────────────
 #
 # Two sub-libraries:
@@ -1470,6 +1549,15 @@ if(EXISTS ${NSLOG_VENDOR}/include/nslog/nslog.h AND
         vendor_quickjs
         libaether_posix
     )
+
+    # Iteration 3: link mbedTLS when available
+    if(MBEDTLS_TARGET)
+        target_link_libraries(vendor_netsurf PUBLIC ${MBEDTLS_TARGET})
+        target_compile_definitions(vendor_netsurf PRIVATE AETHER_TLS_ENABLED=1)
+        target_include_directories(vendor_netsurf PUBLIC
+            ${MBEDTLS_SRC_DIR}/include   # <mbedtls/ssl.h> for fetch_http_aether.c
+        )
+    endif()
 
     set(NETSURF_TARGET vendor_netsurf)
     message(STATUS "[Phase 7.5] NetSurf core found — building vendor_netsurf")

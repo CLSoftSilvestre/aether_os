@@ -352,13 +352,31 @@ The MVP milestone is complete when:
 
 **Duration:** 3–4 weeks
 
-| Task | Description |
-|---|---|
-| I3.1 | Port **mbedTLS 3.x** (~300KB, pure C, designed for embedded) |
-| I3.2 | Implement TLS record layer over AetherOS TCP socket |
-| I3.3 | Bundle root CA certificates (Mozilla CA bundle, baked into initrd) |
-| I3.4 | Wire into HTTP fetch bridge: detect `https://` scheme, wrap socket in TLS |
-| I3.5 | Test: Wikipedia, GitHub, HTTPS documentation sites |
+| Task | Description | Status |
+|---|---|---|
+| I3.1 | Port **mbedTLS 3.6.2** (~300KB, pure C, designed for embedded) | ✅ |
+| I3.2 | TLS 1.2 client over AetherOS TCP socket (mbedTLS BIO callbacks) | ✅ |
+| I3.3 | Mozilla CA bundle embedded as C array in `ca_bundle_gen.c` | ✅ |
+| I3.4 | Wire into HTTP fetch bridge: detect `https://` → `tls_connect()` | ✅ |
+| I3.5 | Test: Wikipedia, GitHub, HTTPS documentation sites | ⬜ |
+
+**Setup order:**
+```
+scripts/fetch_mbedtls.sh    # downloads mbedTLS + generates ca_bundle_gen.c
+ninja -C build
+scripts/make_disk.sh
+```
+Run inside AetherOS: `aether_browser https://example.com/`
+
+**Implementation notes:**
+- `scripts/fetch_mbedtls.sh` — downloads mbedTLS 3.6.2 + Mozilla `cacert.pem`, generates
+  `lib/netsurf_aether/ca_bundle_gen.c` (committed; the tarball stays gitignored)
+- `mbedtls_aether_config.h` — TLS 1.2 only; no PSA, no DTLS, no server side
+- `tls_aether.c` — mbedTLS wrapper: custom entropy from `sys_rtc_get()` + `sys_get_ticks()`
+  via splitmix64; cert verification is `OPTIONAL` (QEMU RTC is epoch, dates can't be checked)
+- HTTP request upgraded to HTTP/1.1 with `Host:` header (required by most HTTPS servers)
+- `AETHER_TLS_ENABLED` preprocessor guard — graceful fallback when mbedTLS not fetched
+- Redirect following works for https→https and https→http (port 443 check per hop)
 
 ---
 

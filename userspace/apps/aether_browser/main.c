@@ -69,6 +69,10 @@ extern void nsaether_schedule_drain(void);
 extern void js_timers_tick(void);
 extern void js_handle_mouse_click(int x, int y);
 
+#ifdef AETHER_TLS_ENABLED
+extern void tls_global_init(void);
+#endif
+
 /* ── Shell layout constants (must match topbar / dock) ───────────────────── */
 
 #define TOPBAR_H      36
@@ -490,6 +494,11 @@ int main(int argc, char **argv)
         return 1;
     }
     fetch_http_aether_register();
+
+    /* Iteration 3: initialise TLS (parse CA bundle) when mbedTLS is present */
+#ifdef AETHER_TLS_ENABLED
+    tls_global_init();
+#endif
 
     /* Enable JavaScript at runtime — desktop/options.h compiles in false;
        our lib/netsurf_aether/options.h is never seen by nsoption.c */

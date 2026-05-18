@@ -1,12 +1,12 @@
 /*
- * Phase 7.6.2–7.6.6 — HTTP/1.1 fetcher for AetherOS
+ * fetch_http_aether.c — HTTP/1.1 + HTTPS fetcher for AetherOS
  *
  * Implements NetSurf's fetcher_operation_table for http:// and https:// over
  * AetherOS Phase 5.1 TCP/IP stack via libaether_posix POSIX socket API.
  *
  * Architecture (cooperative single-thread):
  *   setup()  — allocate context, store parent_fetch pointer, add to active list
- *   start()  — synchronous HTTP: DNS → connect → send → recv → parse → decompress
+ *   start()  — synchronous HTTP: DNS → connect → [TLS] → send → recv → parse → decompress
  *   poll()   — deliver buffered response: FETCH_HEADER, FETCH_DATA, FETCH_FINISHED
  *   abort()  — mark aborted; poll() skips delivery
  *   free()   — remove from active list, release buffers
@@ -16,11 +16,7 @@
  *   7.6.4  Gzip decompression via vendor_zlib (windowBits=47 auto-detect)
  *   7.6.5  Redirect following for 301/302/303/307/308 (max 5 hops, inline)
  *   7.6.6  MIME type extracted from Content-Type response header
- *
- * Limitations (Phase 7.8+):
- *   - Entire response buffered before delivery (no streaming)
- *   - No TLS — https:// uses plain TCP (acceptable for QEMU local testing)
- *   - No chunked Transfer-Encoding (servers use Connection: close instead)
+ *   I3.4   TLS 1.2 via mbedTLS for https:// (when AETHER_TLS_ENABLED)
  *
  * Called after netsurf_init() via fetch_http_aether_register() because
  * lwc_intern_string() requires libwapcaplet to be initialised first.
@@ -42,6 +38,11 @@
 
 /* zlib gzip decompression */
 #include <zlib.h>
+
+/* TLS (Iteration 3 — present when mbedTLS is available) */
+#ifdef AETHER_TLS_ENABLED
+#  include "tls_aether.h"
+#endif
 
 /* libwapcaplet */
 #include <libwapcaplet/libwapcaplet.h>
@@ -183,14 +184,14 @@ static void do_http(fetch_http_ctx_t *ctx)
 
     for (int hop = 0; hop < 5; hop++) {
 
-        /* ── HTTPS guard — TLS not implemented ──────────────── */
+        /* ── HTTPS without TLS support ──────────────────────── */
+#ifndef AETHER_TLS_ENABLED
         if (cur_port == 443) {
             static const char body[] =
                 "<html><body style='font-family:sans-serif;padding:20px'>"
                 "<h2>HTTPS Not Supported</h2>"
-                "<p>This page requires a secure (HTTPS) connection, which "
-                "is not yet implemented in AetherBrowser.<br><br>"
-                "Try an <b>http://</b> address instead.</p>"
+                "<p>This build of AetherBrowser was compiled without mbedTLS.<br>"
+                "Run <code>scripts/fetch_mbedtls.sh</code> and rebuild.</p>"
                 "</body></html>";
             size_t blen = sizeof(body) - 1;
             ctx->body = (uint8_t *)malloc(blen + 1);
@@ -199,6 +200,7 @@ static void do_http(fetch_http_ctx_t *ctx)
             ctx->http_code = 200;
             return;
         }
+#endif
 
         /* ── DNS ────────────────────────────────────────────── */
         struct hostent *he = gethostbyname(cur_host);
@@ -247,21 +249,67 @@ static void do_http(fetch_http_ctx_t *ctx)
             return;
         }
 
-        /* ── HTTP/1.0 GET request (no Host header — avoids Python 3.12 check) ── */
+        /* ── TLS upgrade for https:// ────────────────────────── */
+#ifdef AETHER_TLS_ENABLED
+        tls_conn_t *tls = NULL;
+        if (cur_port == 443) {
+            tls = tls_connect(fd, cur_host);
+            if (!tls) {
+                close(fd);
+                char errbody[512];
+                int elen = snprintf(errbody, sizeof(errbody),
+                    "<html><body style='font-family:sans-serif;padding:20px'>"
+                    "<h2>TLS Handshake Failed</h2>"
+                    "<p>Could not establish a secure connection to: <b>%s</b></p>"
+                    "<p>Check UART output for mbedTLS error details.</p>"
+                    "</body></html>", cur_host);
+                if (elen > 0) {
+                    ctx->body = (uint8_t *)malloc((size_t)elen + 1);
+                    if (ctx->body) { memcpy(ctx->body, errbody, (size_t)elen + 1); ctx->body_len = (size_t)elen; }
+                }
+                strncpy(ctx->content_type, "text/html", sizeof(ctx->content_type) - 1);
+                ctx->http_code = 200;
+                return;
+            }
+        }
+#endif /* AETHER_TLS_ENABLED */
+
+        /* ── HTTP/1.1 GET request ────────────────────────────── */
         char req[4096];
         int rlen = snprintf(req, sizeof(req),
-            "GET %s HTTP/1.0\r\n"
+            "GET %s HTTP/1.1\r\n"
+            "Host: %s\r\n"
             "Connection: close\r\n"
             "User-Agent: AetherBrowser/0.1 (AetherOS; AArch64)\r\n"
             "Accept: text/html,application/xhtml+xml,*/*;q=0.8\r\n"
+            "Accept-Encoding: gzip\r\n"
             "\r\n",
-            cur_path);
+            cur_path, cur_host);
         if (rlen < 0 || rlen >= (int)sizeof(req)) rlen = (int)sizeof(req) - 1;
+
+#ifdef AETHER_TLS_ENABLED
+        if (tls) {
+            tls_write(tls, req, (size_t)rlen);
+        } else {
+            send(fd, req, (size_t)rlen, 0);
+        }
+#else
         send(fd, req, (size_t)rlen, 0);
+#endif
 
         /* ── Receive entire response ─────────────────────────── */
         size_t total = 0;
-        uint8_t *raw = recv_all(fd, &total);
+        uint8_t *raw;
+#ifdef AETHER_TLS_ENABLED
+        if (tls) {
+            raw = tls_read_all(tls, &total);
+            tls_close(tls);
+        } else {
+            raw = recv_all(fd, &total);
+        }
+#else
+        raw = recv_all(fd, &total);
+#endif
         close(fd);
 
         if (!raw || total < 12) {
