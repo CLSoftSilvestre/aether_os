@@ -577,9 +577,9 @@ static JSValue js_el_get_nextSibling(JSContext *jsc, JSValue this_val)
 /* Called by libdom when a DOM event fires on an element we registered on. */
 static void aether_js_event_handler(struct dom_event *evt, void *pw)
 {
+    js_uart("aether_js_event_handler: called\n");
     aether_listener_ctx_t *ctx = (aether_listener_ctx_t *)pw;
     if (!ctx || !ctx->thread || ctx->thread->closed) return;
-    js_uart("aether_js_event_handler: called\n");
 
     JSContext *jsc = ctx->jsc;
 
@@ -685,6 +685,12 @@ static JSValue js_el_addEventListener(JSContext *jsc, JSValue this_val,
 
     const char *type = JS_ToCString(jsc, argv[0]);
     if (!type) return JS_UNDEFINED;
+    {
+        char dbg[48];
+        snprintf(dbg, sizeof(dbg), "addEventListener: type=%s node=%p\n",
+                 type, (void *)w->node);
+        js_uart(dbg);
+    }
     register_dom_listener(jsc, w->thread, w->node, type, argv[1]);
     JS_FreeCString(jsc, type);
     return JS_UNDEFINED;
