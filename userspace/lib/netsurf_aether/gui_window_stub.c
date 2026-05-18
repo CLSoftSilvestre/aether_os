@@ -27,6 +27,10 @@
 #include "utils/nsurl.h"
 #include "netsurf_aether.h"
 
+/* Scroll position in content pixels.  main.c resets this on navigation
+ * and passes -g_scroll_y to browser_window_redraw() as the y offset. */
+int g_scroll_y = 0;
+
 /* ── globals accessed by the browser app ────────────────────────────────── */
 
 volatile bool          nsaether_dirty   = false;
@@ -113,14 +117,18 @@ static bool aether_window_get_scroll(struct gui_window *gw,
 {
     (void)gw;
     if (sx) *sx = 0;
-    if (sy) *sy = 0;
+    if (sy) *sy = g_scroll_y;
     return true;
 }
 
 static nserror aether_window_set_scroll(struct gui_window *gw,
                                          const struct rect *rect)
 {
-    (void)gw; (void)rect;
+    (void)gw;
+    if (rect) {
+        g_scroll_y = rect->y0 < 0 ? 0 : rect->y0;
+        nsaether_dirty = true;
+    }
     return NSERROR_OK;
 }
 

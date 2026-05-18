@@ -51,6 +51,17 @@
 
 extern char nsaether_url[512];
 
+/* Direct UART for diagnostics (bypasses nslog filtering) */
+static void js_uart(const char *s)
+{
+    long r; int len = 0;
+    while (s[len]) len++;
+    __asm__ volatile(
+        "mov x8,#34\n mov x0,#1\n mov x1,%1\n mov x2,%2\n"
+        "svc #0\n mov %0,x0\n"
+        : "=r"(r) : "r"(s), "r"((long)len) : "x0","x1","x2","x8","memory");
+}
+
 /* ── QuickJS class IDs (global, assigned once in js_initialise) ──────────── */
 
 static JSClassID g_dom_node_class_id;
@@ -1021,6 +1032,7 @@ void js_finalise(void) { }
 
 nserror js_newheap(int timeout, jsheap **heap_out)
 {
+    js_uart("js_newheap: called\n");
     jsheap *h = calloc(1, sizeof(*h));
     if (!h) return NSERROR_NOMEM;
 
@@ -1079,6 +1091,7 @@ nserror js_newthread(jsheap *heap, void *win_priv, void *doc_priv,
         t->doc = (html && html->document) ? html->document : NULL;
     }
 
+    js_uart("js_newthread: called\n");
     NSLOG(netsurf, INFO, "js_newthread: win=%p doc_priv=%p dom_doc=%p",
           win_priv, doc_priv, (void *)t->doc);
 
@@ -1153,6 +1166,7 @@ void js_destroythread(jsthread *thread)
 
 bool js_exec(jsthread *thread, const uint8_t *txt, size_t txtlen, const char *name)
 {
+    js_uart("js_exec: called\n");
     if (!thread || thread->closed || !txt || txtlen == 0) return false;
 
     JSValue val = JS_Eval(thread->jsc,

@@ -118,6 +118,10 @@ static int  g_viewport_h;   /* pixel rows available for NetSurf */
 static int  g_addr_w;       /* address bar pixel width */
 static long g_win_id = -1;
 
+/* Viewport scroll position — defined in gui_window_stub.c, also updated
+ * here on key press and reset to 0 on navigation. */
+extern int g_scroll_y;
+
 /* ── Widget tree ─────────────────────────────────────────────────────────── */
 
 static widget_t g_root;
@@ -166,7 +170,7 @@ static void render_viewport(void)
     };
 
     struct rect cr = { 0, 0, g_win_w, g_viewport_h };
-    browser_window_redraw(nsaether_bw, 0, 0, &cr, &rctx);
+    browser_window_redraw(nsaether_bw, 0, -g_scroll_y, &cr, &rctx);
 }
 
 /* ── Navigation helpers ──────────────────────────────────────────────────── */
@@ -180,6 +184,7 @@ static void navigate_to(const char *url_str)
         uart("aether_browser: nsurl_create failed\n");
         return;
     }
+    g_scroll_y = 0;
     browser_window_navigate(nsaether_bw, nav_url,
                             NULL, BW_NAVIGATE_HISTORY,
                             NULL, NULL, NULL);
@@ -264,22 +269,32 @@ static int viewport_event(widget_t *w, const widget_event_t *ev)
         {
             switch (ev->keycode) {
             case KEY_UP:
-                browser_window_key_press(nsaether_bw, NS_KEY_UP);
+                if (g_scroll_y > 0) {
+                    g_scroll_y -= 40;
+                    if (g_scroll_y < 0) g_scroll_y = 0;
+                    nsaether_dirty = true;
+                }
                 return 1;
             case KEY_DOWN:
-                browser_window_key_press(nsaether_bw, NS_KEY_DOWN);
+                g_scroll_y += 40;
+                nsaether_dirty = true;
                 return 1;
             case KEY_PGUP:
-                browser_window_key_press(nsaether_bw, NS_KEY_PAGE_UP);
+                g_scroll_y -= g_viewport_h;
+                if (g_scroll_y < 0) g_scroll_y = 0;
+                nsaether_dirty = true;
                 return 1;
             case KEY_PGDN:
-                browser_window_key_press(nsaether_bw, NS_KEY_PAGE_DOWN);
+                g_scroll_y += g_viewport_h;
+                nsaether_dirty = true;
                 return 1;
             case KEY_HOME:
-                browser_window_key_press(nsaether_bw, NS_KEY_TEXT_START);
+                g_scroll_y = 0;
+                nsaether_dirty = true;
                 return 1;
             case KEY_END:
-                browser_window_key_press(nsaether_bw, NS_KEY_TEXT_END);
+                g_scroll_y += 9999;
+                nsaether_dirty = true;
                 return 1;
             default: break;
             }
