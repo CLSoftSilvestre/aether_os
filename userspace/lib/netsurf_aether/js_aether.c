@@ -58,6 +58,7 @@
 #include "html/private.h"
 #include "html/box.h"
 #include "html/box_construct.h"
+#include "html/box_inspect.h"
 
 extern char nsaether_url[512];
 extern volatile bool nsaether_dirty;
@@ -574,10 +575,11 @@ static JSValue js_el_get_nextSibling(JSContext *jsc, JSValue this_val)
 
 /* ── DOM event → QuickJS bridge ──────────────────────────────────────────── */
 
-/* Called by libdom when a DOM event fires on an element we registered on. */
+/* Called by libdom when a DOM event fires on an element we registered on.
+ * NOTE: libdom dispatch is bypassed for clicks; this path is kept for
+ * potential future use with other event types. */
 static void aether_js_event_handler(struct dom_event *evt, void *pw)
 {
-    js_uart("aether_js_event_handler: called\n");
     aether_listener_ctx_t *ctx = (aether_listener_ctx_t *)pw;
     if (!ctx || !ctx->thread || ctx->thread->closed) return;
 
@@ -615,8 +617,78 @@ static void aether_js_event_handler(struct dom_event *evt, void *pw)
     nsaether_dirty = true;
 }
 
-/* Register fn as a libdom event listener on target_node for event type.
- * Adds a js_listener_t to the thread list for lifecycle tracking. */
+/* Direct click dispatch: called from interaction.c after box hit-test.
+ * Bypasses libdom event dispatch; fires matching JS listeners directly
+ * and simulates DOM bubbling by walking up through ancestor nodes. */
+void js_fire_click_event(struct dom_node *clicked_node)
+{
+    if (!clicked_node) return;
+
+    for (struct jsthread *t = g_thread_list; t; t = t->next) {
+        if (t->closed) continue;
+
+        struct dom_node *cur = clicked_node;
+        dom_node_ref(cur);
+        while (cur) {
+            for (js_listener_t *e = t->listeners; e; e = e->next) {
+                if (strcmp(e->type, "click") != 0 || e->node != cur) continue;
+                aether_listener_ctx_t *ctx = e->ctx;
+                if (!ctx || t->closed) continue;
+
+                JSContext *jsc = ctx->jsc;
+                JSValue ev = JS_NewObject(jsc);
+                JS_SetPropertyStr(jsc, ev, "type", JS_NewString(jsc, "click"));
+                JS_SetPropertyStr(jsc, ev, "target",
+                    wrap_node(jsc, t, clicked_node));
+
+                JSValue args[1] = { ev };
+                JSValue r = JS_Call(jsc, ctx->fn, JS_UNDEFINED, 1, args);
+                if (JS_IsException(r)) {
+                    JSValue exc = JS_GetException(jsc);
+                    const char *msg = JS_ToCString(jsc, exc);
+                    if (msg) { js_uart(msg); JS_FreeCString(jsc, msg); }
+                    JS_FreeValue(jsc, exc);
+                }
+                JS_FreeValue(jsc, r);
+                JS_FreeValue(jsc, ev);
+                nsaether_dirty = true;
+            }
+
+            struct dom_node *parent = NULL;
+            dom_node_get_parent_node(cur, &parent);
+            dom_node_unref(cur);
+            cur = parent;
+        }
+    }
+}
+
+/* Called from main.c on WEV_MOUSE_UP with document-space coordinates.
+ * Replicates NetSurf's box hit-test to find the clicked DOM node, then
+ * fires matching JS event listeners directly — keeping vendor files unmodified. */
+void js_handle_mouse_click(int x, int y)
+{
+    for (struct jsthread *t = g_thread_list; t; t = t->next) {
+        if (t->closed || !t->html || !t->html->layout) continue;
+        html_content *html = t->html;
+
+        struct box *box = html->layout;
+        int box_x = 0, box_y = 0;
+        struct dom_node *clicked = html->layout->node; /* fallback: <html> node */
+
+        struct box *next;
+        while ((next = box_at_point(&html->unit_len_ctx, box,
+                                    x, y, &box_x, &box_y))) {
+            if (next->node) clicked = next->node;
+            box = next;
+        }
+        js_fire_click_event(clicked);
+    }
+}
+
+/* Register a JS click listener on target_node.
+ * We bypass libdom's event dispatch (it silently fails to reach our
+ * callbacks) and instead use js_fire_click_event() called directly from
+ * interaction.c after box hit-testing sets mas.node. */
 static void register_dom_listener(JSContext *jsc, struct jsthread *thread,
                                    struct dom_node *target_node,
                                    const char *type, JSValue fn)
@@ -627,51 +699,20 @@ static void register_dom_listener(JSContext *jsc, struct jsthread *thread,
     ctx->jsc    = jsc;
     ctx->fn     = JS_DupValue(jsc, fn);
 
-    dom_string *type_ds = NULL;
-    if (dom_string_create((const uint8_t *)type, strlen(type), &type_ds) != DOM_NO_ERR) {
-        JS_FreeValue(jsc, ctx->fn);
-        free(ctx);
-        return;
-    }
-
-    dom_event_listener *dl = NULL;
-    dom_exception exc = dom_event_listener_create(aether_js_event_handler, ctx, &dl);
-    if (exc != DOM_NO_ERR || !dl) {
-        dom_string_unref(type_ds);
-        JS_FreeValue(jsc, ctx->fn);
-        free(ctx);
-        return;
-    }
-
-    dom_exception dl_exc = dom_event_target_add_event_listener(
-        (dom_event_target *)target_node, type_ds, dl, false);
-    dom_string_unref(type_ds);
-    if (dl_exc != DOM_NO_ERR) {
-        char dbg[48];
-        snprintf(dbg, sizeof(dbg), "add_listener FAILED exc=%d\n", (int)dl_exc);
-        js_uart(dbg);
-        dom_event_listener_unref(dl);
-        JS_FreeValue(jsc, ctx->fn);
-        free(ctx);
-        return;
-    }
-
-    /* Track for cleanup in js_destroythread */
     js_listener_t *entry = calloc(1, sizeof(*entry));
-    if (entry) {
-        entry->node       = target_node;
-        strncpy(entry->type, type, sizeof(entry->type) - 1);
-        entry->fn         = JS_DupValue(jsc, fn);
-        entry->thread     = thread;
-        entry->dom_listen = dl;      /* unref'd in js_destroythread */
-        entry->ctx        = ctx;     /* freed in js_destroythread */
-        entry->next       = thread->listeners;
-        thread->listeners = entry;
-    } else {
-        dom_event_listener_unref(dl);
+    if (!entry) {
         JS_FreeValue(jsc, ctx->fn);
         free(ctx);
+        return;
     }
+    entry->node       = target_node;
+    strncpy(entry->type, type, sizeof(entry->type) - 1);
+    entry->fn         = JS_DupValue(jsc, fn);
+    entry->thread     = thread;
+    entry->dom_listen = NULL;
+    entry->ctx        = ctx;
+    entry->next       = thread->listeners;
+    thread->listeners = entry;
 }
 
 /* ── Event listener methods on elements ──────────────────────────────────── */
@@ -685,12 +726,6 @@ static JSValue js_el_addEventListener(JSContext *jsc, JSValue this_val,
 
     const char *type = JS_ToCString(jsc, argv[0]);
     if (!type) return JS_UNDEFINED;
-    {
-        char dbg[48];
-        snprintf(dbg, sizeof(dbg), "addEventListener: type=%s node=%p\n",
-                 type, (void *)w->node);
-        js_uart(dbg);
-    }
     register_dom_listener(jsc, w->thread, w->node, type, argv[1]);
     JS_FreeCString(jsc, type);
     return JS_UNDEFINED;

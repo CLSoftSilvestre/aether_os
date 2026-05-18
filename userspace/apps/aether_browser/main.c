@@ -67,6 +67,7 @@ extern void nslog_aether_init(void);
 extern void fetch_http_aether_register(void);
 extern void nsaether_schedule_drain(void);
 extern void js_timers_tick(void);
+extern void js_handle_mouse_click(int x, int y);
 
 /* ── Shell layout constants (must match topbar / dock) ───────────────────── */
 
@@ -235,21 +236,22 @@ static int viewport_event(widget_t *w, const widget_event_t *ev)
     int vx = ev->mx - g_win_x;
     int vy = ev->my - (g_win_y + TITLE_H + VP_OFF);
 
+    /* Convert viewport-relative vy to document-space by adding scroll offset.
+     * box_at_point uses document coordinates; bw->scroll_y is NULL so NetSurf
+     * does not apply the offset itself. */
+    int dy = vy + g_scroll_y;
+
     switch (ev->type) {
     case WEV_MOUSE_DOWN:
         widget_set_focused(&g_viewport);
-        browser_window_mouse_click(nsaether_bw, BROWSER_MOUSE_PRESS_1, vx, vy);
+        browser_window_mouse_click(nsaether_bw, BROWSER_MOUSE_PRESS_1, vx, dy);
         return 1;
     case WEV_MOUSE_UP:
-        {
-            char dbg[48];
-            snprintf(dbg, sizeof(dbg), "click: vx=%d vy=%d\n", vx, vy);
-            uart(dbg);
-        }
-        browser_window_mouse_click(nsaether_bw, BROWSER_MOUSE_CLICK_1, vx, vy);
+        browser_window_mouse_click(nsaether_bw, BROWSER_MOUSE_CLICK_1, vx, dy);
+        js_handle_mouse_click(vx, dy);
         return 1;
     case WEV_MOUSE_MOVE:
-        browser_window_mouse_click(nsaether_bw, BROWSER_MOUSE_HOVER, vx, vy);
+        browser_window_mouse_click(nsaether_bw, BROWSER_MOUSE_HOVER, vx, dy);
         return 0;    /* non-consuming: let hover redraw proceed normally */
     case WEV_KEY_DOWN:
         if (ev->modifiers & MOD_CTRL) {
