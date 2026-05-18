@@ -1351,9 +1351,15 @@ if(EXISTS ${MBEDTLS_SRC_DIR}/include/mbedtls/ssl.h)
 
     target_compile_options(vendor_mbedtls PRIVATE
         ${USER_COMPILE_FLAGS}
-        # Suppress NEON intrinsic path: aarch64-elf-gcc defines __ARM_NEON
-        # (mandatory on AArch64) but arm_neon.h is not available under -nostdinc.
-        # mbedTLS falls back to pure-C implementations without NEON — correct for us.
+        # mbedTLS is pure integer math (bignum/SHA/ECP).  Restrict compilation to
+        # general-purpose registers only so GCC cannot auto-vectorize SHA-256 loops
+        # or inline memcpy/memset with NEON instructions.  Without this, a timer IRQ
+        # landing inside a NEON-vectorized SHA-256 iteration corrupts the hash state
+        # (AetherOS exceptions.S/context_switch.S do not save v0–v31) and causes
+        # ECDSA ServerKeyExchange verification to fail with ECP_VERIFY_FAILED.
+        -mgeneral-regs-only
+        # Also undefine __ARM_NEON to suppress any arm_neon.h include paths that
+        # common.h might try even though -mgeneral-regs-only already blocks them.
         -U__ARM_NEON
         -Wno-implicit-function-declaration
         -Wno-unused-function
