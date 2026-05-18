@@ -623,9 +623,18 @@ static void register_dom_listener(JSContext *jsc, struct jsthread *thread,
         return;
     }
 
-    dom_event_target_add_event_listener(
+    dom_exception dl_exc = dom_event_target_add_event_listener(
         (dom_event_target *)target_node, type_ds, dl, false);
     dom_string_unref(type_ds);
+    if (dl_exc != DOM_NO_ERR) {
+        char dbg[48];
+        snprintf(dbg, sizeof(dbg), "add_listener FAILED exc=%d\n", (int)dl_exc);
+        js_uart(dbg);
+        dom_event_listener_unref(dl);
+        JS_FreeValue(jsc, ctx->fn);
+        free(ctx);
+        return;
+    }
 
     /* Track for cleanup in js_destroythread */
     js_listener_t *entry = calloc(1, sizeof(*entry));
@@ -966,16 +975,34 @@ static JSValue js_window_setTimeout(JSContext *jsc, JSValue this_val,
 static JSValue js_window_setInterval(JSContext *jsc, JSValue this_val,
                                       int argc, JSValue *argv)
 {
-    if (argc < 1 || !JS_IsFunction(jsc, argv[0])) return JS_NewInt32(jsc, 0);
-    int ms = (argc >= 2) ? (int)JS_VALUE_GET_INT(argv[1]) : 100;
+    if (argc < 1 || !JS_IsFunction(jsc, argv[0])) {
+        js_uart("setInterval: no fn\n");
+        return JS_NewInt32(jsc, 0);
+    }
+    int ms = 100;
+    if (argc >= 2) {
+        /* Use JS_ToInt32 instead of JS_VALUE_GET_INT to handle float values */
+        JS_ToInt32(jsc, &ms, argv[1]);
+    }
     if (ms < 1) ms = 1;
+
+    {
+        char dbg[48];
+        snprintf(dbg, sizeof(dbg), "setInterval: ms=%d list=%p\n",
+                 ms, (void *)g_thread_list);
+        js_uart(dbg);
+    }
 
     struct jsthread *t = g_thread_list;
     while (t && t->jsc != jsc) t = t->next;
-    if (!t || t->closed) return JS_NewInt32(jsc, 0);
+    if (!t || t->closed) {
+        js_uart("setInterval: thread not found\n");
+        return JS_NewInt32(jsc, 0);
+    }
 
     int id = t->next_timer_id++;
     timer_add(t, id, true, ms, jsc, argv[0]);
+    js_uart("setInterval: timer added\n");
     return JS_NewInt32(jsc, id);
 }
 
@@ -1050,6 +1077,25 @@ void js_timers_tick(void)
 {
     struct timeval now;
     gettimeofday(&now, NULL);
+
+    /* First 3 calls: report thread/timer state so we can see what's happening */
+    static int tick_dbg = 0;
+    if (tick_dbg < 3) {
+        tick_dbg++;
+        if (!g_thread_list) {
+            js_uart("tick: no thread\n");
+        } else if (g_thread_list->closed) {
+            js_uart("tick: thread CLOSED\n");
+        } else if (!g_thread_list->timers) {
+            js_uart("tick: no timers\n");
+        } else {
+            char dbg[48];
+            snprintf(dbg, sizeof(dbg), "tick: has timer fire=%ld now=%ld\n",
+                     (long)g_thread_list->timers->fire_at.tv_sec,
+                     (long)now.tv_sec);
+            js_uart(dbg);
+        }
+    }
 
     struct jsthread *t = g_thread_list;
     while (t) {

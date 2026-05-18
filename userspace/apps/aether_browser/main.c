@@ -241,6 +241,11 @@ static int viewport_event(widget_t *w, const widget_event_t *ev)
         browser_window_mouse_click(nsaether_bw, BROWSER_MOUSE_PRESS_1, vx, vy);
         return 1;
     case WEV_MOUSE_UP:
+        {
+            char dbg[48];
+            snprintf(dbg, sizeof(dbg), "click: vx=%d vy=%d\n", vx, vy);
+            uart(dbg);
+        }
         browser_window_mouse_click(nsaether_bw, BROWSER_MOUSE_CLICK_1, vx, vy);
         return 1;
     case WEV_MOUSE_MOVE:
@@ -353,6 +358,9 @@ static void on_addr_submit(widget_t *w)
 static void browser_per_frame(void *ud)
 {
     (void)ud;
+
+    static bool first_pf = true;
+    if (first_pf) { first_pf = false; uart("browser_per_frame: first\n"); }
 
     nsaether_schedule_drain();
     js_timers_tick();
