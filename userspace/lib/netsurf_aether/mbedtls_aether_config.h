@@ -27,7 +27,20 @@
 
 /* ── System headers available ────────────────────────────────────────────── */
 
-#define MBEDTLS_HAVE_ASM           /* GCC inline asm (AArch64) */
+/* MBEDTLS_HAVE_ASM intentionally disabled.
+ *
+ * The AArch64 MULADDC inline assembly in bn_mul.h uses "+r" constraints for
+ * uintptr_t locals (muladdc_d / muladdc_s) and the "%x" register modifier.
+ * At -O0 the compiler keeps these locals on the stack rather than in registers,
+ * which can cause the asm to operate on stale values and produce wrong bignum
+ * results → ECDSA ServerKeyExchange verification fails with ECP_VERIFY_FAILED.
+ *
+ * Without MBEDTLS_HAVE_ASM, mbedTLS falls back to the __uint128_t pure-C path
+ * (MBEDTLS_HAVE_UDBL): r = s[i] * (uint128_t)b; r0 = low; r1 = high.
+ * GCC/AArch64 compiles this to a pair of mul/umulh instructions — identical
+ * output to the asm, but register-allocated correctly at all optimisation levels.
+ */
+
 #define MBEDTLS_HAVE_TIME          /* time() via time_posix.c  */
 /* No MBEDTLS_HAVE_TIME_DATE: avoids cert expiry checks that fail when
  * RTC returns 0 (epoch) in QEMU — connection still works without it. */
