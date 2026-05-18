@@ -57,8 +57,12 @@ int gettimeofday(struct timeval *tv, struct timezone *tz)
 {
     (void)tz;
     if (!tv) { errno = EFAULT; return -1; }
+    /* Use CLOCK_MONOTONIC: ticks/100 for seconds, (ticks%100)*10ms for usec.
+     * CLOCK_REALTIME mixes RTC seconds (stuck at 0 in QEMU) with ticks%100
+     * for sub-seconds, so fire_at.tv_sec can reach 1 and the timer never
+     * fires because now.tv_sec stays 0. Monotonic clock is always coherent. */
     struct timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
+    clock_gettime(CLOCK_MONOTONIC, &ts);
     tv->tv_sec  = ts.tv_sec;
     tv->tv_usec = ts.tv_nsec / 1000L;
     return 0;

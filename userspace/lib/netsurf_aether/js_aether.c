@@ -42,6 +42,9 @@
 #include "dom/core/nodelist.h"
 #include "dom/core/string.h"
 #include "dom/core/text.h"
+#include "dom/events/event_listener.h"
+#include "dom/events/event_target.h"
+#include "dom/events/event.h"
 
 /*
  * html/private.h gives us html_content which contains the dom_document*.
@@ -51,6 +54,7 @@
 #include "html/private.h"
 
 extern char nsaether_url[512];
+extern volatile bool nsaether_dirty;
 
 /* Direct UART for diagnostics (bypasses nslog filtering) */
 static void js_uart(const char *s)
@@ -71,15 +75,25 @@ static JSClassID g_dom_doc_class_id;
 /* ── Forward declarations ────────────────────────────────────────────────── */
 
 struct jsthread;
+static JSValue wrap_node(JSContext *jsc, struct jsthread *t, struct dom_node *n);
 
 /* ── Event listener store ────────────────────────────────────────────────── */
 
+/* Context allocated per addEventListener call and freed in js_destroythread. */
+typedef struct aether_listener_ctx {
+    struct jsthread          *thread;
+    JSContext                *jsc;
+    JSValue                   fn;
+} aether_listener_ctx_t;
+
 typedef struct js_listener {
-    struct dom_node    *node;      /* raw pointer (NOT ref'd — node outlives listener) */
-    char                type[32];  /* event type string */
-    JSValue             fn;        /* QuickJS function value (not dup'd here) */
-    struct jsthread    *thread;
-    struct js_listener *next;
+    struct dom_node          *node;       /* raw pointer, not ref'd */
+    char                      type[32];
+    JSValue                   fn;         /* duplicate for removeEventListener lookup */
+    struct jsthread          *thread;
+    dom_event_listener       *dom_listen; /* libdom listener (unref'd in destroy) */
+    aether_listener_ctx_t    *ctx;        /* freed in destroy */
+    struct js_listener       *next;
 } js_listener_t;
 
 /* ── Timer store ─────────────────────────────────────────────────────────── */
@@ -488,6 +502,98 @@ static JSValue js_el_get_nextSibling(JSContext *jsc, JSValue this_val)
     return r;
 }
 
+/* ── DOM event → QuickJS bridge ──────────────────────────────────────────── */
+
+/* Called by libdom when a DOM event fires on an element we registered on. */
+static void aether_js_event_handler(struct dom_event *evt, void *pw)
+{
+    aether_listener_ctx_t *ctx = (aether_listener_ctx_t *)pw;
+    if (!ctx || !ctx->thread || ctx->thread->closed) return;
+
+    JSContext *jsc = ctx->jsc;
+
+    /* Build a minimal JS Event object */
+    JSValue ev = JS_NewObject(jsc);
+    dom_string *type_str = NULL;
+    if (dom_event_get_type(evt, &type_str) == DOM_NO_ERR && type_str) {
+        JS_SetPropertyStr(jsc, ev, "type",
+            JS_NewStringLen(jsc, dom_string_data(type_str),
+                            dom_string_byte_length(type_str)));
+        dom_string_unref(type_str);
+    }
+    dom_event_target *targ = NULL;
+    if (dom_event_get_target(evt, &targ) == DOM_NO_ERR && targ) {
+        JS_SetPropertyStr(jsc, ev, "target",
+            wrap_node(jsc, ctx->thread, (struct dom_node *)targ));
+        dom_node_unref((struct dom_node *)targ);
+    }
+
+    JSValue args[1] = { ev };
+    JSValue r = JS_Call(jsc, ctx->fn, JS_UNDEFINED, 1, args);
+    if (JS_IsException(r)) {
+        JSValue exc = JS_GetException(jsc);
+        const char *msg = JS_ToCString(jsc, exc);
+        NSLOG(netsurf, WARNING, "JS event handler: %s", msg ? msg : "?");
+        if (msg) JS_FreeCString(jsc, msg);
+        JS_FreeValue(jsc, exc);
+    }
+    JS_FreeValue(jsc, r);
+    JS_FreeValue(jsc, ev);
+
+    /* DOM change may have happened — request repaint */
+    nsaether_dirty = true;
+}
+
+/* Register fn as a libdom event listener on target_node for event type.
+ * Adds a js_listener_t to the thread list for lifecycle tracking. */
+static void register_dom_listener(JSContext *jsc, struct jsthread *thread,
+                                   struct dom_node *target_node,
+                                   const char *type, JSValue fn)
+{
+    aether_listener_ctx_t *ctx = calloc(1, sizeof(*ctx));
+    if (!ctx) return;
+    ctx->thread = thread;
+    ctx->jsc    = jsc;
+    ctx->fn     = JS_DupValue(jsc, fn);
+
+    dom_string *type_ds = NULL;
+    if (dom_string_create((const uint8_t *)type, strlen(type), &type_ds) != DOM_NO_ERR) {
+        JS_FreeValue(jsc, ctx->fn);
+        free(ctx);
+        return;
+    }
+
+    dom_event_listener *dl = NULL;
+    dom_exception exc = dom_event_listener_create(aether_js_event_handler, ctx, &dl);
+    if (exc != DOM_NO_ERR || !dl) {
+        dom_string_unref(type_ds);
+        JS_FreeValue(jsc, ctx->fn);
+        free(ctx);
+        return;
+    }
+
+    dom_event_target_add_event_listener(
+        (dom_event_target *)target_node, type_ds, dl, false);
+    dom_string_unref(type_ds);
+
+    /* Track for cleanup in js_destroythread */
+    js_listener_t *entry = calloc(1, sizeof(*entry));
+    if (entry) {
+        entry->node       = target_node;
+        strncpy(entry->type, type, sizeof(entry->type) - 1);
+        entry->fn         = JS_DupValue(jsc, fn);
+        entry->thread     = thread;
+        entry->dom_listen = dl;      /* unref'd in js_destroythread */
+        entry->ctx        = ctx;     /* freed in js_destroythread */
+        entry->next       = thread->listeners;
+        thread->listeners = entry;
+    } else {
+        dom_event_listener_unref(dl);
+        JS_FreeValue(jsc, ctx->fn);
+        free(ctx);
+    }
+}
+
 /* ── Event listener methods on elements ──────────────────────────────────── */
 
 static JSValue js_el_addEventListener(JSContext *jsc, JSValue this_val,
@@ -499,16 +605,7 @@ static JSValue js_el_addEventListener(JSContext *jsc, JSValue this_val,
 
     const char *type = JS_ToCString(jsc, argv[0]);
     if (!type) return JS_UNDEFINED;
-
-    js_listener_t *entry = calloc(1, sizeof(*entry));
-    if (entry) {
-        entry->node   = w->node;  /* raw pointer, not ref'd */
-        strncpy(entry->type, type, sizeof(entry->type) - 1);
-        entry->fn     = JS_DupValue(jsc, argv[1]);
-        entry->thread = w->thread;
-        entry->next   = w->thread->listeners;
-        w->thread->listeners = entry;
-    }
+    register_dom_listener(jsc, w->thread, w->node, type, argv[1]);
     JS_FreeCString(jsc, type);
     return JS_UNDEFINED;
 }
@@ -755,16 +852,8 @@ static JSValue js_doc_addEventListener(JSContext *jsc, JSValue this_val,
 
     const char *type = JS_ToCString(jsc, argv[0]);
     if (!type) return JS_UNDEFINED;
-
-    js_listener_t *entry = calloc(1, sizeof(*entry));
-    if (entry) {
-        entry->node   = (struct dom_node *)w->thread->doc; /* document node */
-        strncpy(entry->type, type, sizeof(entry->type) - 1);
-        entry->fn     = JS_DupValue(jsc, argv[1]);
-        entry->thread = w->thread;
-        entry->next   = w->thread->listeners;
-        w->thread->listeners = entry;
-    }
+    register_dom_listener(jsc, w->thread,
+                          (struct dom_node *)w->thread->doc, type, argv[1]);
     JS_FreeCString(jsc, type);
     return JS_UNDEFINED;
 }
@@ -1133,6 +1222,11 @@ nserror js_closethread(jsthread *thread)
     js_listener_t *l = thread->listeners;
     while (l) {
         js_listener_t *next = l->next;
+        if (l->dom_listen) dom_event_listener_unref(l->dom_listen);
+        if (l->ctx) {
+            JS_FreeValue(thread->jsc, l->ctx->fn);
+            free(l->ctx);
+        }
         JS_FreeValue(thread->jsc, l->fn);
         free(l);
         l = next;
@@ -1160,6 +1254,21 @@ void js_destroythread(jsthread *thread)
     jsthread **pp = &g_thread_list;
     while (*pp && *pp != thread) pp = &(*pp)->next;
     if (*pp) *pp = thread->next;
+
+    /* Free event listeners — unref DOM listeners and free JS function refs */
+    js_listener_t *l = thread->listeners;
+    while (l) {
+        js_listener_t *next = l->next;
+        if (l->dom_listen) dom_event_listener_unref(l->dom_listen);
+        if (l->ctx) {
+            JS_FreeValue(thread->jsc, l->ctx->fn);
+            free(l->ctx);
+        }
+        JS_FreeValue(thread->jsc, l->fn);
+        free(l);
+        l = next;
+    }
+    thread->listeners = NULL;
 
     /* GC runs here — finalizers call dom_node_unref on wrapped nodes */
     JS_FreeContext(thread->jsc);
