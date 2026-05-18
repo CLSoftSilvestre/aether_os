@@ -43,6 +43,7 @@
 #include <mbedtls/error.h>
 #include <mbedtls/platform.h>
 #include <mbedtls/platform_time.h>   /* mbedtls_ms_time_t */
+#include <mbedtls/debug.h>
 
 /* We excluded net_sockets.c (uses POSIX we don't want linked).
  * Define the small set of net error codes tls_aether.c uses directly. */
@@ -72,6 +73,15 @@ static void tls_uart(const char *s)
         "svc #0\n mov %0, x0\n"
         : "=r"(r) : "r"(s), "r"((long)len) : "x0","x1","x2","x8","memory"
     );
+}
+
+/* ── mbedTLS debug callback (level ≤ 2: errors + state changes) ─────────── */
+
+static void tls_debug_cb(void *ctx, int level,
+                          const char *file, int line, const char *str)
+{
+    (void)ctx; (void)file; (void)line;
+    if (level <= 2) tls_uart(str);
 }
 
 /* ── mbedtls_ms_time() — MBEDTLS_PLATFORM_MS_TIME_ALT ───────────────────── */
@@ -131,7 +141,14 @@ static int tls_bio_send(void *ctx, const unsigned char *buf, size_t len)
 {
     int fd = *(int *)ctx;
     long n = (long)send(fd, buf, len, 0);
-    if (n < 0) return MBEDTLS_ERR_NET_SEND_FAILED;
+    if (n < 0) {
+        tls_uart("tls_bio_send: send() returned -1\n");
+        return MBEDTLS_ERR_NET_SEND_FAILED;
+    }
+    /* AetherOS send() returns 0 (success) instead of the byte count.
+     * Map 0 → len so mbedTLS advances out_left correctly and doesn't
+     * re-send the same record before every subsequent receive state. */
+    if (n == 0) return (int)len;
     return (int)n;
 }
 
@@ -211,6 +228,10 @@ tls_conn_t *tls_connect(int fd, const char *hostname)
         goto fail;
     }
 
+    /* Wire debug callback (errors + state changes) */
+    mbedtls_ssl_conf_dbg(&conn->conf, tls_debug_cb, NULL);
+    mbedtls_debug_set_threshold(2);
+
     /* Wire RNG */
     mbedtls_ssl_conf_rng(&conn->conf,
                           mbedtls_ctr_drbg_random, &conn->ctr_drbg);
@@ -255,9 +276,22 @@ tls_conn_t *tls_connect(int fd, const char *hostname)
     if (ret != 0) {
         char errbuf[80];
         mbedtls_strerror(ret, errbuf, sizeof(errbuf));
-        tls_uart("tls_connect: handshake FAILED: ");
+        tls_uart("tls_connect v5: handshake FAILED: ");
         tls_uart(errbuf);
-        tls_uart("\n");
+        /* print raw error code as hex so we can see any SSL high-level wrapper */
+        {
+            char hexbuf[16]; int hi = 0;
+            unsigned int u = (unsigned int)(-ret);
+            for (int shift = 28; shift >= 0; shift -= 4) {
+                int n = (int)((u >> shift) & 0xf);
+                if (n || hi) hexbuf[hi++] = (char)(n < 10 ? '0'+n : 'a'+n-10);
+            }
+            if (!hi) hexbuf[hi++] = '0';
+            hexbuf[hi] = '\0';
+            tls_uart(" (-0x");
+            tls_uart(hexbuf);
+            tls_uart(")\n");
+        }
         goto fail;
     }
 

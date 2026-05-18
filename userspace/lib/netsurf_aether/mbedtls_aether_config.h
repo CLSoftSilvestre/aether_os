@@ -118,7 +118,14 @@
 #define MBEDTLS_ECP_DP_SECP256R1_ENABLED   /* P-256 — most common */
 #define MBEDTLS_ECP_DP_SECP384R1_ENABLED   /* P-384 — used by some CAs */
 #define MBEDTLS_ECP_DP_SECP521R1_ENABLED   /* P-521 */
-#define MBEDTLS_ECP_NIST_OPTIM             /* enable NIST curve optimizations */
+/* MBEDTLS_ECP_NIST_OPTIM intentionally disabled.
+ *
+ * The fast modular reduction for NIST primes (ecp_mod_p256/p384) manipulates
+ * MPI limbs as 32-bit words via aliased pointer casts.  At -O0 with AArch64
+ * the compiler may not always honour the aliasing assumptions in the carry
+ * chain, producing wrong intermediate values and a final R.X ≠ r result.
+ * Using the generic Montgomery reduction is slower but correct at all levels.
+ */
 
 /* Public key abstraction */
 #define MBEDTLS_PK_C
@@ -139,6 +146,7 @@
 
 #define MBEDTLS_ERROR_C                /* human-readable error strings */
 #define MBEDTLS_VERSION_C
+#define MBEDTLS_DEBUG_C                /* handshake state + error logging via UART */
 
 /* Constant-time comparison helpers (security) */
 /* MBEDTLS_CONSTANT_TIME_C is defined unconditionally in mbedTLS 3.x internals */

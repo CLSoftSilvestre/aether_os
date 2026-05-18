@@ -135,6 +135,38 @@ static uint8_t *decompress_gzip(const uint8_t *in, size_t in_len, size_t *out_le
     return out;
 }
 
+/* Decode HTTP chunked transfer encoding into a flat buffer */
+static uint8_t *decode_chunked(const uint8_t *in, size_t in_len, size_t *out_len)
+{
+    uint8_t *out = malloc(in_len + 1);
+    if (!out) return NULL;
+
+    const char *p   = (const char *)in;
+    const char *end = p + in_len;
+    size_t used = 0;
+
+    while (p < end) {
+        char *after = NULL;
+        unsigned long csz = strtoul(p, &after, 16);
+        if (!after || after == p) break;
+        p = after;
+        while (p < end && *p != '\n') p++;   /* skip extensions + \r */
+        if (p < end) p++;                     /* consume \n */
+        if (csz == 0) break;                  /* terminal chunk */
+        size_t avail = (size_t)(end - p);
+        size_t take  = csz < avail ? csz : avail;
+        memcpy(out + used, p, take);
+        used += take;
+        p    += csz;
+        if (p < end && *p == '\r') p++;
+        if (p < end && *p == '\n') p++;
+    }
+
+    out[used] = '\0';
+    *out_len  = used;
+    return out;
+}
+
 /* Case-insensitive substring search */
 static const char *ci_strstr(const char *hay, const char *needle)
 {
@@ -407,26 +439,48 @@ static void do_http(fetch_http_ctx_t *ctx)
             }
         }
 
+        /* ── Chunked transfer encoding ───────────────────────── */
+        const char *te_hdr = hdr_end ? ci_strstr((char *)raw, "Transfer-Encoding:") : NULL;
+        uint8_t *eff_body  = body_start;
+        size_t   eff_sz    = body_sz;
+        bool     own_body  = false;
+
+        if (te_hdr && te_hdr < hdr_end) {
+            te_hdr += 18;
+            while (*te_hdr == ' ') te_hdr++;
+            if (strncasecmp(te_hdr, "chunked", 7) == 0 && body_sz > 0) {
+                size_t decoded_sz = 0;
+                uint8_t *decoded = decode_chunked(body_start, body_sz, &decoded_sz);
+                if (decoded) {
+                    eff_body = decoded;
+                    eff_sz   = decoded_sz;
+                    own_body = true;
+                }
+            }
+        }
+
         /* ── Gzip decompression ──────────────────────────────── */
         const char *ce = hdr_end ? ci_strstr((char *)raw, "Content-Encoding:") : NULL;
         bool is_gzip   = ce && (ce < hdr_end) &&
                          (strncasecmp(ce + 17 + strspn(ce + 17, " "), "gzip", 4) == 0);
 
-        if (is_gzip && body_sz > 0) {
+        if (is_gzip && eff_sz > 0) {
             size_t dec_len = 0;
-            uint8_t *dec   = decompress_gzip(body_start, body_sz, &dec_len);
+            uint8_t *dec   = decompress_gzip(eff_body, eff_sz, &dec_len);
+            if (own_body) free(eff_body);
             free(raw);
             ctx->body     = dec;
             ctx->body_len = dec ? dec_len : 0;
         } else {
-            uint8_t *copy = malloc(body_sz + 1);
+            uint8_t *copy = malloc(eff_sz + 1);
             if (copy) {
-                memcpy(copy, body_start, body_sz);
-                copy[body_sz] = '\0';
+                memcpy(copy, eff_body, eff_sz);
+                copy[eff_sz] = '\0';
             }
+            if (own_body) free(eff_body);
             free(raw);
             ctx->body     = copy;
-            ctx->body_len = copy ? body_sz : 0;
+            ctx->body_len = copy ? eff_sz : 0;
         }
         return;   /* done — no more hops */
     }
