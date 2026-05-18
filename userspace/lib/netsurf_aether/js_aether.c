@@ -1097,7 +1097,7 @@ nserror js_newthread(jsheap *heap, void *win_priv, void *doc_priv,
         JS_SetClassProto(t->jsc, g_dom_doc_class_id, proto);
     }
 
-    setup_window(t->jsc, t, (struct dom_document *)doc_priv);
+    setup_window(t->jsc, t, t->doc);
 
     /* Add to global thread list */
     t->next       = g_thread_list;

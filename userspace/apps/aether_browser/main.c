@@ -469,6 +469,10 @@ int main(int argc, char **argv)
     }
     fetch_http_aether_register();
 
+    /* Enable JavaScript at runtime — desktop/options.h compiles in false;
+       our lib/netsurf_aether/options.h is never seen by nsoption.c */
+    nsoption_set_bool(enable_javascript, true);
+
     /* 2. Screen dimensions and window geometry */
     gfx_init();
     int scr_w = (int)gfx_width();
