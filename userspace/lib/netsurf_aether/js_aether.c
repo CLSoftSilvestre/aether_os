@@ -50,8 +50,14 @@
  * html/private.h gives us html_content which contains the dom_document*.
  * js_newthread receives doc_priv = hlcache_handle_get_content(c), i.e.
  * struct content* pointing at an html_content.  We cast and read ->document.
+ *
+ * html/box.h + html/box_construct.h: needed to update box->text in-place
+ * after JS DOM mutations (NetSurf's DOMSubtreeModified handler only refreshes
+ * TEXTAREA/INPUT/STYLE elements, not generic divs).
  */
 #include "html/private.h"
+#include "html/box.h"
+#include "html/box_construct.h"
 
 extern char nsaether_url[512];
 extern volatile bool nsaether_dirty;
@@ -127,6 +133,7 @@ struct jsthread {
     jsheap             *heap;
     bool                closed;
     struct dom_document *doc;       /* doc_priv from js_newthread */
+    html_content       *html;       /* for box-tree text updates */
     js_timer_t         *timers;
     js_listener_t      *listeners;
     int                 next_timer_id;
@@ -339,6 +346,41 @@ static JSValue js_el_hasAttribute(JSContext *jsc, JSValue this_val,
     return JS_NewBool(jsc, has);
 }
 
+/* ── Box-tree text update ────────────────────────────────────────────────────
+ * NetSurf's DOMSubtreeModified handler only refreshes TEXTAREA/INPUT/STYLE.
+ * For generic elements (div, p, span …) we must patch box->text in-place so
+ * that browser_window_redraw() picks up the new text without a full reload.
+ *
+ * Strategy: DFS-walk the subtree rooted at the element's box.  The first
+ * BOX_TEXT node found gets new_text; all others are cleared to "" (they
+ * originated from removed child text nodes after set_text_content replaced
+ * all children with a single new text node).
+ */
+static void sync_text_recursive(struct box *b, html_content *htmlc,
+                                 const char *new_text, bool *first_done)
+{
+    if (!b) return;
+    if (b->type == BOX_TEXT) {
+        const char *t = *first_done ? "" : new_text;
+        *first_done = true;
+        b->text   = talloc_strdup(htmlc->bctx, t);
+        b->length = b->text ? strlen(b->text) : 0;
+    }
+    sync_text_recursive(b->children, htmlc, new_text, first_done);
+    sync_text_recursive(b->next,     htmlc, new_text, first_done);
+}
+
+static void update_box_text(html_content *htmlc, struct dom_node *n,
+                             const char *new_text)
+{
+    if (!htmlc || !n || !new_text) return;
+    struct box *b = box_for_node(n);
+    if (!b) return;
+    bool first_done = false;
+    sync_text_recursive(b->children, htmlc, new_text, &first_done);
+    html__redraw_a_box(htmlc, b);
+}
+
 static JSValue js_el_get_textContent(JSContext *jsc, JSValue this_val)
 {
     struct dom_node *n = unwrap_node(jsc, this_val);
@@ -351,14 +393,18 @@ static JSValue js_el_get_textContent(JSContext *jsc, JSValue this_val)
 
 static JSValue js_el_set_textContent(JSContext *jsc, JSValue this_val, JSValue val)
 {
-    struct dom_node *n = unwrap_node(jsc, this_val);
-    if (!n) return JS_UNDEFINED;
+    node_wrapper_t *w = unwrap_node_w(jsc, this_val);
+    if (!w || !w->node) return JS_UNDEFINED;
+    struct dom_node *n = w->node;
     const char *s = JS_ToCString(jsc, val);
     if (s) {
         dom_string *ds = cstr_to_domstr(s);
         if (ds) { dom_node_set_text_content(n, ds); dom_string_unref(ds); }
+        if (w->thread && w->thread->html)
+            update_box_text(w->thread->html, n, s);
         JS_FreeCString(jsc, s);
     }
+    nsaether_dirty = true;
     return JS_UNDEFINED;
 }
 
@@ -371,8 +417,9 @@ static JSValue js_el_get_innerHTML(JSContext *jsc, JSValue this_val)
 static JSValue js_el_set_innerHTML(JSContext *jsc, JSValue this_val, JSValue val)
 {
     /* Simplified: strip HTML tags, set as textContent */
-    struct dom_node *n = unwrap_node(jsc, this_val);
-    if (!n) return JS_UNDEFINED;
+    node_wrapper_t *w = unwrap_node_w(jsc, this_val);
+    if (!w || !w->node) return JS_UNDEFINED;
+    struct dom_node *n = w->node;
     const char *src = JS_ToCString(jsc, val);
     if (!src) return JS_UNDEFINED;
 
@@ -390,9 +437,12 @@ static JSValue js_el_set_innerHTML(JSContext *jsc, JSValue this_val, JSValue val
         buf[out] = '\0';
         dom_string *ds = cstr_to_domstr(buf);
         if (ds) { dom_node_set_text_content(n, ds); dom_string_unref(ds); }
+        if (w->thread && w->thread->html)
+            update_box_text(w->thread->html, n, buf);
         free(buf);
     }
     JS_FreeCString(jsc, src);
+    nsaether_dirty = true;
     return JS_UNDEFINED;
 }
 
@@ -509,6 +559,7 @@ static void aether_js_event_handler(struct dom_event *evt, void *pw)
 {
     aether_listener_ctx_t *ctx = (aether_listener_ctx_t *)pw;
     if (!ctx || !ctx->thread || ctx->thread->closed) return;
+    js_uart("aether_js_event_handler: called\n");
 
     JSContext *jsc = ctx->jsc;
 
@@ -1010,6 +1061,7 @@ void js_timers_tick(void)
             if (timeval_le(&e->fire_at, &now)) {
                 /* Unlink before firing */
                 *pp = e->next;
+                js_uart("js_timers_tick: firing\n");
                 JSValue result = JS_Call(e->jsc, e->fn, JS_UNDEFINED, 0, NULL);
                 if (JS_IsException(result)) {
                     JSValue exc = JS_GetException(e->jsc);
@@ -1020,6 +1072,7 @@ void js_timers_tick(void)
                     JS_FreeValue(e->jsc, exc);
                 }
                 JS_FreeValue(e->jsc, result);
+                nsaether_dirty = true;
 
                 if (e->repeating) {
                     /* Re-arm: fire_at = now + ms */
@@ -1177,11 +1230,13 @@ nserror js_newthread(jsheap *heap, void *win_priv, void *doc_priv,
     /*
      * doc_priv is html_content* (struct content* that is actually html_content*).
      * win_priv is browser_window*.
-     * Extract the real dom_document* from the html_content struct.
+     * Extract the real dom_document* from the html_content struct and
+     * store html_content* for direct box-tree text updates.
      */
     {
         html_content *html = (html_content *)doc_priv;
-        t->doc = (html && html->document) ? html->document : NULL;
+        t->doc  = (html && html->document) ? html->document : NULL;
+        t->html = html;
     }
 
     js_uart("js_newthread: called\n");
