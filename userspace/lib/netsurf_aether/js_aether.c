@@ -375,9 +375,21 @@ static void update_box_text(html_content *htmlc, struct dom_node *n,
 {
     if (!htmlc || !n || !new_text) return;
     struct box *b = box_for_node(n);
-    if (!b) return;
+    if (!b) {
+        js_uart("ubxt: no box\n");
+        return;
+    }
+    static int ubxt_cnt = 0;
+    if (ubxt_cnt < 3) {
+        ubxt_cnt++;
+        char dbg[48];
+        snprintf(dbg, sizeof(dbg), "ubxt: txt='%.16s' btype=%d\n",
+                 new_text, (int)b->type);
+        js_uart(dbg);
+    }
     bool first_done = false;
     sync_text_recursive(b->children, htmlc, new_text, &first_done);
+    if (!first_done) js_uart("ubxt: no BOX_TEXT\n");
     html__redraw_a_box(htmlc, b);
 }
 

@@ -156,6 +156,13 @@ static void render_viewport(void)
 {
     if (!nsaether_pixels || !nsaether_bw) return;
 
+    static int rv_cnt = 0;
+    if (rv_cnt++ < 5) {
+        char dbg[32];
+        snprintf(dbg, sizeof(dbg), "render_viewport: #%d\n", rv_cnt);
+        uart(dbg);
+    }
+
     memset(nsaether_pixels, 0xFF,
            (size_t)g_win_w * (size_t)g_viewport_h * 4);
 
@@ -365,6 +372,16 @@ static void browser_per_frame(void *ud)
     nsaether_schedule_drain();
     js_timers_tick();
 
+    if (nsaether_dirty && nsaether_bw) {
+        static int bpf_cnt = 0;
+        if (bpf_cnt < 5) {
+            bpf_cnt++;
+            int rdy = browser_window_redraw_ready(nsaether_bw) ? 1 : 0;
+            char dbg[32];
+            snprintf(dbg, sizeof(dbg), "bpf: dirty rdy=%d\n", rdy);
+            uart(dbg);
+        }
+    }
     if (nsaether_dirty && nsaether_bw &&
             browser_window_redraw_ready(nsaether_bw)) {
         render_viewport();
