@@ -29,6 +29,7 @@
 
 #include "quickjs/quickjs.h"
 #include "content/handlers/javascript/js.h"
+#include "content/handlers/javascript/content.h"
 #include "utils/errors.h"
 #include "utils/log.h"
 #include "netsurf_aether.h"
@@ -1023,6 +1024,9 @@ void js_initialise(void)
 {
     JS_NewClassID(&g_dom_node_class_id);
     JS_NewClassID(&g_dom_doc_class_id);
+    /* Register text/javascript and application/javascript as CONTENT_JS.
+     * dukky.c is excluded from our build so this call is missing otherwise. */
+    javascript_init();
     NSLOG(netsurf, INFO, "QuickJS JS engine active (Iteration 2 — DOM bindings)");
 }
 
