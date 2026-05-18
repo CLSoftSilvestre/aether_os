@@ -375,21 +375,29 @@ static void update_box_text(html_content *htmlc, struct dom_node *n,
 {
     if (!htmlc || !n || !new_text) return;
     struct box *b = box_for_node(n);
-    if (!b) {
-        js_uart("ubxt: no box\n");
-        return;
-    }
-    static int ubxt_cnt = 0;
-    if (ubxt_cnt < 3) {
-        ubxt_cnt++;
-        char dbg[48];
-        snprintf(dbg, sizeof(dbg), "ubxt: txt='%.16s' btype=%d\n",
-                 new_text, (int)b->type);
-        js_uart(dbg);
-    }
+    if (!b) return;
+
     bool first_done = false;
-    sync_text_recursive(b->children, htmlc, new_text, &first_done);
-    if (!first_done) js_uart("ubxt: no BOX_TEXT\n");
+
+    if (b->type == BOX_INLINE && b->inline_end) {
+        /* Inline elements (span, a, em, ...): NetSurf places the text content
+         * in sibling boxes between the BOX_INLINE opener and its
+         * BOX_INLINE_END closer — not in b->children.  Walk that range. */
+        for (struct box *s = b->next; s && s != b->inline_end; s = s->next) {
+            if (s->type == BOX_TEXT) {
+                const char *t = first_done ? "" : new_text;
+                first_done = true;
+                s->text   = talloc_strdup(htmlc->bctx, t);
+                s->length = s->text ? strlen(s->text) : 0;
+            }
+            /* Nested inline elements: recurse into their children */
+            sync_text_recursive(s->children, htmlc, new_text, &first_done);
+        }
+    } else {
+        /* Block / inline-container: text content lives in the children subtree */
+        sync_text_recursive(b->children, htmlc, new_text, &first_done);
+    }
+
     html__redraw_a_box(htmlc, b);
 }
 
@@ -992,29 +1000,16 @@ static JSValue js_window_setInterval(JSContext *jsc, JSValue this_val,
         return JS_NewInt32(jsc, 0);
     }
     int ms = 100;
-    if (argc >= 2) {
-        /* Use JS_ToInt32 instead of JS_VALUE_GET_INT to handle float values */
+    if (argc >= 2)
         JS_ToInt32(jsc, &ms, argv[1]);
-    }
     if (ms < 1) ms = 1;
-
-    {
-        char dbg[48];
-        snprintf(dbg, sizeof(dbg), "setInterval: ms=%d list=%p\n",
-                 ms, (void *)g_thread_list);
-        js_uart(dbg);
-    }
 
     struct jsthread *t = g_thread_list;
     while (t && t->jsc != jsc) t = t->next;
-    if (!t || t->closed) {
-        js_uart("setInterval: thread not found\n");
-        return JS_NewInt32(jsc, 0);
-    }
+    if (!t || t->closed) return JS_NewInt32(jsc, 0);
 
     int id = t->next_timer_id++;
     timer_add(t, id, true, ms, jsc, argv[0]);
-    js_uart("setInterval: timer added\n");
     return JS_NewInt32(jsc, id);
 }
 
@@ -1090,25 +1085,6 @@ void js_timers_tick(void)
     struct timeval now;
     gettimeofday(&now, NULL);
 
-    /* First 3 calls: report thread/timer state so we can see what's happening */
-    static int tick_dbg = 0;
-    if (tick_dbg < 3) {
-        tick_dbg++;
-        if (!g_thread_list) {
-            js_uart("tick: no thread\n");
-        } else if (g_thread_list->closed) {
-            js_uart("tick: thread CLOSED\n");
-        } else if (!g_thread_list->timers) {
-            js_uart("tick: no timers\n");
-        } else {
-            char dbg[48];
-            snprintf(dbg, sizeof(dbg), "tick: has timer fire=%ld now=%ld\n",
-                     (long)g_thread_list->timers->fire_at.tv_sec,
-                     (long)now.tv_sec);
-            js_uart(dbg);
-        }
-    }
-
     struct jsthread *t = g_thread_list;
     while (t) {
         if (t->closed) { t = t->next; continue; }
@@ -1119,7 +1095,6 @@ void js_timers_tick(void)
             if (timeval_le(&e->fire_at, &now)) {
                 /* Unlink before firing */
                 *pp = e->next;
-                js_uart("js_timers_tick: firing\n");
                 JSValue result = JS_Call(e->jsc, e->fn, JS_UNDEFINED, 0, NULL);
                 if (JS_IsException(result)) {
                     JSValue exc = JS_GetException(e->jsc);
