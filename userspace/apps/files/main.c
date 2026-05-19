@@ -202,6 +202,10 @@ static unsigned char detect_icon(const char *name)
         return FICON_IMAGE;
     if (n>=4 && name[n-4]=='.' && (name[n-3]=='p' || name[n-3]=='P') && (name[n-2]=='n' || name[n-2]=='N') && (name[n-1]=='g' || name[n-1]=='G'))
         return FICON_IMAGE;
+    if (n>=4 && name[n-4]=='.' && (name[n-3]=='j' || name[n-3]=='J') && (name[n-2]=='p' || name[n-2]=='P') && (name[n-1]=='g' || name[n-1]=='G'))
+        return FICON_IMAGE;
+    if (n>=5 && name[n-5]=='.' && (name[n-4]=='j' || name[n-4]=='J') && (name[n-3]=='p' || name[n-3]=='P') && (name[n-2]=='e' || name[n-2]=='E') && (name[n-1]=='g' || name[n-1]=='G'))
+        return FICON_IMAGE;
     if (n>=4 && name[n-4]=='.' && (name[n-3]=='t' || name[n-3]=='T') && (name[n-2]=='t' || name[n-2]=='T') && (name[n-1]=='f' || name[n-1]=='F'))
         return FICON_FONT;
     return FICON_GENERIC;
@@ -364,6 +368,11 @@ static void activate_entry(int idx)
     case FICON_AS: {
         const char *argv[] = { "/aether_editor", e->path, (const char *)0 };
         sys_spawn_args("/aether_editor", argv, 2);
+        break;
+    }
+    case FICON_IMAGE: {
+        const char *argv[] = { "/aether_view", e->path, (const char *)0 };
+        sys_spawn_args("/aether_view", argv, 2);
         break;
     }
     default: break;
@@ -932,12 +941,15 @@ int main(int argc, const char *const *argv)
     g_ctx.win_y         = &g_win_y;
     g_ctx.content_dx    = 0;
     g_ctx.content_dy    = TITLE_H;
+    g_ctx.win_id        = (int)g_win_id;
+    g_ctx.win_w         = WIN_W;
+    g_ctx.win_h         = WIN_H;
     g_ctx.on_reposition = on_reposition;
     g_ctx.userdata      = (void *)0;
     g_ctx.running       = 1;
 
     widget_run(&g_root, &g_ctx);
 
-    sys_wm_unregister(g_win_id);
+    sys_wm_request_close(g_win_id);
     return 0;
 }

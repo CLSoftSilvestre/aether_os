@@ -57,8 +57,12 @@ int gettimeofday(struct timeval *tv, struct timezone *tz)
 {
     (void)tz;
     if (!tv) { errno = EFAULT; return -1; }
+    /* Use CLOCK_MONOTONIC: ticks/100 for seconds, (ticks%100)*10ms for usec.
+     * CLOCK_REALTIME mixes RTC seconds (stuck at 0 in QEMU) with ticks%100
+     * for sub-seconds, so fire_at.tv_sec can reach 1 and the timer never
+     * fires because now.tv_sec stays 0. Monotonic clock is always coherent. */
     struct timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
+    clock_gettime(CLOCK_MONOTONIC, &ts);
     tv->tv_sec  = ts.tv_sec;
     tv->tv_usec = ts.tv_nsec / 1000L;
     return 0;
@@ -152,6 +156,16 @@ time_t mktime(struct tm *tm)
 double difftime(time_t t1, time_t t0)
 {
     return (double)(t1 - t0);
+}
+
+/* ── ctime() — non-reentrant time_t → "Www Mmm Dd HH:MM:SS YYYY\n" ─────── */
+
+char *ctime(const time_t *timep)
+{
+    static char buf[32];
+    struct tm *tm = gmtime(timep);
+    strftime(buf, sizeof(buf), "%a %b %d %H:%M:%S %Y\n", tm);
+    return buf;
 }
 
 /* ── gmtime() / localtime() — non-reentrant wrappers ─────────────────── */

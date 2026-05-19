@@ -151,6 +151,9 @@ printf "name=Files\nicon=icon_files\nexec=/files\ndescription=File browser\n" \
 printf "name=Aether IDE\nicon=icon_editor\nexec=/aether_editor\ndescription=Script editor\n" \
     | mcopy -i "${DISK}" - ::apps/aether_editor.app
 
+printf "name=Web Browser\nicon=icon_browser\nexec=/aether_browser\ndescription=Web browser (NetSurf)\n" \
+    | mcopy -i "${DISK}" - ::apps/aether_browser.app
+
 echo "[DISK] Contents:"
 echo "  /:"
 mdir -i "${DISK}" :: 2>/dev/null | grep -v "Volume\|^$" || true

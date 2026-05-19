@@ -18,6 +18,7 @@
  */
 
 #include <gfx.h>
+#include <gpu.h>
 #include <sys.h>
 #include <input.h>
 #include <widget.h>
@@ -107,6 +108,17 @@ static long g_win_id  = -1;
 static int  g_running = 1;
 static int  g_sel     = 0;
 static long g_last_refresh = 0;
+
+/* GPU BO for compositor-driven rendering */
+static gpu_bo_t  g_bo     = GPU_BO_INVALID;
+static unsigned *g_bo_ptr = (unsigned *)0;
+
+static void top_begin_frame(void)
+{
+    if (g_bo_ptr)
+        gfx_begin_frame(g_bo_ptr, WIN_W, WIN_H, g_win_x, g_win_y);
+}
+static void top_end_frame(void) { if (g_bo_ptr) gfx_end_frame(); }
 
 /* ── Row dirty cache ─────────────────────────────────────────────────────── */
 
@@ -444,12 +456,28 @@ int main(void)
 
     g_win_id = sys_wm_register(g_win_x, g_win_y, WIN_W, WIN_H, "AetherTop");
 
+    if (g_win_id >= 0) {
+        g_bo = gpu_alloc(WIN_W * WIN_H * 4u);
+        if (g_bo != GPU_BO_INVALID) {
+            g_bo_ptr = (unsigned *)gpu_map(g_bo);
+            if (g_bo_ptr) {
+                sys_wm_set_buffer(g_win_id, g_bo);
+                gfx_set_damage_target((int)g_win_id);
+            } else {
+                gpu_free(g_bo);
+                g_bo = GPU_BO_INVALID;
+            }
+        }
+    }
+
     do_refresh();
     sys_vsync_wait();
+    top_begin_frame();
     draw_static_chrome();
     draw_static_fixed();
     draw_header();
     draw_rows(1);
+    top_end_frame();
     g_last_refresh = sys_get_ticks();
 
     while (g_running) {
@@ -458,13 +486,14 @@ int main(void)
             if (wm_event_is_redraw(ev)) {
                 g_win_x = wm_event_redraw_x(ev);
                 g_win_y = wm_event_redraw_y(ev);
-                /* Full repaint after window drag — sync to vsync first */
                 sys_vsync_wait();
+                top_begin_frame();
                 draw_static_chrome();
                 draw_static_fixed();
                 invalidate_rows();
                 draw_header();
                 draw_rows(1);
+                top_end_frame();
                 continue;
             }
             if (wm_is_window_closed(ev)) { g_running = 0; break; }
@@ -476,12 +505,12 @@ int main(void)
             switch (kev.keycode) {
             case KEY_UP:
                 if (g_sel > 0) {
-                    /* Invalidate old and new selection row, skip vsync for
-                     * immediate response — only 2 rows change, imperceptible */
                     g_cache[g_sel].valid = 0;
                     g_sel--;
                     g_cache[g_sel].valid = 0;
+                    top_begin_frame();
                     draw_rows(0);
+                    top_end_frame();
                 }
                 break;
             case KEY_DOWN:
@@ -489,7 +518,9 @@ int main(void)
                     g_cache[g_sel].valid = 0;
                     g_sel++;
                     g_cache[g_sel].valid = 0;
+                    top_begin_frame();
                     draw_rows(0);
+                    top_end_frame();
                 }
                 break;
             case KEY_K:
@@ -499,9 +530,11 @@ int main(void)
                         sys_kill((long)pid);
                         do_refresh();
                         sys_vsync_wait();
+                        top_begin_frame();
                         draw_header();
                         invalidate_rows();
                         draw_rows(1);
+                        top_end_frame();
                         g_last_refresh = sys_get_ticks();
                     }
                 }
@@ -509,8 +542,10 @@ int main(void)
             case KEY_R:
                 do_refresh();
                 sys_vsync_wait();
+                top_begin_frame();
                 draw_header();
                 draw_rows(0);
+                top_end_frame();
                 g_last_refresh = sys_get_ticks();
                 break;
             case KEY_Q:
@@ -522,19 +557,26 @@ int main(void)
             }
         }
 
-        /* Periodic auto-refresh — sync to vsync before painting */
+        /* Periodic auto-refresh */
         long now = sys_get_ticks();
         if (now - g_last_refresh >= REFRESH_TICKS) {
             g_last_refresh = now;
             do_refresh();
             sys_vsync_wait();
+            top_begin_frame();
             draw_header();
             draw_rows(0);
+            top_end_frame();
         }
 
         sys_sched_yield();
     }
 
-    sys_wm_unregister(g_win_id);
+    if (g_bo != GPU_BO_INVALID) {
+        gfx_clear_damage_target();
+        sys_wm_set_buffer(g_win_id, GPU_BO_INVALID);
+        gpu_free(g_bo);
+    }
+    sys_wm_request_close(g_win_id);
     sys_exit(0);
 }

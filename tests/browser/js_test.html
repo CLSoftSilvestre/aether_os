@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>AetherOS JS Test</title>
+  <style>
+    body { font-family: sans-serif; margin: 20px; background: #1a1a2e; color: #eee; }
+    h1   { color: #a78bfa; }
+    .box { background: #16213e; border: 1px solid #a78bfa; border-radius: 6px;
+           padding: 14px; margin: 12px 0; }
+    .ok  { color: #4ade80; font-weight: bold; }
+    .err { color: #f87171; font-weight: bold; }
+    button { background: #a78bfa; color: #fff; border: none; border-radius: 4px;
+             padding: 6px 14px; cursor: pointer; margin: 4px; }
+    #counter-val { font-size: 2em; color: #a78bfa; }
+    #log { font-family: monospace; font-size: 0.85em; background: #0f0f23;
+           padding: 8px; border-radius: 4px; max-height: 120px; overflow: auto; }
+  </style>
+</head>
+<body>
+
+<h1>AetherOS Iteration 2 — JavaScript Tests</h1>
+
+<!-- Test 1: Basic script execution -->
+<div class="box" id="test1">
+  <b>Test 1: Script execution + console.log</b>
+  <p id="t1result">...</p>
+</div>
+
+<!-- Test 2: document.getElementById + textContent -->
+<div class="box" id="test2">
+  <b>Test 2: getElementById + textContent</b>
+  <p id="t2result">...</p>
+</div>
+
+<!-- Test 3: setAttribute / getAttribute -->
+<div class="box" id="test3">
+  <b>Test 3: setAttribute / getAttribute</b>
+  <p id="t3result">...</p>
+</div>
+
+<!-- Test 4: Counter with setTimeout -->
+<div class="box">
+  <b>Test 4: Counter with setInterval (auto-ticking)</b><br>
+  <span id="counter-val">0</span>
+  <p id="t4result">...</p>
+</div>
+
+<!-- Test 5: Click event via addEventListener -->
+<div class="box">
+  <b>Test 5: Click event (addEventListener)</b><br>
+  <button id="clickme">Click me!</button>
+  <span id="click-count">0</span> clicks
+</div>
+
+<!-- Test 6: createElement + appendChild -->
+<div class="box" id="test6">
+  <b>Test 6: createElement + appendChild</b>
+  <div id="dynamic-area"></div>
+</div>
+
+<!-- Log -->
+<div class="box">
+  <b>Log:</b>
+  <div id="log"></div>
+</div>
+
+<script>
+function log(msg) {
+  console.log(msg);
+  var logEl = document.getElementById("log");
+  if (logEl) {
+    logEl.textContent = logEl.textContent + msg + "\n";
+  }
+}
+
+/* ── Test 1: basic execution ── */
+var t1 = document.getElementById("t1result");
+if (t1) {
+  t1.textContent = "PASS — getElementById works, textContent set";
+  log("T1: PASS");
+} else {
+  log("T1: FAIL — getElementById returned null");
+}
+
+/* ── Test 2: getAttribute / setAttribute ── */
+var t2el = document.getElementById("test2");
+if (t2el) {
+  t2el.setAttribute("data-js", "iteration2");
+  var got = t2el.getAttribute("data-js");
+  var r2 = document.getElementById("t2result");
+  if (r2) {
+    if (got === "iteration2") {
+      r2.textContent = "PASS — setAttribute/getAttribute: got '" + got + "'";
+      log("T2: PASS");
+    } else {
+      r2.textContent = "FAIL — got '" + got + "'";
+      log("T2: FAIL got=" + got);
+    }
+  }
+} else {
+  log("T2: FAIL — test2 element not found");
+}
+
+/* ── Test 3: tagName ── */
+var t3el = document.getElementById("test3");
+if (t3el) {
+  var tag = t3el.tagName;
+  var r3 = document.getElementById("t3result");
+  if (r3) {
+    if (tag === "DIV") {
+      r3.textContent = "PASS — tagName = '" + tag + "'";
+      log("T3: PASS tagName=" + tag);
+    } else {
+      r3.textContent = "FAIL — tagName = '" + tag + "'";
+      log("T3: FAIL tagName=" + tag);
+    }
+  }
+} else {
+  log("T3: FAIL — test3 not found");
+}
+
+/* ── Test 4: setInterval counter ── */
+var counter = 0;
+var r4 = document.getElementById("t4result");
+if (r4) r4.textContent = "Running...";
+
+var counterEl = document.getElementById("counter-val");
+
+setInterval(function() {
+  counter++;
+  if (counterEl) counterEl.textContent = counter;
+  if (counter === 3 && r4) {
+    r4.textContent = "PASS — setInterval fired 3 times";
+    log("T4: PASS");
+  }
+}, 500);
+
+/* ── Test 5: click event ── */
+var clicks = 0;
+var btn = document.getElementById("clickme");
+var clickCountEl = document.getElementById("click-count");
+
+if (btn) {
+  btn.addEventListener("click", function(event) {
+    clicks++;
+    if (clickCountEl) clickCountEl.textContent = clicks;
+    log("T5: click #" + clicks);
+  });
+  log("T5: addEventListener registered");
+} else {
+  log("T5: FAIL — button not found");
+}
+
+/* ── Test 6: createElement + appendChild ── */
+var area = document.getElementById("dynamic-area");
+if (area) {
+  var p = document.createElement("p");
+  if (p) {
+    p.textContent = "PASS — dynamic element created and appended";
+    area.appendChild(p);
+    log("T6: PASS");
+  } else {
+    log("T6: FAIL — createElement returned null");
+  }
+} else {
+  log("T6: FAIL — dynamic-area not found");
+}
+
+log("All synchronous tests complete.");
+</script>
+
+</body>
+</html>

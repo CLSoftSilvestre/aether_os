@@ -9,6 +9,7 @@
  */
 
 #include <gfx.h>
+#include <gpu.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys.h>
@@ -127,8 +128,30 @@ int main(void)
     gfx_init();
     SIDE_W = (int)gfx_width() - SIDE_X - 8;
 
+    long win_id = sys_wm_register(SIDE_X, SIDE_Y, SIDE_W, SIDE_H, "StatusBar");
+
+    gpu_bo_t  bo     = GPU_BO_INVALID;
+    unsigned *bo_ptr = (unsigned *)0;
+    if (win_id >= 0) {
+        bo = gpu_alloc((unsigned)(SIDE_W * SIDE_H) * 4u);
+        if (bo != GPU_BO_INVALID) {
+            bo_ptr = (unsigned *)gpu_map(bo);
+            if (bo_ptr) {
+                sys_wm_set_buffer(win_id, bo);
+                gfx_set_damage_target((int)win_id);
+            } else {
+                gpu_free(bo);
+                bo = GPU_BO_INVALID;
+            }
+        }
+    }
+
     for (;;) {
+        if (bo_ptr)
+            gfx_begin_frame(bo_ptr, (unsigned)SIDE_W, SIDE_H, SIDE_X, SIDE_Y);
         draw_sidebar(gfx_ticks());
+        if (bo_ptr)
+            gfx_end_frame();
         sys_sleep(100);   /* refresh every second */
     }
 

@@ -69,6 +69,68 @@
 /* WM event types (match kernel wm.h) */
 #define WM_EV_REDRAW         0xFEu
 #define WM_EV_WINDOW_CLOSED  0xFFu
+#define WM_EV_DAMAGE         0xF0u
+#define WM_EV_COMPOSITOR_REQ 0xF1u
+#define WM_EV_FOCUS_GAINED   0xF2u
+#define WM_EV_FOCUS_LOST     0xF3u
+#define WM_EV_CLOSE_REQUEST  0xF4u   /* WM5.5: compositor must play close anim */
+#define WM_EV_MINIMIZE       0xF5u   /* WM7a: compositor plays minimize anim   */
+#define WM_EV_RESTORE        0xF6u   /* WM7a: compositor plays restore (open) anim */
+#define WM_EV_RESIZE         0xF7u   /* WM7b: app must reallocate BO and redraw */
+
+/* Compositing WM syscall numbers (wmanager branch) */
+#define SYS_WM_SET_ZINDEX      31
+#define SYS_WM_SET_OPACITY     32
+#define SYS_WM_SET_BLUR        33
+#define SYS_WM_SET_BUFFER      35
+#define SYS_WM_DAMAGE          36
+#define SYS_WM_ENUM            37
+#define SYS_WM_GET_BUFFER      38
+#define SYS_WM_SET_COMPOSITOR  39
+#define SYS_WM_DAMAGE_CLEAR    40
+#define SYS_WM_SET_VISIBLE     41
+#define SYS_WM_GET_ZINDEX      42
+/* WM5.5: close-animation protocol */
+#define SYS_WM_REQUEST_CLOSE   43
+#define SYS_WM_CLOSE_DONE      44
+
+/* WM7a: minimize/restore protocol */
+#define SYS_WM_MINIMIZE        45
+#define SYS_WM_RESTORE         46
+
+/* WM7b: live-resize protocol */
+#define SYS_WM_RESIZE          47  /* (win_id, new_w<<32|new_h) → 0 */
+
+/* WM9: window behaviour flags */
+#define SYS_WM_SET_FLAGS       48  /* (win_id, flags) → 0 */
+
+/* WM8: reserved z-index for the dock — always above regular windows */
+#define WM_Z_DOCK     32767
+#define WM_Z_DESKTOP      0   /* desktop layer — below all app windows */
+
+/* WM9: window behaviour flag bits */
+#define WM_FLAG_NO_CHROME  (1u << 0) /* system chrome: no title bar, drag, or resize */
+
+/*
+ * wm_entry_t — compositor window snapshot returned by sys_wm_enum().
+ * Must match layout of wm_entry_t in kernel/include/aether/wm.h.
+ */
+typedef struct {
+    int           win_id;
+    unsigned int  pid;
+    int           z_index;
+    int           x, y, w, h;
+    unsigned char opacity;
+    unsigned char blur_radius;
+    unsigned char damaged;
+    unsigned char visible;
+    unsigned char closing;     /* WM5.5: 1 = close animation in progress */
+    unsigned char minimized;   /* WM7a: 1 = minimized to dock */
+    unsigned char flags;       /* WM9: WM_FLAG_* bitmask */
+    unsigned char _pad;        /* align buf_handle to 4 bytes */
+    unsigned int  buf_handle;
+    char          title[32];
+} wm_entry_t;
 
 /* Standard file descriptors */
 #define STDIN_FILENO   0
@@ -442,6 +504,167 @@ static inline void sys_wm_push_event(long pid, unsigned long long event)
     _sys2(SYS_WM_PUSH_EVENT, pid, (long)event);
 }
 
+/* ── Compositing WM wrappers (wmanager branch) ─────────────────────────── */
+
+/* Set layer order — higher z = closer to user (default = registration order) */
+static inline void sys_wm_set_zindex(long win_id, int z)
+{
+    _sys2(SYS_WM_SET_ZINDEX, win_id, (long)z);
+}
+
+/* Set opacity 0-255 (255=opaque, 0=invisible) */
+static inline void sys_wm_set_opacity(long win_id, unsigned char opacity)
+{
+    _sys2(SYS_WM_SET_OPACITY, win_id, (long)opacity);
+}
+
+/* Set Kawase blur radius in pixels (0=no blur, 20=Lumina default) */
+static inline void sys_wm_set_blur(long win_id, unsigned char radius)
+{
+    _sys2(SYS_WM_SET_BLUR, win_id, (long)radius);
+}
+
+/* Show (1) or hide (0) a window from the compositor pass */
+static inline void sys_wm_set_visible(long win_id, int visible)
+{
+    _sys2(SYS_WM_SET_VISIBLE, win_id, (long)visible);
+}
+
+/* Associate a GPU BO handle (from sys_gpu_alloc) with this window as its
+ * content buffer.  Compositor reads pixels from this BO each frame. */
+static inline void sys_wm_set_buffer(long win_id, int buf_handle)
+{
+    _sys2(SYS_WM_SET_BUFFER, win_id, (long)buf_handle);
+}
+
+/* Return the GPU BO handle associated with a window (0 if none) */
+static inline int sys_wm_get_buffer(long win_id)
+{
+    return (int)_sys1(SYS_WM_GET_BUFFER, win_id);
+}
+
+/*
+ * Signal that this window's GPU buffer has been updated.
+ * Kernel sets the damaged flag and wakes the compositor.
+ * Call after every frame you render into your BO.
+ */
+static inline void sys_wm_damage(long win_id)
+{
+    _sys1(SYS_WM_DAMAGE, win_id);
+}
+
+/* Compositor clears the damaged flag after compositing the window */
+static inline void sys_wm_damage_clear(long win_id)
+{
+    _sys1(SYS_WM_DAMAGE_CLEAR, win_id);
+}
+
+/*
+ * Register this process as the compositor.
+ * The kernel will deliver WM_EV_DAMAGE events to this PID whenever any
+ * window calls sys_wm_damage().  Call once at compositor startup.
+ */
+static inline void sys_wm_set_compositor(long compositor_pid)
+{
+    _sys1(SYS_WM_SET_COMPOSITOR, compositor_pid);
+}
+
+/* Query z-index of a window */
+static inline int sys_wm_get_zindex(long win_id)
+{
+    return (int)_sys1(SYS_WM_GET_ZINDEX, win_id);
+}
+
+/* Set WM_FLAG_* behaviour flags on a window (WM9).
+ * Call after sys_wm_register().  Flags persist until the window unregisters. */
+static inline void sys_wm_set_flags(long win_id, unsigned char flags)
+{
+    _sys2(SYS_WM_SET_FLAGS, win_id, (long)flags);
+}
+
+/*
+ * WM5.5 close-animation protocol.
+ *
+ * sys_wm_request_close() — call instead of sys_wm_unregister() when the app
+ *   wants to close.  Kernel marks closing=1, sends WM_EV_CLOSE_REQUEST to the
+ *   compositor.  Window stays registered so the compositor can animate it out.
+ *   The app may exit immediately after this call.
+ *
+ * sys_wm_close_done() — called only by the compositor when the close animation
+ *   finishes.  Kernel unregisters the window and frees the BO.
+ */
+static inline void sys_wm_request_close(long win_id)
+{
+    _sys1(SYS_WM_REQUEST_CLOSE, win_id);
+}
+
+static inline void sys_wm_close_done(long win_id)
+{
+    _sys1(SYS_WM_CLOSE_DONE, win_id);
+}
+
+/*
+ * WM7a minimize/restore protocol.
+ * sys_wm_minimize() — called by init when yellow button is clicked.
+ *   Kernel marks minimized=1, sends WM_EV_MINIMIZE to compositor.
+ *   Compositor plays ANIM_MINIMIZE then hides window (visible=0).
+ * sys_wm_restore() — called by init when minimized thumbnail is clicked.
+ *   Kernel marks minimized=0, visible=1, sends WM_EV_RESTORE.
+ *   Compositor plays ANIM_OPEN (spring-open animation).
+ */
+static inline void sys_wm_minimize(long win_id)
+{
+    _sys1(SYS_WM_MINIMIZE, win_id);
+}
+
+static inline void sys_wm_restore(long win_id)
+{
+    _sys1(SYS_WM_RESTORE, win_id);
+}
+
+/*
+ * sys_wm_resize() — called by init during/after a resize drag gesture.
+ *   Kernel clamps to min 160×120, updates w/h, sends WM_EV_RESIZE to app,
+ *   and pings the compositor via WM_EV_DAMAGE (bilinear stretch of old BO).
+ */
+static inline void sys_wm_resize(long win_id, int new_w, int new_h)
+{
+    long wh = ((long)(unsigned int)new_w << 32) | (long)(unsigned int)new_h;
+    _sys2(SYS_WM_RESIZE, win_id, wh);
+}
+
+/* Decode new dimensions from a WM_EV_RESIZE event */
+static inline int wm_ev_resize_w(unsigned long long ev)
+{
+    return (int)((ev >> 32) & 0x00FFFFFFu);
+}
+static inline int wm_ev_resize_h(unsigned long long ev)
+{
+    return (int)(ev & 0xFFFFFFFFu);
+}
+
+/*
+ * Enumerate all active windows into entries[].
+ * Returns count of entries written (0 if none, -1 on error).
+ * Used by the compositor to build its scene graph each frame.
+ */
+static inline int sys_wm_enum(wm_entry_t *entries, int max)
+{
+    return (int)_sys2(SYS_WM_ENUM, (long)(void *)entries, (long)max);
+}
+
+/* Decode win_id from a WM_EV_DAMAGE or WM_EV_COMPOSITOR_REQ event */
+static inline int wm_event_win_id(unsigned long long ev)
+{
+    return (int)((ev >> 48) & 0xFFu);
+}
+
+/* Check event type from bits [63:56] */
+static inline unsigned int wm_event_type(unsigned long long ev)
+{
+    return (unsigned int)(ev >> 56);
+}
+
 /* ── WM event helpers (Phase 4.7) ──────────────────────────────────────── */
 
 /* Check whether a raw WM event is a WM_EV_WINDOW_CLOSED notification */
@@ -592,6 +815,25 @@ static inline long sys_fs_readdir(const char *path, char *buf, long len)
                                   *    anim_x<<32|anim_y,                         *
                                   *    anim_w<<32|(anim_h<<16)|alpha) → 0/-1      */
 
+/* WM3: batch compositor + double-buffer page flip */
+#define SYS_GPU_COMPOSITE_FRAME  913  /* (layers_ptr, count) → 0/-1 */
+#define SYS_FB_FLIP              914  /* () → 0; present back buffer  */
+
+/*
+ * v3d_layer_t — per-window descriptor for sys_gpu_composite_frame().
+ * Must match layout of v3d_layer_t in kernel/include/drivers/gpu/v3d.h.
+ */
+typedef struct {
+    unsigned int   bo_handle;    /* GPU BO handle; 0 = skip           */
+    int            src_w, src_h; /* BO content dimensions             */
+    int            dst_x, dst_y; /* framebuffer destination top-left  */
+    int            dst_w, dst_h; /* destination size (scale if diff)  */
+    unsigned char  opacity;      /* 0=skip, 255=opaque                */
+    unsigned char  blur_radius;  /* WM4 placeholder — ignored now     */
+    unsigned char  flags;        /* reserved, set 0                   */
+    unsigned char  _pad;
+} v3d_layer_t;
+
 /* Wallpaper sharing (Phase 6.1.x) */
 #define SYS_WP_REGISTER   906  /* (buf_ptr, (w<<32)|h) → 0 */
 #define SYS_WP_GET        907  /* () → raw pointer or 0    */
@@ -671,6 +913,33 @@ static inline long sys_composite_anim(int bo,
     long anim_pos  = ((long)anim_x << 32) | (long)anim_y;
     long anim_wha  = ((long)anim_w << 32) | ((long)anim_h << 16) | (long)alpha;
     return _sys5(SYS_COMPOSITE_ANIM, (long)bo, nat_pos, nat_sz, anim_pos, anim_wha);
+}
+
+/*
+ * sys_gpu_composite_frame — batch-composite all window layers in one kernel call.
+ *
+ *   layers   pointer to a v3d_layer_t array (already z-sorted, back-to-front)
+ *   n        number of entries (0 is valid — fills back buffer with wallpaper only)
+ *
+ * The kernel fills the back buffer with the wallpaper (or Lumina dark bg if none
+ * is registered), then alpha-blends each layer on top with bilinear scaling.
+ * Call sys_fb_flip() afterwards to present the result on screen.
+ * Replaces the per-window sys_wp_blend_fill + sys_gpu_blit loop used in WM2.
+ */
+static inline long sys_gpu_composite_frame(const v3d_layer_t *layers, int n)
+{
+    return _sys2(SYS_GPU_COMPOSITE_FRAME,
+                 (long)(const void *)layers, (long)n);
+}
+
+/*
+ * sys_fb_flip — present the compositor's back buffer to the screen.
+ * Safe to call even when double buffering is unavailable (no-op in that case).
+ * Must be called after sys_gpu_composite_frame() to make the frame visible.
+ */
+static inline long sys_fb_flip(void)
+{
+    return _sys0(SYS_FB_FLIP);
 }
 
 /* ── AetherFS write syscalls (Phase 5.5) ────────────────────────── */

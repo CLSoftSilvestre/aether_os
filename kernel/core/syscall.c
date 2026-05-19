@@ -45,6 +45,7 @@
 #include "aether/vfs.h"
 #include "aether/kmalloc.h"
 #include "drivers/gpu/v3d.h"
+#include "aether/vmm.h"
 #include "drivers/power/cpufreq.h"
 #include "drivers/power/thermal.h"
 #include "drivers/power/dpms.h"
@@ -340,6 +341,8 @@ static long do_sys_get_ticks(void)
 static long do_sys_fb_claim(void)
 {
     fb_console_claim();
+    v3d_dbl_init();    /* allocate compositor back buffer at FB resolution */
+    v3d_blur_init();   /* allocate WM4 Kawase blur scratch (quarter-res × 2) */
     return 0;
 }
 
@@ -352,6 +355,9 @@ static long do_sys_fb_blit(u64 buf_ptr, u64 xy, u64 wh, u64 stride_bytes)
     u32 dx = (u32)(xy >> 32), dy = (u32)(xy & 0xFFFFFFFFu);
     u32 w  = (u32)(wh >> 32), h  = (u32)(wh & 0xFFFFFFFFu);
     if (!src || !fb_base) return -1;
+    /* Drop blits from minimized windows so legacy apps cannot overdraw the
+     * wallpaper that init painted when the window was hidden. */
+    if (wm_is_pid_minimized(task_current_pid())) return 0;
     cursor_hide();
     fb_blit(src, dx, dy, w, h, (u32)stride_bytes);
     cursor_show();
@@ -584,7 +590,8 @@ static long do_sys_wm_get_size(long win_id) { return wm_get_size((int)win_id); }
 static long do_sys_wm_get_pid(long win_id)  { return (long)wm_get_pid((int)win_id); }
 
 /* SYS_WM_CLOSE — privileged: only PID 1 (init) may call this.
- * Hard-kills the window owner and removes it from the registry. */
+ * With compositor: triggers close animation, compositor calls SYS_WM_CLOSE_DONE.
+ * Without compositor: hard-kills immediately (legacy fallback). */
 static long do_sys_wm_close(long win_id)
 {
     if (task_current_pid() != 1) {
@@ -594,9 +601,12 @@ static long do_sys_wm_close(long win_id)
     }
     u32 owner = wm_get_pid((int)win_id);
     if (!owner) return -1;
-
-    /* task_kill frees resources, marks ZOMBIE, and triggers wm_unregister_by_pid */
-    return (long)task_kill(owner, -1);
+    if (wm_get_compositor()) {
+        wm_request_close((int)win_id);   /* compositor handles animation + close_done */
+    } else {
+        task_kill(owner, -1);            /* no compositor: hard-kill immediately */
+    }
+    return 0;
 }
 
 /* SYS_WM_EVENT_POLL — non-blocking dequeue from the calling process's WM ring.
@@ -618,6 +628,120 @@ static long do_sys_wm_push_event(u64 pid, u64 event)
 {
     wm_deliver_to_pid((u32)pid, event);
     return 0;
+}
+
+/* ── Compositing WM syscalls (wmanager branch) ───────────────────────────── */
+
+static long do_sys_wm_set_zindex(long win_id, long z)
+{
+    wm_set_zindex((int)win_id, (s32)z);
+    return 0;
+}
+
+static long do_sys_wm_set_opacity(long win_id, long opacity)
+{
+    wm_set_opacity((int)win_id, (u8)(opacity & 0xFFu));
+    return 0;
+}
+
+static long do_sys_wm_set_blur(long win_id, long radius)
+{
+    wm_set_blur((int)win_id, (u8)(radius & 0xFFu));
+    return 0;
+}
+
+static long do_sys_wm_set_visible(long win_id, long visible)
+{
+    wm_set_visible((int)win_id, (u8)(visible ? 1 : 0));
+    return 0;
+}
+
+static long do_sys_wm_set_buffer(long win_id, long buf_handle)
+{
+    wm_set_buffer((int)win_id, (u32)buf_handle);
+    return 0;
+}
+
+static long do_sys_wm_get_buffer(long win_id)
+{
+    return (long)wm_get_buffer((int)win_id);
+}
+
+static long do_sys_wm_damage(long win_id)
+{
+    wm_damage((int)win_id);
+    return 0;
+}
+
+static long do_sys_wm_damage_clear(long win_id)
+{
+    wm_damage_clear((int)win_id);
+    return 0;
+}
+
+static long do_sys_wm_set_compositor(long pid)
+{
+    wm_set_compositor((u32)pid);
+    return 0;
+}
+
+static long do_sys_wm_get_zindex(long win_id)
+{
+    return (long)wm_get_zindex((int)win_id);
+}
+
+/* WM5.5 — close-animation protocol handlers */
+static long do_sys_wm_request_close(long win_id)
+{
+    wm_request_close((int)win_id);
+    return 0;
+}
+
+static long do_sys_wm_close_done(long win_id)
+{
+    u32 owner = wm_get_pid((int)win_id);   /* snapshot pid before wm_unregister clears it */
+    wm_close_done((int)win_id);
+    if (owner > 1)
+        task_kill(owner, -1);              /* kill app if still alive (no-op if already exited) */
+    return 0;
+}
+
+/* WM7a — minimize/restore protocol handlers */
+static long do_sys_wm_minimize(long win_id)
+{
+    wm_minimize((int)win_id);
+    return 0;
+}
+
+static long do_sys_wm_restore(long win_id)
+{
+    wm_restore((int)win_id);
+    return 0;
+}
+
+/* WM9 — window behaviour flags */
+static long do_sys_wm_set_flags(long win_id, long flags)
+{
+    wm_set_flags((int)win_id, (u8)(flags & 0xFFu));
+    return 0;
+}
+
+/* WM7b — live-resize protocol handler */
+static long do_sys_wm_resize(long win_id, u64 wh)
+{
+    int new_w = (int)(u32)(wh >> 32);
+    int new_h = (int)(u32)(wh & 0xFFFFFFFFu);
+    wm_resize((int)win_id, new_w, new_h);
+    return 0;
+}
+
+/* SYS_WM_ENUM — fill user buffer with wm_entry_t snapshots.
+ * arg0 = pointer to wm_entry_t array, arg1 = max entries. */
+static long do_sys_wm_enum(u64 entries_ptr, long max)
+{
+    wm_entry_t *entries = (wm_entry_t *)entries_ptr;
+    if (!entries || max <= 0) return 0;
+    return (long)wm_enum(entries, (int)max);
 }
 
 /* ── Clipboard (Phase 5.3) ───────────────────────────────────────────────── */
@@ -796,6 +920,25 @@ long syscall_dispatch(trap_frame_t *frame)
     case SYS_WM_PUSH_EVENT:
         return do_sys_wm_push_event(arg0, arg1);
 
+    /* Compositing WM (wmanager branch) */
+    case SYS_WM_SET_ZINDEX:     return do_sys_wm_set_zindex((long)arg0, (long)arg1);
+    case SYS_WM_SET_OPACITY:    return do_sys_wm_set_opacity((long)arg0, (long)arg1);
+    case SYS_WM_SET_BLUR:       return do_sys_wm_set_blur((long)arg0, (long)arg1);
+    case SYS_WM_SET_VISIBLE:    return do_sys_wm_set_visible((long)arg0, (long)arg1);
+    case SYS_WM_SET_BUFFER:     return do_sys_wm_set_buffer((long)arg0, (long)arg1);
+    case SYS_WM_GET_BUFFER:     return do_sys_wm_get_buffer((long)arg0);
+    case SYS_WM_DAMAGE:         return do_sys_wm_damage((long)arg0);
+    case SYS_WM_DAMAGE_CLEAR:   return do_sys_wm_damage_clear((long)arg0);
+    case SYS_WM_SET_COMPOSITOR: return do_sys_wm_set_compositor((long)arg0);
+    case SYS_WM_GET_ZINDEX:     return do_sys_wm_get_zindex((long)arg0);
+    case SYS_WM_ENUM:           return do_sys_wm_enum(arg0, (long)arg1);
+    case SYS_WM_REQUEST_CLOSE:  return do_sys_wm_request_close((long)arg0);
+    case SYS_WM_CLOSE_DONE:     return do_sys_wm_close_done((long)arg0);
+    case SYS_WM_MINIMIZE:       return do_sys_wm_minimize((long)arg0);
+    case SYS_WM_RESTORE:        return do_sys_wm_restore((long)arg0);
+    case SYS_WM_RESIZE:         return do_sys_wm_resize((long)arg0, arg1);
+    case SYS_WM_SET_FLAGS:      return do_sys_wm_set_flags((long)arg0, (long)arg1);
+
     /* Clipboard (Phase 5.3) */
     case SYS_CLIPBOARD_WRITE: return do_sys_clipboard_write(arg0, arg1);
     case SYS_CLIPBOARD_READ:  return do_sys_clipboard_read(arg0, arg1);
@@ -845,8 +988,29 @@ long syscall_dispatch(trap_frame_t *frame)
         /* arg0 = bo_handle, arg1 = pointer to uintptr_t in user space */
         uintptr_t phys = v3d_bo_phys((u32)arg0);
         if (!phys) return -1;
-        /* Identity-mapped kernel: PA == VA, EL0 AP=BOTH_RW for full RAM */
-        *(uintptr_t *)arg1 = phys;
+
+        /* Map BO physical pages into the calling process's user VA space.
+         * GPU BOs live in kernel RAM (AP=EL1_RW); EL0 cannot access them
+         * directly.  We allocate VA from the task's BO bump allocator
+         * (0x74000000+) and map the pages there with AP=BOTH_RW. */
+        u32 size = v3d_bo_size((u32)arg0);
+        u32 n_pages = (u32)((size + PMM_PAGE_SIZE - 1) / PMM_PAGE_SIZE);
+
+        uintptr_t va = task_alloc_bo_va(n_pages);
+        uintptr_t l1 = task_current_l1();
+
+        if (vmm_map_user_pages(l1, va, phys, n_pages) != 0) return -1;
+
+        /* Flush TLB so EL0 sees the new mapping immediately after eret */
+        __asm__ volatile(
+            "dsb ish\n"
+            "tlbi vmalle1\n"
+            "dsb ish\n"
+            "isb\n"
+            ::: "memory"
+        );
+
+        *(uintptr_t *)arg1 = va;
         return 0;
     }
 
@@ -1018,6 +1182,21 @@ long syscall_dispatch(trap_frame_t *frame)
                                         alpha,
                                         g_wp_ptr, g_wp_bmpw, g_wp_bmph);
     }
+
+    /* ── WM3: batch compositor + double-buffer flip ─────────────────────── */
+
+    case SYS_GPU_COMPOSITE_FRAME: {
+        /* arg0 = pointer to v3d_layer_t[] in user memory
+         * arg1 = count (may be 0 for wallpaper-only frame) */
+        const v3d_layer_t *layers = (const v3d_layer_t *)arg0;
+        int n = (int)(long)arg1;
+        return (long)v3d_composite_layers(layers, n,
+                                          g_wp_ptr, g_wp_bmpw, g_wp_bmph);
+    }
+
+    case SYS_FB_FLIP:
+        v3d_dbl_flip();
+        return 0;
 
     /* ── Power management (Phase 6.2) ───────────────────────────────────── */
 

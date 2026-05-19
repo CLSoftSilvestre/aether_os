@@ -179,4 +179,72 @@ int v3d_composite_anim(u32 bo_handle,
                         u8 alpha,
                         uintptr_t wp_ptr, u32 wp_bmpw, u32 wp_bmph);
 
+/* ── WM3: batch compositing + double buffer ──────────────────────────── */
+
+/*
+ * Per-layer descriptor passed to v3d_composite_layers().
+ * Must match layout of v3d_layer_t in userspace sys.h.
+ *
+ * bo_handle == 0 means skip this layer.
+ * blur_radius is reserved for Phase WM4 (Dual Kawase blur) — ignored here.
+ */
+typedef struct {
+    u32  bo_handle;     /* GPU BO with XRGB8888 pixels; 0 = skip        */
+    s32  src_w, src_h;  /* natural dimensions stored in the BO          */
+    s32  dst_x, dst_y;  /* framebuffer destination top-left             */
+    s32  dst_w, dst_h;  /* destination size (bilinear scale if differs) */
+    u8   opacity;       /* 0 = transparent (skip), 255 = opaque             */
+    u8   blur_radius;   /* 0 = no blur; >0 = Kawase passes under the layer  */
+    u8   flags;         /* reserved, must be 0                              */
+    u8   _pad;
+} v3d_layer_t;
+
+/*
+ * v3d_dbl_init — allocate a back buffer matching the current framebuffer
+ * resolution.  Called once when the compositor claims the framebuffer
+ * (SYS_FB_CLAIM → do_sys_fb_claim → v3d_dbl_init).
+ * Safe to call multiple times; subsequent calls are no-ops.
+ */
+void v3d_dbl_init(void);
+
+/*
+ * v3d_blur_init — pre-allocate two quarter-resolution scratch buffers used
+ * by the Dual Kawase blur pipeline.  Called alongside v3d_dbl_init() from
+ * do_sys_fb_claim() so scratch is ready before the first composite frame.
+ * No-op when AETHER_KAWASE_BLUR is not defined, or if already initialised.
+ */
+void v3d_blur_init(void);
+
+/*
+ * v3d_dbl_flip — present the back buffer to the screen by copying it into
+ * the live framebuffer.  On QEMU (ramfb) this is a DMA word-copy;
+ * on Pi 4 hardware this will become a display-controller page flip (WM5+).
+ * No-op if v3d_dbl_init() was not called or PMM was exhausted.
+ */
+void v3d_dbl_flip(void);
+
+/*
+ * v3d_composite_layers — batch-composite a z-sorted layer list.
+ *
+ *   layers / n        layer descriptors (may be NULL if n==0)
+ *   wp_ptr            physical address of the registered wallpaper bitmap
+ *                     (0 if no wallpaper; falls back to Lumina dark bg)
+ *   wp_bmpw/wp_bmph   wallpaper bitmap dimensions in pixels
+ *
+ * Step 1: fill the back buffer (or framebuffer if no back buffer) with the
+ *         wallpaper (center-cropped if oversized) or Lumina BG colour.
+ * Step 2: for each layer back-to-front:
+ *   2a. If blur_radius > 0 and AETHER_KAWASE_BLUR is defined: capture the
+ *       already-composited background under this layer, run the Dual Kawase
+ *       pipeline (downsample ÷4 → N passes → upsample), write blurred bg back.
+ *   2b. Bilinear-scale the layer's BO content and alpha-blend it on top.
+ *
+ * Hardware path (Pi 4, future): TFU texturing + QPU fragment shaders.
+ * Software path (QEMU + fallback): fixed-point bilinear + alpha blend.
+ *
+ * Returns 0 on success, -1 on invalid arguments.
+ */
+int v3d_composite_layers(const v3d_layer_t *layers, int n,
+                          uintptr_t wp_ptr, u32 wp_bmpw, u32 wp_bmph);
+
 #endif /* DRIVERS_GPU_V3D_H */

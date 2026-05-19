@@ -112,6 +112,7 @@ typedef struct {
     u32           user_code_pages;  /* page count of ELF allocation */
     uintptr_t     user_stack_phys;  /* physical base of user stack pages */
     u32           user_stack_pages;
+    uintptr_t     bo_va_next;       /* next free VA for GPU BO mappings (0x74000000+) */
     fd_entry_t    fd_table[PROC_MAX_FD];
 } task_t;
 
@@ -205,6 +206,15 @@ u32 task_current_pid(void);
 
 /* Return name of currently running task (never NULL) */
 const char *task_current_name(void);
+
+/* Return L1 page table PA for the current task (falls back to global if 0) */
+uintptr_t task_current_l1(void);
+
+/*
+ * Allocate n_pages * 4KB of virtual address space from the current task's
+ * GPU BO mapping area (0x74000000+).  Returns the base VA of the allocation.
+ */
+uintptr_t task_alloc_bo_va(u32 n_pages);
 
 /* Print all task states (for debugging) */
 void scheduler_print_tasks(void);

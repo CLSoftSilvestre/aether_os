@@ -108,6 +108,74 @@ set_target_properties(user_init PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
 )
 
+# ── dock — WM8 dock subprocess (spawned by init after compositor) ─────────────
+add_executable(user_dock
+    apps/dock/main.c
+    lib/crt0.S
+)
+target_include_directories(user_dock PRIVATE lib/include)
+target_compile_options(user_dock PRIVATE ${USER_COMPILE_FLAGS})
+target_link_libraries(user_dock PRIVATE libwidget libaether)
+target_link_options(user_dock PRIVATE
+    -T ${USER_LINKER_SCRIPT} -nostdlib -static -Wl,--build-id=none
+)
+set_target_properties(user_dock PROPERTIES
+    OUTPUT_NAME "dock" SUFFIX ""
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
+)
+
+# ── topbar — macOS-style menu bar daemon (spawned by init after compositor) ───
+add_executable(user_topbar
+    apps/topbar/main.c
+    lib/crt0.S
+)
+target_include_directories(user_topbar PRIVATE lib/include)
+target_compile_options(user_topbar PRIVATE ${USER_COMPILE_FLAGS})
+target_link_libraries(user_topbar PRIVATE libwidget libaether)
+target_link_options(user_topbar PRIVATE
+    -T ${USER_LINKER_SCRIPT} -nostdlib -static -Wl,--build-id=none
+)
+set_target_properties(user_topbar PROPERTIES
+    OUTPUT_NAME "topbar" SUFFIX ""
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
+)
+
+# ── desktop — Lumina desktop layer: wallpaper + icons (spawned by init) ───────
+add_executable(user_desktop
+    apps/desktop/main.c
+    lib/crt0.S
+)
+target_include_directories(user_desktop PRIVATE lib/include)
+target_compile_options(user_desktop PRIVATE ${USER_COMPILE_FLAGS})
+target_link_libraries(user_desktop PRIVATE libwidget libaether)
+target_link_options(user_desktop PRIVATE
+    -T ${USER_LINKER_SCRIPT} -nostdlib -static -Wl,--build-id=none
+)
+set_target_properties(user_desktop PROPERTIES
+    OUTPUT_NAME "desktop" SUFFIX ""
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
+)
+
+# ── compositor — Lumina compositing window manager (wmanager branch) ─────────
+add_executable(user_compositor
+    apps/compositor/main.c
+    lib/crt0.S
+)
+target_include_directories(user_compositor PRIVATE lib/include)
+target_compile_options(user_compositor PRIVATE ${USER_COMPILE_FLAGS}
+    -DAETHER_GPU_COMPOSITOR   # WM3: batch GPU compositing path
+    -DAETHER_KAWASE_BLUR      # WM4: Dual Kawase blur (compositor passes blur_radius)
+    -DAETHER_SPRING_ANIM      # WM5: spring-physics open animations (Q12 fixed-point)
+)
+target_link_libraries(user_compositor PRIVATE libaether)
+target_link_options(user_compositor PRIVATE
+    -T ${USER_LINKER_SCRIPT} -nostdlib -static -Wl,--build-id=none
+)
+set_target_properties(user_compositor PROPERTIES
+    OUTPUT_NAME "compositor" SUFFIX ""
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
+)
+
 # ── aether_term — Phase 4.4 terminal process ─────────────────────────────────
 add_executable(user_aether_term
     apps/aether_term/main.c
@@ -699,6 +767,53 @@ else()
     set(IMG_TEST_TARGET "")
 endif()
 
+# ── aether_view — Phase 7.2 image viewer ─────────────────────────────────────
+#
+# Displays JPEG, PNG, and BMP files with zoom, pan, and Lumina glass UI.
+# Requires libjpeg + libpng (same fetch scripts as img_test).
+# Launched by the Files app when the user double-clicks an image file.
+
+if(LIBPNG_TARGET AND LIBJPEG_TARGET)
+
+    add_executable(user_aether_view
+        apps/aether_view/main.c
+        lib/crt0.S
+    )
+
+    target_include_directories(user_aether_view PRIVATE
+        ${LIBPNG_SRC_DIR}
+        ${LIBJPEG_SRC_DIR}
+        ${ZLIB_SRC_DIR}
+        ${POSIX_INC_DIR}
+        lib/include
+    )
+
+    target_compile_options(user_aether_view PRIVATE
+        ${USER_COMPILE_FLAGS}
+        -Wno-unused-parameter
+    )
+
+    target_link_libraries(user_aether_view PRIVATE
+        vendor_libpng
+        vendor_libjpeg
+        vendor_zlib
+        libwidget
+        libaether
+    )
+
+    target_link_options(user_aether_view PRIVATE
+        -T ${USER_LINKER_SCRIPT} -nostdlib -static -Wl,--build-id=none
+    )
+
+    set_target_properties(user_aether_view PROPERTIES
+        OUTPUT_NAME "aether_view" SUFFIX ""
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
+    )
+
+else()
+    message(STATUS "libjpeg/libpng not found — aether_view will NOT be built.")
+endif()
+
 # ── vendor_freetype — FreeType 2.13.x (Phase 7.2) ────────────────────────────
 #
 # Minimal source set for TrueType rendering: sfnt, truetype, smooth, autofit,
@@ -1066,6 +1181,8 @@ if(EXISTS ${NETSURF_GUARD})
 
     set(LDOM_DIR ${NETSURF_VENDOR}/libdom)
     file(GLOB_RECURSE LIBDOM_SRCS CONFIGURE_DEPENDS "${LDOM_DIR}/src/*.c")
+    # Hubbub binding: dom_hubbub_parser_* — needed by NetSurf html.c content handler
+    list(APPEND LIBDOM_SRCS ${LDOM_DIR}/bindings/hubbub/parser.c)
 
     add_library(vendor_libdom STATIC ${LIBDOM_SRCS})
     target_include_directories(vendor_libdom PUBLIC
@@ -1075,6 +1192,7 @@ if(EXISTS ${NETSURF_GUARD})
     )
     target_include_directories(vendor_libdom PRIVATE
         ${LDOM_DIR}/src
+        ${LDOM_DIR}/bindings/hubbub   # errors.h, utils.h
     )
     target_compile_options(vendor_libdom PRIVATE
         ${USER_COMPILE_FLAGS} ${NETSURF_WARN_FLAGS}
@@ -1189,7 +1307,7 @@ if(EXISTS ${QJS_GUARD})
         -Wno-missing-field-initializers
         -Wno-implicit-fallthrough
     )
-    target_link_libraries(vendor_quickjs PUBLIC libaether_posix)
+    target_link_libraries(vendor_quickjs PUBLIC libaether_posix ${QJS_LIBGCC_PATH})
     message(STATUS "[Phase 7.4] QuickJS found — building vendor_quickjs")
 
     # ── user_js_test — Phase 7.4 integration test (Task 7.4.5) ───────────────
@@ -1212,7 +1330,6 @@ if(EXISTS ${QJS_GUARD})
     target_link_libraries(user_js_test PRIVATE
         vendor_quickjs
         libaether_posix
-        ${QJS_LIBGCC_PATH}   # __udivti3 / __umodti3 — libbf.c 128-bit division
     )
     target_link_options(user_js_test PRIVATE
         -T ${USER_LINKER_SCRIPT} -nostdlib -static -Wl,--build-id=none
@@ -1228,6 +1345,478 @@ else()
         "[Phase 7.4] QuickJS not found in vendor/ — "
         "run scripts/fetch_quickjs.sh then re-configure.")
     set(JS_TEST_TARGET "")
+endif()
+
+# ── Iteration 3 — mbedTLS 3.6 (HTTPS/TLS) ───────────────────────────────────
+#
+# Pure-C TLS 1.2 library, ~300 KB, designed for embedded targets.
+# Fetch:  scripts/fetch_mbedtls.sh
+#   → vendor/mbedtls/   (gitignored — unmodified upstream)
+#   → lib/netsurf_aether/ca_bundle_gen.c  (generated + committed)
+#
+# Bridge files (always tracked):
+#   lib/netsurf_aether/mbedtls_aether_config.h  — minimal TLS 1.2 config
+#   lib/netsurf_aether/tls_aether.h / .c        — connect/read/write/close API
+#   lib/netsurf_aether/ca_bundle_gen.c           — Mozilla CA bundle as C array
+#
+# Excluded source files (not usable on AetherOS):
+#   net_sockets.c   — POSIX socket API (we use custom BIO callbacks)
+#   timing.c        — uses setitimer / SIGALRM (not in libaether_posix)
+#   threading.c     — pthreads (single-threaded model)
+#   entropy_poll.c  — reads /dev/urandom; replaced by mbedtls_hardware_poll()
+#                     in tls_aether.c (MBEDTLS_ENTROPY_HARDWARE_ALT)
+# PSA crypto files compile to nothing when MBEDTLS_PSA_CRYPTO_C is undefined
+# (guarded by #if inside each file) — we don't exclude them explicitly.
+
+set(MBEDTLS_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/mbedtls)
+set(MBEDTLS_BRIDGE  ${CMAKE_CURRENT_SOURCE_DIR}/lib/netsurf_aether)
+
+if(EXISTS ${MBEDTLS_SRC_DIR}/include/mbedtls/ssl.h)
+
+    # Collect all library sources then strip the four AetherOS-incompatible files
+    file(GLOB MBEDTLS_SRCS "${MBEDTLS_SRC_DIR}/library/*.c")
+    list(FILTER MBEDTLS_SRCS EXCLUDE REGEX
+        "/(net_sockets|timing|threading|entropy_poll)\\.c$")
+
+    add_library(vendor_mbedtls STATIC
+        ${MBEDTLS_SRCS}
+        ${MBEDTLS_BRIDGE}/tls_aether.c          # TLS API wrapper
+        ${MBEDTLS_BRIDGE}/ca_bundle_gen.c        # Mozilla CA bundle (generated)
+    )
+
+    target_include_directories(vendor_mbedtls PUBLIC
+        ${MBEDTLS_SRC_DIR}/include   # <mbedtls/ssl.h>, <mbedtls/entropy.h>, …
+        ${MBEDTLS_BRIDGE}            # mbedtls_aether_config.h, tls_aether.h
+        ${POSIX_INC_DIR}             # stdlib.h, string.h, stdint.h, …
+        lib/include                  # sys.h (sys_rtc_get, sys_get_ticks)
+    )
+
+    target_compile_definitions(vendor_mbedtls PRIVATE
+        # Tell mbedTLS to use our custom config header instead of the default
+        MBEDTLS_CONFIG_FILE="mbedtls_aether_config.h"
+    )
+
+    target_compile_options(vendor_mbedtls PRIVATE
+        ${USER_COMPILE_FLAGS}
+        # Override global -O0: three -O0-specific AArch64 bugs affect mbedTLS at
+        # debug build level — wrong bignum from MULADDC asm stack locals, wrong ECP
+        # field reduction from 32-bit alias casts, and generic loop/register issues
+        # that break ECDSA verify (ecp_muladd) for ECDHE-ECDSA certs (Wikipedia).
+        # -O1 fixes all three without enabling NIST_OPTIM or HAVE_ASM.
+        -O1
+        # mbedTLS is pure integer math (bignum/SHA/ECP).  Restrict compilation to
+        # general-purpose registers only so GCC cannot auto-vectorize SHA-256 loops
+        # or inline memcpy/memset with NEON instructions.  Without this, a timer IRQ
+        # landing inside a NEON-vectorized SHA-256 iteration corrupts the hash state
+        # (AetherOS exceptions.S/context_switch.S do not save v0–v31) and causes
+        # ECDSA ServerKeyExchange verification to fail with ECP_VERIFY_FAILED.
+        -mgeneral-regs-only
+        # Also undefine __ARM_NEON to suppress any arm_neon.h include paths that
+        # common.h might try even though -mgeneral-regs-only already blocks them.
+        -U__ARM_NEON
+        -Wno-implicit-function-declaration
+        -Wno-unused-function
+        -Wno-unused-variable
+        -Wno-sign-compare
+        -Wno-type-limits
+        -Wno-missing-field-initializers
+        -Wno-array-bounds
+        -Wno-stringop-overflow
+        -w   # suppress remaining vendor warnings
+    )
+
+    target_link_libraries(vendor_mbedtls PUBLIC libaether_posix)
+
+    set(MBEDTLS_TARGET vendor_mbedtls)
+    message(STATUS "[Iter 3] mbedTLS 3.6 found — building vendor_mbedtls (TLS 1.2 client)")
+
+else()
+    message(STATUS
+        "[Iter 3] mbedTLS not found in vendor/mbedtls/ — "
+        "run scripts/fetch_mbedtls.sh then re-configure.  "
+        "HTTPS will remain disabled (HTTP-only browsing).")
+    set(MBEDTLS_TARGET "")
+endif()
+
+# ── Phase 7.5 — NetSurf core port ────────────────────────────────────────────
+#
+# Two sub-libraries:
+#   vendor_libnslog   — NetSurf structured logging framework
+#   vendor_netsurf    — NetSurf core (HTML/CSS/layout/fetch) + AetherOS bridge
+#
+# Prerequisites:
+#   scripts/fetch_netsurf.sh   → vendor/libnslog/, vendor/netsurf/
+#
+# AetherOS bridge files (tracked in git):
+#   lib/netsurf_aether/        → gui_misc, gui_fetch, gui_window stubs,
+#                                fetch_file, fetch_http stub, js_aether (QuickJS)
+#
+# The ns_test integration test calls netsurf_init() + netsurf_exit() and
+# verifies NSERROR_OK.  It is the deliverable for task 7.5.7.
+
+set(NSLOG_VENDOR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/libnslog)
+set(NS_VENDOR    ${CMAKE_CURRENT_SOURCE_DIR}/vendor/netsurf)
+set(NS_BRIDGE    ${CMAKE_CURRENT_SOURCE_DIR}/lib/netsurf_aether)
+
+# Guard: only build if the source was fetched
+if(EXISTS ${NSLOG_VENDOR}/include/nslog/nslog.h AND
+   EXISTS ${NS_VENDOR}/include/netsurf/netsurf.h)
+
+    # ── vendor_libnslog ───────────────────────────────────────────────────────
+    # Small structured logging library used by NetSurf core.
+
+    file(GLOB_RECURSE LIBNSLOG_SRCS CONFIGURE_DEPENDS "${NSLOG_VENDOR}/src/*.c")
+    # filter.c requires bison-generated headers not shipped in the source tree;
+    # replaced by nslog_filter_stub.c in NS_BRIDGE_SRCS (via vendor_netsurf).
+    list(FILTER LIBNSLOG_SRCS EXCLUDE REGEX ".*/filter\\.c$")
+
+    add_library(vendor_libnslog STATIC ${LIBNSLOG_SRCS})
+
+    target_include_directories(vendor_libnslog PUBLIC
+        ${NSLOG_VENDOR}/include
+        ${POSIX_INC_DIR}
+        lib/include
+    )
+    target_compile_options(vendor_libnslog PRIVATE
+        ${USER_COMPILE_FLAGS}
+        -w   # suppress all warnings in vendor code
+    )
+    target_link_libraries(vendor_libnslog PUBLIC libaether_posix)
+
+    message(STATUS "[Phase 7.5] libnslog found — building vendor_libnslog")
+
+    # ── vendor_netsurf ────────────────────────────────────────────────────────
+    # NetSurf core: all .c files under vendor/netsurf/ EXCEPT:
+    #   frontends/          — platform-specific frontends (we have our own bridge)
+    #   javascript/duktape/ — Duktape JS engine (replaced by QuickJS bridge)
+    #   javascript/none.c   — no-op JS stub (replaced by js_aether.c)
+    #   content/fetchers/curl.c — curl HTTP (replaced by fetch_http_aether.c)
+    #   test/               — unit test helpers
+    #   tools/              — code-generation tools (host-side, not library)
+
+    file(GLOB_RECURSE NETSURF_SRCS CONFIGURE_DEPENDS "${NS_VENDOR}/*.c")
+
+    list(FILTER NETSURF_SRCS EXCLUDE REGEX ".*/frontends/.*\\.c$")
+    list(FILTER NETSURF_SRCS EXCLUDE REGEX ".*/javascript/duktape/.*\\.c$")
+    list(FILTER NETSURF_SRCS EXCLUDE REGEX ".*/javascript/none\\.c$")
+    list(FILTER NETSURF_SRCS EXCLUDE REGEX ".*/content/fetchers/curl\\.c$")
+    # Replaced by fetch_file_aether.c (entire file/ dir excluded — uses scandir/dirfd/fstatat)
+    list(FILTER NETSURF_SRCS EXCLUDE REGEX ".*/content/fetchers/file/.*\\.c$")
+    list(FILTER NETSURF_SRCS EXCLUDE REGEX ".*/test/.*\\.c$")
+    list(FILTER NETSURF_SRCS EXCLUDE REGEX ".*/utils/test.*\\.c$")
+    list(FILTER NETSURF_SRCS EXCLUDE REGEX ".*/tools/.*\\.c$")
+    # Optional image formats not available on AetherOS
+    list(FILTER NETSURF_SRCS EXCLUDE REGEX ".*/image/nssprite\\.c$")   # RISC OS sprites (librosprite)
+    list(FILTER NETSURF_SRCS EXCLUDE REGEX ".*/image/jpegxl\\.c$")     # JPEG XL (libjxl)
+    list(FILTER NETSURF_SRCS EXCLUDE REGEX ".*/image/rsvg\\.c$")       # SVG via librsvg (old)
+    list(FILTER NETSURF_SRCS EXCLUDE REGEX ".*/image/rsvg246\\.c$")    # SVG via librsvg 2.46
+    list(FILTER NETSURF_SRCS EXCLUDE REGEX ".*/image/svg\\.c$")        # SVG via libsvgtiny
+    list(FILTER NETSURF_SRCS EXCLUDE REGEX ".*/image/video\\.c$")      # Video via GStreamer
+    list(FILTER NETSURF_SRCS EXCLUDE REGEX ".*/image/webp\\.c$")       # WebP (libwebp)
+
+    # AetherOS bridge files (tracked in git, not part of the upstream clone)
+    set(NS_BRIDGE_SRCS
+        ${NS_BRIDGE}/nslog_aether.c
+        ${NS_BRIDGE}/nslog_filter_stub.c   # replaces libnslog filter.c (bison-generated dep)
+        ${NS_BRIDGE}/gui_misc_aether.c
+        ${NS_BRIDGE}/gui_fetch_aether.c
+        ${NS_BRIDGE}/gui_window_stub.c
+        ${NS_BRIDGE}/gui_bitmap_aether.c
+        ${NS_BRIDGE}/gui_layout_aether.c
+        ${NS_BRIDGE}/plot_aether.c         # Phase 7.7 plotter_table implementation
+        ${NS_BRIDGE}/fetch_file_aether.c   # provides fetch_file_register() (replaces built-in)
+        ${NS_BRIDGE}/fetch_http_aether.c   # Phase 7.6 real HTTP/1.1 over POSIX sockets
+        ${NS_BRIDGE}/js_aether.c
+    )
+
+    add_library(vendor_netsurf STATIC ${NETSURF_SRCS} ${NS_BRIDGE_SRCS})
+
+    # Include paths:
+    #   NS_VENDOR/     — #include "utils/log.h", "desktop/browser_window.h"
+    #   NS_VENDOR/include — #include "netsurf/browser_window.h" (public API)
+    #   NS_BRIDGE/     — netsurf_aether.h + options.h
+    #   vendor libs    — libdom, libcss, quickjs, …
+    #   POSIX shim + sys.h
+    target_include_directories(vendor_netsurf PUBLIC
+        ${NS_VENDOR}
+        ${NS_VENDOR}/include
+        ${NETSURF_VENDOR}          # dom/ symlink → libdom/ (needed for dom/bindings/hubbub/parser.h)
+        ${NS_VENDOR}/content/handlers   # js.h lives at javascript/js.h here
+        ${NS_VENDOR}/frontends          # framebuffer/options.h for nsoption.c
+        ${NS_BRIDGE}
+        ${NSLOG_VENDOR}/include
+        ${NETSURF_VENDOR}/libdom/include
+        ${NETSURF_VENDOR}/libcss/include
+        ${NETSURF_VENDOR}/libhubbub/include
+        ${NETSURF_VENDOR}/libparserutils/include
+        ${NETSURF_VENDOR}/libwapcaplet/include
+        ${NETSURF_VENDOR}/libnsutils/include
+        ${NETSURF_VENDOR}/libnsbmp/include
+        ${NETSURF_VENDOR}/libnsgif/include
+        ${FT_SRC_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/lib/aether_font   # aether_font.h
+        ${QJS_DIR}
+        ${LIBPNG_SRC_DIR}
+        ${LIBJPEG_SRC_DIR}
+        ${ZLIB_SRC_DIR}
+        ${POSIX_INC_DIR}
+        lib/include
+    )
+
+    target_compile_definitions(vendor_netsurf PRIVATE
+        NETSURF_AETHER=1
+        # nsoption.c selects frontend options via #elif chains on these defines.
+        # "nsframebuffer" is the closest existing frontend to AetherOS (same
+        # direct framebuffer model); it causes nsoption.c to #include
+        # "frontends/framebuffer/options.h" which has sensible bare-metal defaults.
+        nsframebuffer=1
+        # Enable image formats we have vendor libraries for
+        WITH_BMP
+        WITH_GIF
+        WITH_JPEG
+        WITH_PNG
+        # Disable optional backends we haven't ported (leave undefined so #ifdef guards work)
+        # WITH_RSVG, WITH_WEBP, WITH_HARU, WITH_EXPAT, WITH_NSSPRITE, WITH_JPEGXL, WITH_NS_SVG
+        NETSURF_USE_CURL=0
+        NETSURF_USE_DUKTAPE=0
+        # Log filter defaults (NULL = no filter; our stub always passes through)
+        "NETSURF_BUILTIN_LOG_FILTER=NULL"
+        "NETSURF_BUILTIN_VERBOSE_FILTER=NULL"
+    )
+
+    target_compile_options(vendor_netsurf PRIVATE
+        ${USER_COMPILE_FLAGS}
+        -w                        # suppress all warnings in vendor code
+        -Wno-implicit-function-declaration
+        -Wno-int-conversion       # GCC 14: int→pointer now a hard error in vendor code
+    )
+
+    target_link_libraries(vendor_netsurf PUBLIC
+        vendor_libnslog
+        vendor_libdom
+        vendor_libcss
+        vendor_libhubbub
+        vendor_libparserutils
+        vendor_libwapcaplet
+        vendor_libnsutils
+        vendor_libnsbmp
+        vendor_libnsgif
+        vendor_libpng
+        vendor_libjpeg
+        vendor_zlib
+        vendor_freetype
+        vendor_quickjs
+        libaether_posix
+    )
+
+    # Iteration 3: link mbedTLS when available
+    if(MBEDTLS_TARGET)
+        target_link_libraries(vendor_netsurf PUBLIC ${MBEDTLS_TARGET})
+        target_compile_definitions(vendor_netsurf PRIVATE AETHER_TLS_ENABLED=1)
+        target_include_directories(vendor_netsurf PUBLIC
+            ${MBEDTLS_SRC_DIR}/include   # <mbedtls/ssl.h> for fetch_http_aether.c
+        )
+    endif()
+
+    set(NETSURF_TARGET vendor_netsurf)
+    message(STATUS "[Phase 7.5] NetSurf core found — building vendor_netsurf")
+
+    # ── user_ns_test — Phase 7.5.7 integration test ───────────────────────────
+    #
+    # Calls netsurf_init() with the AetherOS table, verifies NSERROR_OK,
+    # then calls netsurf_exit().  Exits 0 on success, 1 on failure.
+    # Run in AetherOS: ns_test
+
+    add_executable(user_ns_test
+        apps/ns_test/main.c
+        lib/crt0.S
+    )
+
+    target_include_directories(user_ns_test PRIVATE
+        ${NS_VENDOR}
+        ${NS_VENDOR}/include
+        ${NS_BRIDGE}
+        ${NSLOG_VENDOR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/lib/aether_font
+        ${POSIX_INC_DIR}
+        lib/include
+    )
+
+    target_compile_options(user_ns_test PRIVATE
+        ${USER_COMPILE_FLAGS}
+        -Wno-unused-parameter
+        -Wno-implicit-function-declaration
+    )
+
+    target_link_libraries(user_ns_test PRIVATE
+        vendor_netsurf
+        libaether_font
+        libaether_posix
+    )
+
+    target_link_options(user_ns_test PRIVATE
+        -T ${USER_LINKER_SCRIPT} -nostdlib -static -Wl,--build-id=none
+        -Wl,--allow-multiple-definition
+    )
+
+    set_target_properties(user_ns_test PROPERTIES
+        OUTPUT_NAME "ns_test" SUFFIX ""
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
+    )
+
+    set(NS_TEST_TARGET user_ns_test)
+
+    # ── user_fetch_test — Phase 7.6.7 HTTP fetch integration test ────────────────
+    #
+    # Calls fetch_start() with an http:// URL, drains the cooperative scheduler
+    # until FETCH_FINISHED arrives, then dumps the HTTP status / body to UART.
+    # Usage inside AetherOS: fetch_test [url]
+    # Default URL: http://10.0.2.2:8080/test.html  (QEMU host via port-forward)
+
+    add_executable(user_fetch_test
+        apps/fetch_test/main.c
+        lib/crt0.S
+    )
+
+    target_include_directories(user_fetch_test PRIVATE
+        ${NS_VENDOR}
+        ${NS_VENDOR}/include
+        ${NS_BRIDGE}
+        ${NSLOG_VENDOR}/include
+        ${NETSURF_VENDOR}/libwapcaplet/include
+        ${POSIX_INC_DIR}
+        lib/include
+    )
+
+    target_compile_options(user_fetch_test PRIVATE
+        ${USER_COMPILE_FLAGS}
+        -Wno-implicit-function-declaration
+    )
+
+    target_link_libraries(user_fetch_test PRIVATE
+        vendor_netsurf
+        libaether_font
+        libaether_posix
+    )
+
+    target_link_options(user_fetch_test PRIVATE
+        -T ${USER_LINKER_SCRIPT} -nostdlib -static -Wl,--build-id=none
+        -Wl,--allow-multiple-definition
+    )
+
+    set_target_properties(user_fetch_test PROPERTIES
+        OUTPUT_NAME "fetch_test" SUFFIX ""
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
+    )
+
+    set(FETCH_TEST_TARGET user_fetch_test)
+
+    # ── user_browser_test — Phase 7.7 render integration test ────────────────
+    #
+    # Calls browser_window_create() + browser_window_redraw() with
+    # aether_plotter_table, blitting the result to the AetherOS framebuffer.
+    # Usage inside AetherOS: browser_test [url]
+    # Default URL: http://10.0.2.2:8080/index.html
+
+    add_executable(user_browser_test
+        apps/browser_test/main.c
+        lib/crt0.S
+    )
+
+    target_include_directories(user_browser_test PRIVATE
+        ${NS_VENDOR}
+        ${NS_VENDOR}/include
+        ${NS_BRIDGE}
+        ${NSLOG_VENDOR}/include
+        ${NETSURF_VENDOR}/libwapcaplet/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/lib/aether_font
+        ${POSIX_INC_DIR}
+        lib/include
+    )
+
+    target_compile_options(user_browser_test PRIVATE
+        ${USER_COMPILE_FLAGS}
+        -Wno-implicit-function-declaration
+        -Wno-unused-parameter
+    )
+
+    target_link_libraries(user_browser_test PRIVATE
+        vendor_netsurf
+        libaether_font
+        libaether_posix
+        libaether           # for gfx_raw_blit, gfx_init, gfx_glass_window_frame
+    )
+
+    target_link_options(user_browser_test PRIVATE
+        -T ${USER_LINKER_SCRIPT} -nostdlib -static -Wl,--build-id=none
+        -Wl,--allow-multiple-definition
+    )
+
+    set_target_properties(user_browser_test PROPERTIES
+        OUTPUT_NAME "browser_test" SUFFIX ""
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
+    )
+
+    set(BROWSER_TEST_TARGET user_browser_test)
+
+    # ── user_aether_browser — Phase 7.8 MVP browser app ──────────────────────
+    #
+    # Full Lumina-styled browser: toolbar (back/fwd/reload + address bar),
+    # NetSurf viewport via aether_plotter_table, status bar, WM event loop.
+    # Registered at /aether_browser in initrd; launched from desktop icon.
+
+    add_executable(user_aether_browser
+        apps/aether_browser/main.c
+        lib/crt0.S
+    )
+
+    target_include_directories(user_aether_browser PRIVATE
+        ${NS_VENDOR}
+        ${NS_VENDOR}/include
+        ${NS_VENDOR}/desktop       # browser_history.h
+        ${NS_BRIDGE}
+        ${NSLOG_VENDOR}/include
+        ${NETSURF_VENDOR}/libwapcaplet/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/lib/aether_font
+        ${POSIX_INC_DIR}
+        lib/include
+    )
+
+    target_compile_options(user_aether_browser PRIVATE
+        ${USER_COMPILE_FLAGS}
+        -Wno-implicit-function-declaration
+        -Wno-unused-parameter
+    )
+
+    target_link_libraries(user_aether_browser PRIVATE
+        vendor_netsurf
+        libwidget
+        libaether_font
+        libaether_posix
+        libaether
+    )
+
+    target_link_options(user_aether_browser PRIVATE
+        -T ${USER_LINKER_SCRIPT} -nostdlib -static -Wl,--build-id=none
+        -Wl,--allow-multiple-definition
+    )
+
+    set_target_properties(user_aether_browser PROPERTIES
+        OUTPUT_NAME "aether_browser" SUFFIX ""
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
+    )
+
+    set(AETHER_BROWSER_TARGET user_aether_browser)
+
+else()
+    message(STATUS
+        "[Phase 7.5] NetSurf core not found — "
+        "run scripts/fetch_netsurf.sh then re-configure.")
+    set(NETSURF_TARGET "")
+    set(NS_TEST_TARGET "")
+    set(FETCH_TEST_TARGET "")
+    set(BROWSER_TEST_TARGET "")
+    set(AETHER_BROWSER_TARGET "")
 endif()
 
 # ── initrd CPIO archive ───────────────────────────────────────────────────────
@@ -1256,6 +1845,9 @@ add_custom_command(
             ${INITRD_FILES_SRC}/apps/font_test.app
             ${INITRD_FILES_SRC}/apps/html_test.app
             ${INITRD_FILES_SRC}/apps/js_test.app
+            ${INITRD_FILES_SRC}/apps/compositor.app
+            ${INITRD_FILES_SRC}/apps/ns_test.app
+            ${INITRD_FILES_SRC}/apps/fetch_test.app
     COMMENT "Copying initrd static files"
 )
 
@@ -1265,14 +1857,19 @@ add_custom_command(
     COMMAND ${CMAKE_SOURCE_DIR}/scripts/make_initrd.sh
                 ${INITRD_STAGING}
                 ${INITRD_CPIO}
-    DEPENDS user_init user_aether_term user_statusbar user_files user_textviewer
-            user_calculator user_tictactoe user_widget_demo user_aether_editor
-            user_aether_http user_telnet user_aether_top user_posix_test
+    DEPENDS user_init user_dock user_topbar user_desktop user_compositor user_aether_term user_statusbar user_files
+            user_textviewer user_calculator user_tictactoe user_widget_demo
+            user_aether_editor user_aether_http user_telnet user_aether_top
+            user_posix_test
             ${INTERP_TARGET}
             ${IMG_TEST_TARGET}
             ${FONT_TEST_TARGET}
             ${HTML_TEST_TARGET}
             ${JS_TEST_TARGET}
+            ${NS_TEST_TARGET}
+            ${FETCH_TEST_TARGET}
+            ${BROWSER_TEST_TARGET}
+            ${AETHER_BROWSER_TARGET}
             ${INITRD_STAGING}/motd.txt
     COMMENT "Packaging initrd.cpio"
 )

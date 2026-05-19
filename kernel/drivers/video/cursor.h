@@ -17,6 +17,7 @@ void cursor_init(void);
 void cursor_show(void);
 void cursor_hide(void);
 void cursor_move(unsigned int x, unsigned int y);
+void cursor_redraw(void);   /* re-save bg + redraw sprite; use after a full FB flip */
 void cursor_get_pos(unsigned int *x, unsigned int *y);
 
 #endif /* AETHER_CURSOR_H */

@@ -17,6 +17,11 @@
 #define O_APPEND    0x400
 #define O_NONBLOCK  0x800
 
+/* openat / fstatat directory-relative flags */
+#define AT_FDCWD            (-100)
+#define AT_SYMLINK_NOFOLLOW 0x100
+#define AT_REMOVEDIR        0x200
+
 /* open(): create or open a file; returns fd or -1 */
 int open(const char *path, int flags, ...);
 

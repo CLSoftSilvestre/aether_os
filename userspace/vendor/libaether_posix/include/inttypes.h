@@ -31,6 +31,23 @@
 #define PRIuPTR  "lu"
 #define PRIxPTR  "lx"
 
+/* scanf format specifiers */
+#define SCNd8    "hhd"
+#define SCNd16   "hd"
+#define SCNd32   "d"
+#define SCNd64   "ld"
+#define SCNu8    "hhu"
+#define SCNu16   "hu"
+#define SCNu32   "u"
+#define SCNu64   "lu"
+#define SCNx8    "hhx"
+#define SCNx16   "hx"
+#define SCNx32   "x"
+#define SCNx64   "lx"
+#define SCNdMAX  "ld"
+#define SCNuMAX  "lu"
+#define SCNxMAX  "lx"
+
 typedef long long intmax_t;
 typedef unsigned long long uintmax_t;
 

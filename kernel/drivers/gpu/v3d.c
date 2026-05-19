@@ -25,6 +25,7 @@
 #include "drivers/gpu/v3d.h"
 #include "drivers/gpu/mailbox.h"
 #include "drivers/video/fb.h"
+#include "drivers/video/cursor.h"
 #include "aether/mm.h"
 #include "aether/printk.h"
 #include "aether/types.h"
@@ -46,6 +47,20 @@ static volatile u32 * const g_hub = (volatile u32 *)V3D_HUB_BASE_PI4;
 static bool       g_present;
 static gpu_caps_t g_caps;
 static gpu_bo_t   g_bos[GPU_MAX_BOS];
+
+/* Double-buffer back buffer (allocated by v3d_dbl_init when compositor claims FB) */
+static volatile u32 *g_back_buf;
+static u32           g_back_pages;
+
+/* WM4: Dual Kawase blur scratch — two quarter-resolution ping-pong buffers */
+#ifdef AETHER_KAWASE_BLUR
+static volatile u32 *g_blur_ping;   /* scratch A: (fb_width/4) × (fb_height/4) */
+static volatile u32 *g_blur_pong;   /* scratch B: same size, for ping-pong passes */
+static u32           g_blur_pages;  /* pages per scratch buffer */
+#endif
+
+/* Lumina dark background — fallback when no wallpaper is registered */
+#define LUMINA_BG_COLOR  0x0d1117u
 
 /* ── Internal helpers ─────────────────────────────────────────────────── */
 
@@ -737,5 +752,349 @@ int v3d_composite_anim(u32 bo_handle,
             }
         }
     }
+    return 0;
+}
+
+/* ── WM3: double-buffer ───────────────────────────────────────────────── */
+
+void v3d_dbl_init(void)
+{
+    if (g_back_buf) return;   /* idempotent */
+    if (!fb_base || !fb_width || !fb_height) return;
+
+    u32 bytes  = fb_width * fb_height * 4u;
+    u32 npages = pages_for(bytes);
+    uintptr_t phys = pmm_alloc_pages(npages);
+    if (!phys) {
+        kwarn("[V3D] dbl_init: PMM exhausted — compositor uses direct FB\n");
+        return;
+    }
+    g_back_buf   = (volatile u32 *)phys;
+    g_back_pages = npages;
+    kinfo("[V3D] double buffer: %u KB at 0x%lx\n",
+          (bytes + 1023u) / 1024u, (unsigned long)phys);
+}
+
+void v3d_dbl_flip(void)
+{
+    if (!g_back_buf || !fb_base) return;
+    u32 n = fb_width * fb_height;
+    __asm__ volatile("dsb sy" ::: "memory");   /* ensure back-buf writes visible */
+    const volatile u32 *s = g_back_buf;
+    volatile u32       *d = fb_base;
+    for (u32 i = 0; i < n; i++) d[i] = s[i];
+    /* The back buffer never contains the cursor sprite, so redraw it on top of
+     * the freshly copied front buffer.  cursor_redraw() saves the new background
+     * pixels first so the next cursor_move() can restore them cleanly. */
+    cursor_redraw();
+}
+
+/* ── WM4: Dual Kawase blur ────────────────────────────────────────────── */
+
+#ifdef AETHER_KAWASE_BLUR
+
+void v3d_blur_init(void)
+{
+    if (g_blur_ping) return;   /* idempotent */
+    if (!fb_width || !fb_height) return;
+
+    u32 sw    = (fb_width  + 3u) / 4u;   /* quarter-res width  */
+    u32 sh    = (fb_height + 3u) / 4u;   /* quarter-res height */
+    u32 bytes = sw * sh * 4u;
+    u32 np    = pages_for(bytes);
+
+    uintptr_t pa = pmm_alloc_pages(np);
+    uintptr_t pb = pmm_alloc_pages(np);
+    if (!pa || !pb) {
+        if (pa) { for (u32 i = 0; i < np; i++) pmm_free_page(pa + i * PMM_PAGE_SIZE); }
+        if (pb) { for (u32 i = 0; i < np; i++) pmm_free_page(pb + i * PMM_PAGE_SIZE); }
+        kwarn("[V3D] blur_init: PMM exhausted — glassmorphism blur disabled\n");
+        return;
+    }
+    g_blur_ping  = (volatile u32 *)pa;
+    g_blur_pong  = (volatile u32 *)pb;
+    g_blur_pages = np;
+    kinfo("[V3D] Kawase blur scratch: %u KB × 2 at 0x%lx / 0x%lx\n",
+          (bytes + 1023u) / 1024u, (unsigned long)pa, (unsigned long)pb);
+}
+
+/*
+ * kawase_pass — one Dual Kawase blur pass over a w×h pixel buffer.
+ *
+ * For each output pixel (x, y), samples the four diagonal neighbours at
+ * distance d in the source: (x±d, y±d).  Coordinates are clamped to the
+ * buffer boundary (mirror-less edge extension).  src and dst must not alias.
+ *
+ * Offset sequence per frame: d = 1, 2, 3, … (one increment per pass).
+ * Running 4 passes with d=1–4 on a ÷4 downsampled buffer approximates a
+ * ~40-pixel Gaussian on the full-resolution image.
+ */
+static void kawase_pass(const volatile u32 *src, volatile u32 *dst,
+                        u32 w, u32 h, u32 d)
+{
+    for (u32 y = 0; y < h; y++) {
+        u32 y0 = (y >= d)        ? y - d : 0u;
+        u32 y1 = (y + d < h)     ? y + d : h - 1u;
+        for (u32 x = 0; x < w; x++) {
+            u32 x0  = (x >= d)       ? x - d : 0u;
+            u32 x1  = (x + d < w)    ? x + d : w - 1u;
+            u32 p00 = src[y0 * w + x0];
+            u32 p10 = src[y0 * w + x1];
+            u32 p01 = src[y1 * w + x0];
+            u32 p11 = src[y1 * w + x1];
+            u32 r   = ((p00 >> 16 & 0xFFu) + (p10 >> 16 & 0xFFu) +
+                       (p01 >> 16 & 0xFFu) + (p11 >> 16 & 0xFFu) + 2u) >> 2;
+            u32 g   = ((p00 >>  8 & 0xFFu) + (p10 >>  8 & 0xFFu) +
+                       (p01 >>  8 & 0xFFu) + (p11 >>  8 & 0xFFu) + 2u) >> 2;
+            u32 b   = ((p00       & 0xFFu) + (p10       & 0xFFu) +
+                       (p01       & 0xFFu) + (p11       & 0xFFu) + 2u) >> 2;
+            dst[y * w + x] = (r << 16) | (g << 8) | b;
+        }
+    }
+}
+
+/*
+ * apply_kawase_blur — capture, blur, and write back a rectangular region.
+ *
+ * Pipeline:
+ *   1. Box-downsample 4× from tgt[dst_rect] → g_blur_ping (sw × sh pixels).
+ *   2. N Kawase passes (ping↔pong) with d = 1, 2, …, N.
+ *      N = blur_radius/10 + 1, clamped 1–6.
+ *   3. Bilinear-upsample the result back to tgt[dst_rect].
+ *
+ * After return, the background under the layer is replaced with a blurred
+ * version.  v3d_composite_layers() then alpha-blends the layer's BO on top,
+ * producing the Lumina glassmorphism frosted-glass effect.
+ *
+ * Graceful degradation: if g_blur_ping/pong were not allocated (PMM
+ * exhausted during v3d_blur_init), the function is a no-op and the window
+ * composites without blur.
+ */
+static void apply_kawase_blur(volatile u32 *tgt, u32 tgt_stride_px,
+                               u32 dst_x, u32 dst_y, u32 dst_w, u32 dst_h,
+                               u8 blur_radius)
+{
+    if (!g_blur_ping || !g_blur_pong) return;
+    if (!dst_w || !dst_h) return;
+
+    /* Small-buffer dimensions (quarter resolution, rounded up) */
+    u32 sw = (dst_w + 3u) / 4u;
+    u32 sh = (dst_h + 3u) / 4u;
+
+    /* ── 1. Box downsample 4× ─────────────────────────────────────────── */
+    for (u32 sy = 0; sy < sh; sy++) {
+        for (u32 sx = 0; sx < sw; sx++) {
+            u32 r = 0, g = 0, b = 0, cnt = 0;
+            for (u32 ky = 0; ky < 4u; ky++) {
+                u32 fy = dst_y + sy * 4u + ky;
+                if (fy >= dst_y + dst_h) break;
+                for (u32 kx = 0; kx < 4u; kx++) {
+                    u32 fx = dst_x + sx * 4u + kx;
+                    if (fx >= dst_x + dst_w) break;
+                    u32 px = tgt[fy * tgt_stride_px + fx];
+                    r += (px >> 16) & 0xFFu;
+                    g += (px >>  8) & 0xFFu;
+                    b +=  px        & 0xFFu;
+                    cnt++;
+                }
+            }
+            if (cnt) {
+                g_blur_ping[sy * sw + sx] =
+                    ((r / cnt) << 16) | ((g / cnt) << 8) | (b / cnt);
+            }
+        }
+    }
+
+    /* ── 2. Kawase passes ─────────────────────────────────────────────── */
+    /* n_passes scaled to blur_radius: radius 10→2 passes, 20→3, 30→4, etc. */
+    u32 n_passes = (u32)(blur_radius / 10u) + 1u;
+    if (n_passes > 6u) n_passes = 6u;
+    if (n_passes < 1u) n_passes = 1u;
+
+    volatile u32 *ping = g_blur_ping;
+    volatile u32 *pong = g_blur_pong;
+    for (u32 p = 0; p < n_passes; p++) {
+        kawase_pass(ping, pong, sw, sh, p + 1u);
+        /* swap ping↔pong so 'ping' always holds the latest result */
+        volatile u32 *tmp = ping; ping = pong; pong = tmp;
+    }
+
+    /* ── 3. Bilinear upsample 4× → back to tgt ───────────────────────── */
+#define _BU(c00, c10, c01, c11, sh_, mask_)                                 \
+    ((((((c00) >> (sh_)) & (mask_)) * (256u - bfx) * (256u - bfy) +        \
+       (((c10) >> (sh_)) & (mask_)) * bfx           * (256u - bfy) +        \
+       (((c01) >> (sh_)) & (mask_)) * (256u - bfx)  * bfy          +        \
+       (((c11) >> (sh_)) & (mask_)) * bfx           * bfy) + (1u << 15)) >> 16)
+
+    for (u32 dy = 0; dy < dst_h; dy++) {
+        u32 sy_fxp = (dst_h > 1u && sh > 1u) ?
+            (dy * (sh - 1u) * 256u) / (dst_h - 1u) : 0u;
+        u32 sy0 = sy_fxp >> 8;
+        u32 bfy = sy_fxp & 0xFFu;
+        u32 sy1 = (sy0 + 1u < sh) ? sy0 + 1u : sy0;
+
+        for (u32 dx = 0; dx < dst_w; dx++) {
+            u32 sx_fxp = (dst_w > 1u && sw > 1u) ?
+                (dx * (sw - 1u) * 256u) / (dst_w - 1u) : 0u;
+            u32 sx0 = sx_fxp >> 8;
+            u32 bfx = sx_fxp & 0xFFu;
+            u32 sx1 = (sx0 + 1u < sw) ? sx0 + 1u : sx0;
+
+            u32 q00 = ping[sy0 * sw + sx0];
+            u32 q10 = ping[sy0 * sw + sx1];
+            u32 q01 = ping[sy1 * sw + sx0];
+            u32 q11 = ping[sy1 * sw + sx1];
+
+            u32 ur = _BU(q00, q10, q01, q11, 16u, 0xFFu);
+            u32 ug = _BU(q00, q10, q01, q11,  8u, 0xFFu);
+            u32 ub = _BU(q00, q10, q01, q11,  0u, 0xFFu);
+
+            tgt[(dst_y + dy) * tgt_stride_px + (dst_x + dx)] =
+                (ur << 16) | (ug << 8) | ub;
+        }
+    }
+#undef _BU
+}
+
+#else  /* AETHER_KAWASE_BLUR not defined */
+
+void v3d_blur_init(void) {}   /* no-op — scratch buffers not needed */
+
+#endif /* AETHER_KAWASE_BLUR */
+
+/* ── WM3: batch compositor ────────────────────────────────────────────── */
+
+/*
+ * sw_fill_background — paint the back (or fb) target with the wallpaper.
+ * Center-crop if wallpaper is larger than the screen; fill remaining pixels
+ * (or the whole target if no wallpaper) with LUMINA_BG_COLOR.
+ */
+static void sw_fill_background(volatile u32 *target, u32 stride_px,
+                                u32 w, u32 h,
+                                uintptr_t wp_ptr, u32 wp_bmpw, u32 wp_bmph)
+{
+    u32 crop_x = (wp_ptr && wp_bmpw > w) ? (wp_bmpw - w) / 2u : 0u;
+    u32 crop_y = (wp_ptr && wp_bmph > h) ? (wp_bmph - h) / 2u : 0u;
+
+    for (u32 y = 0; y < h; y++) {
+        const u32 *wp_row = NULL;
+        if (wp_ptr) {
+            u32 wy = y + crop_y;
+            if (wy < wp_bmph)
+                wp_row = (const u32 *)wp_ptr + wy * wp_bmpw;
+        }
+        for (u32 x = 0; x < w; x++) {
+            u32 wx = x + crop_x;
+            target[y * stride_px + x] =
+                (wp_row && wx < wp_bmpw) ? wp_row[wx] : LUMINA_BG_COLOR;
+        }
+    }
+}
+
+int v3d_composite_layers(const v3d_layer_t *layers, int n,
+                          uintptr_t wp_ptr, u32 wp_bmpw, u32 wp_bmph)
+{
+    if (!fb_base || !fb_width || !fb_height) return -1;
+    if (n > 0 && !layers) return -1;
+
+    /* Choose render target: back buffer (double-buffered) or direct FB */
+    volatile u32 *tgt;
+    u32 tgt_stride_px;
+    if (g_back_buf) {
+        tgt           = g_back_buf;
+        tgt_stride_px = fb_width;            /* back buffer is packed */
+    } else {
+        tgt           = fb_base;
+        tgt_stride_px = fb_stride / 4u;
+    }
+
+    /* Step 1: fill background (wallpaper or Lumina dark colour) */
+    sw_fill_background(tgt, tgt_stride_px, fb_width, fb_height,
+                       wp_ptr, wp_bmpw, wp_bmph);
+
+    if (n <= 0) return 0;
+
+/* Step 2: composite each layer — bilinear scale + alpha blend.
+ * _CL: fixed-point bilinear sample from four neighbouring pixels.
+ * Uses local variables fx/fy (fractional coordinates, 0-255 range). */
+#define _CL(p00, p10, p01, p11, sh, mask)                                  \
+    ((((((p00) >> (sh)) & (mask)) * (256u - fx) * (256u - fy) +            \
+       (((p10) >> (sh)) & (mask)) * fx           * (256u - fy) +            \
+       (((p01) >> (sh)) & (mask)) * (256u - fx)  * fy          +            \
+       (((p11) >> (sh)) & (mask)) * fx           * fy) + (1u << 15)) >> 16)
+
+    for (int i = 0; i < n; i++) {
+        const v3d_layer_t *l = &layers[i];
+        if (!l->bo_handle || !l->opacity) continue;
+        if (l->dst_w <= 0 || l->dst_h <= 0) continue;
+        if (l->src_w <= 0 || l->src_h <= 0) continue;
+
+        uintptr_t src_phys = v3d_bo_phys(l->bo_handle);
+        if (!src_phys) continue;
+
+        u32 dst_x = (u32)l->dst_x, dst_y = (u32)l->dst_y;
+        u32 dst_w = (u32)l->dst_w, dst_h = (u32)l->dst_h;
+        u32 src_w = (u32)l->src_w, src_h = (u32)l->src_h;
+        u8  alpha = l->opacity;
+
+        if (dst_x >= fb_width || dst_y >= fb_height) continue;
+
+        /* Clip to target bounds */
+        u32 clip_w = dst_w, clip_h = dst_h;
+        if (dst_x + clip_w > fb_width)  clip_w = fb_width  - dst_x;
+        if (dst_y + clip_h > fb_height) clip_h = fb_height - dst_y;
+
+        /* WM4: blur the background beneath this layer before blending */
+#ifdef AETHER_KAWASE_BLUR
+        if (l->blur_radius > 0)
+            apply_kawase_blur(tgt, tgt_stride_px,
+                              dst_x, dst_y, clip_w, clip_h, l->blur_radius);
+#endif
+
+        const volatile u32 *src = (const volatile u32 *)src_phys;
+        u32 inv_a = 255u - (u32)alpha;
+
+        for (u32 dy = 0; dy < clip_h; dy++) {
+            u32 ty = dst_y + dy;
+            u32 sy_fxp = (dst_h > 1u) ?
+                (dy * (src_h - 1u) * 256u) / (dst_h - 1u) : 0u;
+            u32 sy0 = sy_fxp >> 8;
+            u32 fy  = sy_fxp & 0xFFu;
+            u32 sy1 = (sy0 + 1u < src_h) ? sy0 + 1u : sy0;
+
+            for (u32 dx = 0; dx < clip_w; dx++) {
+                u32 tx = dst_x + dx;
+                u32 sx_fxp = (dst_w > 1u) ?
+                    (dx * (src_w - 1u) * 256u) / (dst_w - 1u) : 0u;
+                u32 sx0 = sx_fxp >> 8;
+                u32 fx  = sx_fxp & 0xFFu;
+                u32 sx1 = (sx0 + 1u < src_w) ? sx0 + 1u : sx0;
+
+                u32 p00 = src[sy0 * src_w + sx0];
+                u32 p10 = src[sy0 * src_w + sx1];
+                u32 p01 = src[sy1 * src_w + sx0];
+                u32 p11 = src[sy1 * src_w + sx1];
+
+                u32 sr = _CL(p00, p10, p01, p11, 16u, 0xFFu);
+                u32 sg = _CL(p00, p10, p01, p11,  8u, 0xFFu);
+                u32 sb = _CL(p00, p10, p01, p11,  0u, 0xFFu);
+
+                if (alpha == 255u) {
+                    tgt[ty * tgt_stride_px + tx] = (sr << 16) | (sg << 8) | sb;
+                } else {
+                    u32 fp   = tgt[ty * tgt_stride_px + tx];
+                    u32 fr   = (fp >> 16) & 0xFFu;
+                    u32 fg_  = (fp >>  8) & 0xFFu;
+                    u32 fb_  =  fp        & 0xFFu;
+                    tgt[ty * tgt_stride_px + tx] =
+                        (((sr * (u32)alpha + fr  * inv_a) / 255u) << 16) |
+                        (((sg * (u32)alpha + fg_ * inv_a) / 255u) <<  8) |
+                         ((sb * (u32)alpha + fb_ * inv_a) / 255u);
+                }
+            }
+        }
+    }
+
+#undef _CL
     return 0;
 }
