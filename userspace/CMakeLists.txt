@@ -767,6 +767,53 @@ else()
     set(IMG_TEST_TARGET "")
 endif()
 
+# ── aether_view — Phase 7.2 image viewer ─────────────────────────────────────
+#
+# Displays JPEG, PNG, and BMP files with zoom, pan, and Lumina glass UI.
+# Requires libjpeg + libpng (same fetch scripts as img_test).
+# Launched by the Files app when the user double-clicks an image file.
+
+if(LIBPNG_TARGET AND LIBJPEG_TARGET)
+
+    add_executable(user_aether_view
+        apps/aether_view/main.c
+        lib/crt0.S
+    )
+
+    target_include_directories(user_aether_view PRIVATE
+        ${LIBPNG_SRC_DIR}
+        ${LIBJPEG_SRC_DIR}
+        ${ZLIB_SRC_DIR}
+        ${POSIX_INC_DIR}
+        lib/include
+    )
+
+    target_compile_options(user_aether_view PRIVATE
+        ${USER_COMPILE_FLAGS}
+        -Wno-unused-parameter
+    )
+
+    target_link_libraries(user_aether_view PRIVATE
+        vendor_libpng
+        vendor_libjpeg
+        vendor_zlib
+        libwidget
+        libaether
+    )
+
+    target_link_options(user_aether_view PRIVATE
+        -T ${USER_LINKER_SCRIPT} -nostdlib -static -Wl,--build-id=none
+    )
+
+    set_target_properties(user_aether_view PROPERTIES
+        OUTPUT_NAME "aether_view" SUFFIX ""
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
+    )
+
+else()
+    message(STATUS "libjpeg/libpng not found — aether_view will NOT be built.")
+endif()
+
 # ── vendor_freetype — FreeType 2.13.x (Phase 7.2) ────────────────────────────
 #
 # Minimal source set for TrueType rendering: sfnt, truetype, smooth, autofit,
@@ -1351,6 +1398,12 @@ if(EXISTS ${MBEDTLS_SRC_DIR}/include/mbedtls/ssl.h)
 
     target_compile_options(vendor_mbedtls PRIVATE
         ${USER_COMPILE_FLAGS}
+        # Override global -O0: three -O0-specific AArch64 bugs affect mbedTLS at
+        # debug build level — wrong bignum from MULADDC asm stack locals, wrong ECP
+        # field reduction from 32-bit alias casts, and generic loop/register issues
+        # that break ECDSA verify (ecp_muladd) for ECDHE-ECDSA certs (Wikipedia).
+        # -O1 fixes all three without enabling NIST_OPTIM or HAVE_ASM.
+        -O1
         # mbedTLS is pure integer math (bignum/SHA/ECP).  Restrict compilation to
         # general-purpose registers only so GCC cannot auto-vectorize SHA-256 loops
         # or inline memcpy/memset with NEON instructions.  Without this, a timer IRQ
