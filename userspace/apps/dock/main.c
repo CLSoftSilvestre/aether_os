@@ -30,7 +30,7 @@ static int DOCK_Y;
 
 /* ── Dock layout ─────────────────────────────────────────────────────────── */
 
-#define DOCK_ITEM_COUNT   8
+#define DOCK_ITEM_COUNT   9
 #define DOCK_SLOT_W      80
 #define DOCK_ICON_SIZE   40
 
@@ -63,6 +63,7 @@ static dock_item_t g_dock[DOCK_ITEM_COUNT] = {
     { "/textviewer",  "icon_text",      0 },
     { "/telnet",      "icon_telnet",    0 },
     { "/aether_top",  "icon_top",       0 },
+    { "/sys_prefs",   "icon_hardware",  0 },
 };
 
 /* ── Dock animation ──────────────────────────────────────────────────────── */
@@ -291,6 +292,23 @@ static void draw_icon_telnet(int ix, int iy)
     icon_round_corners(ix, iy);
 }
 
+static void draw_icon_hardware(int ix, int iy)
+{
+    /* Gear / cog: dark purple background + accent circles */
+    unsigned bg = GFX_RGB(38, 28, 70);
+    gfx_fill(ix, iy, DOCK_ICON_SIZE, DOCK_ICON_SIZE, bg);
+    /* Outer ring */
+    int cx = ix + DOCK_ICON_SIZE / 2, cy = iy + DOCK_ICON_SIZE / 2;
+    gfx_fill(cx - 10, cy - 10, 20, 20, C_ACCENT);   /* gear body */
+    gfx_fill(cx -  7, cy -  7, 14, 14, bg);          /* centre hole */
+    /* Teeth: 4 cardinal knobs */
+    gfx_fill(cx - 2, cy - 14, 4, 6, C_ACCENT);
+    gfx_fill(cx - 2, cy +  8, 4, 6, C_ACCENT);
+    gfx_fill(cx - 14, cy - 2, 6, 4, C_ACCENT);
+    gfx_fill(cx +  8, cy - 2, 6, 4, C_ACCENT);
+    icon_round_corners(ix, iy);
+}
+
 /* Draw icon at a given position and size; BMP first, procedural fallback. */
 static void draw_dock_icon_at(int idx, int ix, int iy, int isize)
 {
@@ -311,6 +329,7 @@ static void draw_dock_icon_at(int idx, int ix, int iy, int isize)
     case 5: draw_icon_text(nat_x, nat_y);       break;
     case 6: draw_icon_telnet(nat_x, nat_y);     break;
     case 7: draw_icon_widget(nat_x, nat_y);     break;
+    case 8: draw_icon_hardware(nat_x, nat_y);   break;
     }
 }
 

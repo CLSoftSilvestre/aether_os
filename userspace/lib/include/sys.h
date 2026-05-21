@@ -982,4 +982,113 @@ static inline long sys_puts(const char *s)
     return sys_write(STDOUT_FILENO, s, len);
 }
 
+/* ── System Preferences syscall numbers ──────────────────────────── */
+#define SYS_DISPLAY_GET_RES  930
+#define SYS_DISPLAY_SET_RES  931
+#define SYS_NET_CONF_GET     932
+#define SYS_NET_CONF_SET     933
+#define SYS_USER_LIST        940
+#define SYS_USER_CREATE      941
+#define SYS_USER_DELETE      942
+#define SYS_USER_SET_PW      943
+#define SYS_USER_GET_CUR     944
+#define SYS_USER_SET_ROLE    945
+#define SYS_USER_LOGIN       946
+
+/* ── System Preferences — Display ────────────────────────────────── */
+
+/* Returns current resolution packed as (w << 32) | h */
+static inline long sys_display_get_res(unsigned int *w, unsigned int *h)
+{
+    long r = _sys0(SYS_DISPLAY_GET_RES);
+    if (r < 0) return r;
+    if (w) *w = (unsigned int)((unsigned long long)r >> 32);
+    if (h) *h = (unsigned int)((unsigned long long)r & 0xFFFFFFFFu);
+    return 0;
+}
+
+/* Store new resolution in /config/display.conf (applies on reboot) */
+static inline long sys_display_set_res(unsigned int w, unsigned int h)
+{
+    long packed = (long)(((unsigned long long)w << 32) | (unsigned long long)h);
+    return _sys1(SYS_DISPLAY_SET_RES, packed);
+}
+
+/* ── System Preferences — Network config ─────────────────────────── */
+
+typedef struct {
+    unsigned char  mode;     /* 0 = DHCP, 1 = static */
+    unsigned int   ip;
+    unsigned int   mask;
+    unsigned int   gateway;
+    unsigned int   dns;
+    unsigned char  mac[6];
+    unsigned char  ready;
+} net_conf_t;
+
+static inline long sys_net_conf_get(net_conf_t *out)
+{
+    return _sys1(SYS_NET_CONF_GET, (long)(void *)out);
+}
+
+static inline long sys_net_conf_set(const net_conf_t *cfg)
+{
+    return _sys1(SYS_NET_CONF_SET, (long)(const void *)cfg);
+}
+
+/* ── System Preferences — User management ────────────────────────── */
+
+typedef struct {
+    unsigned int  uid;
+    char          name[32];
+    unsigned char role;    /* 0 = user, 1 = admin */
+} user_info_t;
+
+/* List up to `max` users into `arr`; returns count or -1 */
+static inline long sys_user_list(user_info_t *arr, unsigned int max)
+{
+    return _sys2(SYS_USER_LIST, (long)(void *)arr, (long)max);
+}
+
+/* Create a new user (admin only); returns uid or -1 */
+static inline long sys_user_create(const char *name, const char *pw,
+                                    unsigned char role)
+{
+    return _sys3(SYS_USER_CREATE, (long)(const void *)name,
+                 (long)(const void *)pw, (long)role);
+}
+
+/* Delete user by uid (admin only); returns 0 or -1 */
+static inline long sys_user_delete(unsigned int uid)
+{
+    return _sys1(SYS_USER_DELETE, (long)uid);
+}
+
+/* Change password; admin can skip old_pw for other users */
+static inline long sys_user_set_pw(unsigned int uid, const char *old_pw,
+                                    const char *new_pw)
+{
+    return _sys3(SYS_USER_SET_PW, (long)uid, (long)(const void *)old_pw,
+                 (long)(const void *)new_pw);
+}
+
+/* Get current user; fills *out if non-NULL; returns uid or -1 */
+static inline long sys_user_get_cur(user_info_t *out)
+{
+    return _sys1(SYS_USER_GET_CUR, (long)(void *)out);
+}
+
+/* Change role (admin only); returns 0 or -1 */
+static inline long sys_user_set_role(unsigned int uid, unsigned char role)
+{
+    return _sys2(SYS_USER_SET_ROLE, (long)uid, (long)role);
+}
+
+/* Authenticate user; returns 0 on success, -1 on failure */
+static inline long sys_user_login(const char *name, const char *pw)
+{
+    return _sys2(SYS_USER_LOGIN, (long)(const void *)name,
+                 (long)(const void *)pw);
+}
+
 #endif /* AETHER_USERSPACE_SYS_H */

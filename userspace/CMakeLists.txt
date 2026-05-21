@@ -240,6 +240,23 @@ set_target_properties(user_textviewer PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
 )
 
+# ── sys_prefs — System Preferences application ───────────────────────────────
+add_executable(user_sys_prefs
+    apps/sys_prefs/main.c
+    lib/config.c
+    lib/crt0.S
+)
+target_include_directories(user_sys_prefs PRIVATE lib/include)
+target_compile_options(user_sys_prefs PRIVATE ${USER_COMPILE_FLAGS})
+target_link_libraries(user_sys_prefs PRIVATE libwidget libaether)
+target_link_options(user_sys_prefs PRIVATE
+    -T ${USER_LINKER_SCRIPT} -nostdlib -static -Wl,--build-id=none
+)
+set_target_properties(user_sys_prefs PROPERTIES
+    OUTPUT_NAME "sys_prefs" SUFFIX ""
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
+)
+
 # ── calculator — basic four-function calculator ───────────────────────────────
 add_executable(user_calculator
     apps/calculator/main.c
@@ -1860,6 +1877,7 @@ add_custom_command(
     DEPENDS user_init user_dock user_topbar user_desktop user_compositor user_aether_term user_statusbar user_files
             user_textviewer user_calculator user_tictactoe user_widget_demo
             user_aether_editor user_aether_http user_telnet user_aether_top
+            user_sys_prefs
             user_posix_test
             ${INTERP_TARGET}
             ${IMG_TEST_TARGET}

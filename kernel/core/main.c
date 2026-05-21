@@ -17,6 +17,8 @@
 #include "aether/initrd.h"
 #include "aether/process.h"
 #include "aether/wm.h"
+#include "aether/config.h"
+#include "aether/users.h"
 #include "drivers/char/uart_pl011.h"
 #include "drivers/irq/gic_v2.h"
 #include "drivers/timer/arm_timer.h"
@@ -114,16 +116,6 @@ void kernel_main(void)
     usb_hid_init();
     boot_prof_stamp("input+usb");
 
-    /* ── 6b. Network (after framebuffer, before scheduler) ─────────── */
-    /*
-     * net_init() runs VirtIO net setup + DHCP (busy-poll, no IRQs needed).
-     * DHCP must complete before IRQs are enabled so g_our_ip is valid by
-     * the time userspace runs.  The timer IRQ path calls net_rx_poll() at
-     * 100 Hz for ongoing packet delivery after DHCP.
-     */
-    net_init();
-    boot_prof_stamp("net+dhcp");
-
     /* ── 6b.5 GPU / V3D + Power (Phase 6.1 / 6.2) ──────────────────── */
     mailbox_init();
     v3d_init();
@@ -134,9 +126,10 @@ void kernel_main(void)
 
     /* ── 6c. Block storage + VFS (Phase 5.2) ───────────────────────── */
     /*
-     * virtio_blk_init() probes the PCI bus for a virtio-blk-pci device.
-     * Accepts both modern (0x1042) and transitional (0x1001/subsys=2) forms.
-     * pci_list_devices() is called first to log all visible PCI devices.
+     * Moved before net_init so the network config can be read from FAT32
+     * (/config/network.conf) before deciding DHCP vs. static IP, and so
+     * the display config (/config/display.conf) can be applied before
+     * spawning init.
      */
     pci_list_devices();
     virtio_blk_init();
@@ -144,6 +137,35 @@ void kernel_main(void)
     aetherfs_mount();   /* device 1; no-op if second disk not attached */
     vfs_init();
     boot_prof_stamp("storage+vfs");
+
+    /* ── 6c.5 System config — display resolution ────────────────────── */
+    /*
+     * Apply the stored display resolution (if different from default 1280×720)
+     * before any app runs.  Done after VFS is up so we can read FAT32.
+     */
+    {
+        char wbuf[8], hbuf[8];
+        if (kconfig_read("/config/display.conf", "width",  wbuf, 8) == 0 &&
+            kconfig_read("/config/display.conf", "height", hbuf, 8) == 0) {
+            u32 cw = (u32)katoi(wbuf);
+            u32 ch = (u32)katoi(hbuf);
+            ramfb_reconfigure(cw, ch);
+        }
+    }
+
+    /* ── 6c.6 User accounts ─────────────────────────────────────────── */
+    users_init();
+    boot_prof_stamp("users");
+
+    /* ── 6d. Network (after storage so it can read /config/network.conf) */
+    /*
+     * net_init() runs VirtIO net setup, reads /config/network.conf to
+     * decide DHCP vs. static IP, then busy-polls DHCP if needed.
+     * DHCP completes before IRQs are enabled so g_our_ip is valid when
+     * userspace starts.  The timer IRQ calls net_rx_poll() at 100 Hz.
+     */
+    net_init();
+    boot_prof_stamp("net+dhcp");
 
     /* ── 7. Scheduler + Pipe + WM subsystem ────────────────────────── */
     pipe_init();

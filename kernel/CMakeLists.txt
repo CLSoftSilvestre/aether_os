@@ -19,6 +19,8 @@ set(KERNEL_SOURCES
     core/process.c
     core/pipe.c
     core/wm.c
+    core/config.c
+    core/users.c
 
     # Memory management
     mm/pmm.c

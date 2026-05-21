@@ -199,6 +199,26 @@
                                       *   Present back buffer → framebuffer.       *
                                       *   No-op if double buffer not initialised.  */
 
+/* ── System Preferences — Display ────────────────────────────────────────── */
+#define SYS_DISPLAY_GET_RES  930  /* () → (fb_width << 32) | fb_height             */
+#define SYS_DISPLAY_SET_RES  931  /* (w, h) → 0 or -1; writes /config/display.conf */
+                                  /*   Does NOT apply immediately; reboot required. */
+
+/* ── System Preferences — Network config ─────────────────────────────────── */
+#define SYS_NET_CONF_GET  932  /* (net_conf_t *out) → 0 or -1                      */
+#define SYS_NET_CONF_SET  933  /* (const net_conf_t *cfg) → 0 or -1                */
+                               /*   Static mode: applies immediately + saves conf.  */
+                               /*   DHCP mode:   saves conf only; reboot to re-run. */
+
+/* ── System Preferences — User management ────────────────────────────────── */
+#define SYS_USER_LIST     940  /* (user_info_t *arr, u32 max) → count or -1        */
+#define SYS_USER_CREATE   941  /* (name, pw, role) → uid or -1; admin only         */
+#define SYS_USER_DELETE   942  /* (uid) → 0 or -1; admin only, not self            */
+#define SYS_USER_SET_PW   943  /* (uid, old_pw, new_pw) → 0 or -1                 */
+#define SYS_USER_GET_CUR  944  /* (user_info_t *out) → uid or -1                   */
+#define SYS_USER_SET_ROLE 945  /* (uid, role) → 0 or -1; admin only               */
+#define SYS_USER_LOGIN    946  /* (name, pw) → 0 or -1; sets current user          */
+
 /* File descriptor numbers */
 #define FD_STDIN   0
 #define FD_STDOUT  1

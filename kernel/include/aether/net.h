@@ -47,6 +47,28 @@ static inline void net_ip_str(u32 ip, char *buf) {
 /* Parse "a.b.c.d" → host-order u32, returns 0 on parse error */
 u32 net_ip_parse(const char *s);
 
+/* ── Network configuration struct (System Preferences) ───────────────────── */
+
+/*
+ * Kernel ↔ userspace network config.  Passed through SYS_NET_CONF_GET/SET.
+ * All IPs are host byte order.
+ */
+typedef struct {
+    u8  mode;        /* 0 = DHCP, 1 = static */
+    u32 ip;
+    u32 mask;
+    u32 gateway;
+    u32 dns;
+    u8  mac[6];      /* read-only; set by driver */
+    u8  ready;       /* 1 if network is up */
+} net_conf_t;
+
+/* Apply a static net_conf_t (updates globals + saves to /config/network.conf) */
+int net_conf_set(const net_conf_t *cfg);
+
+/* Fill a net_conf_t from current globals */
+void net_conf_get(net_conf_t *out);
+
 /* ── Subsystem init & poll ─────────────────────────────────────────────────── */
 
 /* Called from kernel_main() before process_spawn. */

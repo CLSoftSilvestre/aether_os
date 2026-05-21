@@ -50,6 +50,9 @@
 #include "drivers/power/thermal.h"
 #include "drivers/power/dpms.h"
 #include "drivers/rtc/pl031.h"
+#include "aether/config.h"
+#include "aether/users.h"
+#include "drivers/video/ramfb.h"
 
 /* ── Wallpaper sharing globals (Phase 6.1.x) ────────────────────────────── */
 static uintptr_t g_wp_ptr   = 0;   /* PMM physical address (kernel range) */
@@ -1220,6 +1223,193 @@ long syscall_dispatch(trap_frame_t *frame)
         if (cmd == 1) { dpms_force_wake();  return 0; }
         /* cmd == 2: status query */
         return dpms_is_blanked() ? 1L : 0L;
+    }
+
+    /* ── Display (System Preferences) ────────────────────────────────── */
+
+    case SYS_DISPLAY_GET_RES:
+        return (long)(((u64)fb_width << 32) | (u64)fb_height);
+
+    case SYS_DISPLAY_SET_RES: {
+        u32 w = (u32)((u64)arg0 >> 32);
+        u32 h = (u32)((u64)arg0 & 0xFFFFFFFFu);
+        /* Validate preset list (same as ramfb.c) */
+        static const u32 pw[] = { 640, 800, 1024, 1280, 1920 };
+        static const u32 ph[] = { 480, 600,  768,  720, 1080 };
+        int ok = 0;
+        for (int i = 0; i < 5; i++)
+            if (pw[i] == w && ph[i] == h) { ok = 1; break; }
+        if (!ok) return -1;
+        char wbuf[8], hbuf[8];
+        kitoa((int)w, wbuf, 8);
+        kitoa((int)h, hbuf, 8);
+        kconfig_write("/config/display.conf", "width",  wbuf);
+        kconfig_write("/config/display.conf", "height", hbuf);
+        return 0;
+    }
+
+    /* ── Network config (System Preferences) ─────────────────────────── */
+
+    case SYS_NET_CONF_GET: {
+        net_conf_t *out = (net_conf_t *)arg0;
+        if (!out) return -1;
+        net_conf_get(out);
+        return 0;
+    }
+
+    case SYS_NET_CONF_SET: {
+        const net_conf_t *cfg = (const net_conf_t *)arg0;
+        if (!cfg) return -1;
+        return (long)net_conf_set(cfg);
+    }
+
+    /* ── User management (System Preferences) ────────────────────────── */
+
+    case SYS_USER_LIST: {
+        /* arg0 = user_info_t *arr, arg1 = u32 max */
+        typedef struct { unsigned int uid; char name[32]; unsigned char role; } user_info_t;
+        user_info_t *arr = (user_info_t *)arg0;
+        u32 max = (u32)arg1;
+        if (!arr || max == 0) return -1;
+        u32 n = 0;
+        for (u32 i = 0; i < AETHER_MAX_USERS && n < max; i++) {
+            if (!g_users[i].active) continue;
+            arr[n].uid  = i;
+            arr[n].role = g_users[i].role;
+            /* copy name */
+            int j = 0;
+            while (j < 31 && g_users[i].name[j]) {
+                arr[n].name[j] = g_users[i].name[j]; j++;
+            }
+            arr[n].name[j] = '\0';
+            n++;
+        }
+        return (long)n;
+    }
+
+    case SYS_USER_CREATE: {
+        /* arg0=name_ptr, arg1=pw_ptr, arg2=role */
+        if (g_current_uid < 0 ||
+            g_users[g_current_uid].role != AETHER_ROLE_ADMIN) return -1;
+        const char *name = (const char *)arg0;
+        const char *pw   = (const char *)arg1;
+        u8   role = (u8)arg2;
+        if (!name || !pw) return -1;
+        /* Check name not empty and not duplicate */
+        if (!name[0]) return -1;
+        for (u32 i = 0; i < AETHER_MAX_USERS; i++) {
+            if (!g_users[i].active) continue;
+            int eq = 1;
+            for (int j = 0; name[j] || g_users[i].name[j]; j++)
+                if (name[j] != g_users[i].name[j]) { eq = 0; break; }
+            if (eq) return -1;   /* duplicate name */
+        }
+        /* Find free slot */
+        int slot = -1;
+        for (int i = 0; i < AETHER_MAX_USERS; i++)
+            if (!g_users[i].active) { slot = i; break; }
+        if (slot < 0) return -1;
+        int j = 0;
+        while (j < AETHER_NAME_MAX - 1 && name[j])
+            { g_users[slot].name[j] = name[j]; j++; }
+        g_users[slot].name[j] = '\0';
+        g_users[slot].pw_hash = users_djb2(pw);
+        g_users[slot].role    = (role == AETHER_ROLE_ADMIN) ? AETHER_ROLE_ADMIN : AETHER_ROLE_USER;
+        g_users[slot].active  = 1;
+        g_user_count++;
+        users_save();
+        return (long)slot;
+    }
+
+    case SYS_USER_DELETE: {
+        u32 uid = (u32)arg0;
+        if (g_current_uid < 0 ||
+            g_users[g_current_uid].role != AETHER_ROLE_ADMIN) return -1;
+        if (uid >= AETHER_MAX_USERS || !g_users[uid].active) return -1;
+        if ((int)uid == g_current_uid) return -1;   /* cannot delete self */
+        /* Cannot remove last admin */
+        if (g_users[uid].role == AETHER_ROLE_ADMIN) {
+            int admin_cnt = 0;
+            for (int i = 0; i < AETHER_MAX_USERS; i++)
+                if (g_users[i].active && g_users[i].role == AETHER_ROLE_ADMIN) admin_cnt++;
+            if (admin_cnt <= 1) return -1;
+        }
+        g_users[uid].active = 0;
+        g_users[uid].name[0] = '\0';
+        if (g_user_count > 0) g_user_count--;
+        users_save();
+        return 0;
+    }
+
+    case SYS_USER_SET_PW: {
+        /* arg0=uid, arg1=old_pw_ptr, arg2=new_pw_ptr */
+        u32 uid = (u32)arg0;
+        const char *old_pw = (const char *)arg1;
+        const char *new_pw = (const char *)arg2;
+        if (uid >= AETHER_MAX_USERS || !g_users[uid].active) return -1;
+        if (!new_pw) return -1;
+        /* Admins can skip old password check for other users */
+        int is_admin = (g_current_uid >= 0 &&
+                        g_users[g_current_uid].role == AETHER_ROLE_ADMIN);
+        if (!is_admin || (int)uid == g_current_uid) {
+            if (!old_pw || users_djb2(old_pw) != g_users[uid].pw_hash)
+                return -1;
+        }
+        g_users[uid].pw_hash = users_djb2(new_pw);
+        users_save();
+        return 0;
+    }
+
+    case SYS_USER_GET_CUR: {
+        typedef struct { unsigned int uid; char name[32]; unsigned char role; } user_info_t;
+        user_info_t *out = (user_info_t *)arg0;
+        if (g_current_uid < 0) return -1;
+        if (out) {
+            out->uid  = (unsigned int)g_current_uid;
+            out->role = g_users[g_current_uid].role;
+            int j = 0;
+            while (j < 31 && g_users[g_current_uid].name[j]) {
+                out->name[j] = g_users[g_current_uid].name[j]; j++;
+            }
+            out->name[j] = '\0';
+        }
+        return (long)g_current_uid;
+    }
+
+    case SYS_USER_SET_ROLE: {
+        u32 uid  = (u32)arg0;
+        u8  role = (u8)arg1;
+        if (g_current_uid < 0 ||
+            g_users[g_current_uid].role != AETHER_ROLE_ADMIN) return -1;
+        if (uid >= AETHER_MAX_USERS || !g_users[uid].active) return -1;
+        /* Cannot demote self if last admin */
+        if ((int)uid == g_current_uid && role != AETHER_ROLE_ADMIN) {
+            int admin_cnt = 0;
+            for (int i = 0; i < AETHER_MAX_USERS; i++)
+                if (g_users[i].active && g_users[i].role == AETHER_ROLE_ADMIN) admin_cnt++;
+            if (admin_cnt <= 1) return -1;
+        }
+        g_users[uid].role = (role == AETHER_ROLE_ADMIN) ? AETHER_ROLE_ADMIN : AETHER_ROLE_USER;
+        users_save();
+        return 0;
+    }
+
+    case SYS_USER_LOGIN: {
+        const char *name = (const char *)arg0;
+        const char *pw   = (const char *)arg1;
+        if (!name || !pw) return -1;
+        u32 hash = users_djb2(pw);
+        for (int i = 0; i < AETHER_MAX_USERS; i++) {
+            if (!g_users[i].active) continue;
+            /* compare name */
+            int j = 0;
+            while (name[j] && g_users[i].name[j] == name[j]) j++;
+            if (name[j] != '\0' || g_users[i].name[j] != '\0') continue;
+            if (g_users[i].pw_hash != hash) return -1;
+            g_current_uid = i;
+            return 0;
+        }
+        return -1;
     }
 
     default:
