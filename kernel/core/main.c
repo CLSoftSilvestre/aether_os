@@ -29,6 +29,8 @@
 #include "drivers/input/pl050_mouse.h"
 #include "drivers/input/virtio_input.h"
 #include "drivers/usb/ohci.h"
+#include "drivers/usb/xhci.h"
+#include "aether/usb_fat32.h"
 #include "aether/net.h"
 #include "aether/vfs.h"
 #include "aether/fat32.h"
@@ -135,6 +137,8 @@ void kernel_main(void)
     virtio_blk_init();
     fat32_mount();
     aetherfs_mount();   /* device 1; no-op if second disk not attached */
+    xhci_init();        /* Phase 5.2.12: xHCI USB 3.0 + USB mass storage */
+    usb_fat32_mount();  /* no-op if no USB MSC disk found */
     vfs_init();
     boot_prof_stamp("storage+vfs");
 

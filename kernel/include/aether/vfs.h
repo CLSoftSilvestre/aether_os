@@ -5,13 +5,15 @@
  * AetherOS — Virtual Filesystem Switch (Phase 5.2)
  * File: kernel/include/aether/vfs.h
  *
- * Thin abstraction over initrd and FAT32.
+ * Thin abstraction over initrd, FAT32, AetherFS, and USB FAT32.
  * VFS file descriptors are returned as integers in [VFS_FD_BASE, VFS_FD_BASE+15].
  * These are distinct from task fd_table entries (0-7) and socket fds (100-107).
  *
- * Mount table (2 entries):
- *   "/"       → FAT32 on virtio-blk  (when disk present)
- *   "/initrd"  → embedded CPIO initrd (always present)
+ * Mount table:
+ *   "/"        → FAT32 on virtio-blk 0  (when disk.img present)
+ *   "/initrd"  → embedded CPIO initrd   (always present)
+ *   "/afs"     → AetherFS on virtio-blk 1 (when afs.img present)
+ *   "/usb"     → FAT32 on USB MSC disk  (when USB disk present; read-only)
  */
 
 #include "aether/types.h"

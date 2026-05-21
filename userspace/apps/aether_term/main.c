@@ -703,6 +703,12 @@ static void cmd_mount(void)
         term_puts("  /afs       AetherFS (virtio-blk hd1)\n");
     else
         term_puts("  /afs       (no AetherFS — run make_afs.sh and attach afs.img)\n");
+
+    n = sys_fs_readdir("/usb", buf, sizeof(buf));
+    if (n > 0 && buf[0] != '(')
+        term_puts("  /usb       FAT32  (USB MSC via xHCI)\n");
+    else
+        term_puts("  /usb       (no USB disk — run make_usb_disk.sh and attach usb_disk.img)\n");
 }
 
 static void cmd_disk(void)

@@ -4,7 +4,7 @@
 /*
  * AetherOS — VFS mount discovery helper (Phase 5.6)
  *
- * Lightweight helper for enumerating the three known VFS mount points.
+ * Lightweight helper for enumerating all known VFS mount points (/, /initrd, /afs, /usb).
  * Uses sys_fs_readdir() to probe availability; no new syscall needed.
  */
 

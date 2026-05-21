@@ -68,6 +68,11 @@ set(KERNEL_SOURCES
     # Drivers — USB OHCI + HID (Phase 4.6)
     drivers/usb/ohci.c
 
+    # Drivers — USB xHCI + MSC + FAT32 (Phase 5.2.12)
+    drivers/usb/xhci.c
+    drivers/usb/msc.c
+    fs/usb_fat32.c
+
     # Drivers — GPU / V3D (Phase 6.1)
     drivers/gpu/mailbox.c
     drivers/gpu/v3d.c

@@ -77,4 +77,8 @@ void pci_list_devices(void);
 /* Scan bus 0 for OHCI USB host controller. Returns 1 if found. */
 int pci_scan_ohci(pci_dev_t *r);
 
+/* Scan bus 0 for xHCI USB 3.0 host controller (class=0x0C, sub=0x03, progif=0x30).
+ * Returns 1 if found. */
+int pci_scan_xhci(pci_dev_t *r);
+
 #endif /* AETHER_PCI_ECAM_H */

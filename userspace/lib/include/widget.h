@@ -54,9 +54,10 @@ typedef enum {
 #define TVICON_DRIVE_FAT32   0
 #define TVICON_DRIVE_INITRD  1
 #define TVICON_DRIVE_AFS     2
-#define TVICON_FOLDER_CLOSED 3
-#define TVICON_FOLDER_OPEN   4
-#define TVICON_FILE          5
+#define TVICON_DRIVE_USB     3
+#define TVICON_FOLDER_CLOSED 4
+#define TVICON_FOLDER_OPEN   5
+#define TVICON_FILE          6
 
 /* ── TreeView node ──────────────────────────────────────────────────────── */
 typedef struct {

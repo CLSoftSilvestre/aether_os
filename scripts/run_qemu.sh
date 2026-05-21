@@ -32,6 +32,7 @@ BUILD_DIR="${SCRIPT_DIR}/../build"
 KERNEL_IMG="${BUILD_DIR}/kernel8.img"
 DISK_IMG="${BUILD_DIR}/disk.img"
 AFS_IMG="${BUILD_DIR}/afs.img"
+USB_IMG="${BUILD_DIR}/usb_disk.img"
 
 if [ ! -f "${KERNEL_IMG}" ]; then
     echo "[ERROR] Kernel image not found: ${KERNEL_IMG}"
@@ -92,6 +93,9 @@ QEMU_ARGS=(
     -netdev user,id=n0
     -object filter-dump,id=pcap0,netdev=n0,file=/tmp/aether.pcap
     -device virtio-net-pci,netdev=n0,disable-legacy=on
+
+    # USB (Phase 5.2.12): xHCI USB 3.0 host controller
+    -device qemu-xhci,id=xhci
 )
 
 # Block storage (Phase 5.2): hd0 = FAT32 disk.img, hd1 = AetherFS afs.img
@@ -114,6 +118,16 @@ if [ -f "${AFS_IMG}" ]; then
     )
 else
     echo "[QEMU] hd1: not found — run scripts/make_afs.sh to create AetherFS image"
+fi
+
+if [ -f "${USB_IMG}" ]; then
+    echo "[QEMU] usb: ${USB_IMG} (FAT32 USB MSC → /usb)"
+    QEMU_ARGS+=(
+        -drive file="${USB_IMG}",format=raw,if=none,id=usb0
+        -device usb-storage,bus=xhci.0,drive=usb0
+    )
+else
+    echo "[QEMU] usb: not found — run scripts/make_usb_disk.sh to create USB FAT32 image"
 fi
 
 if [ "$HEADLESS" = "1" ]; then
