@@ -22,10 +22,11 @@ extern void awgt_line(int x0, int y0, int x1, int y1, unsigned color);
 
 /* ── Amp image constants ─────────────────────────────────────────────── */
 
-#define AMP_IMG_W   804
-#define AMP_IMG_H   200
-#define AMP_KNOB_R   22   /* well radius in image */
-#define AMP_KNOB_Y  100   /* knob center Y in image */
+#define AMP_IMG_W    804
+#define AMP_IMG_H    200   /* source image height */
+#define AMP_BLIT_H   280   /* render height (scaled up from 200 for visual impact) */
+#define AMP_KNOB_R    22   /* well radius in image */
+#define AMP_KNOB_Y   140   /* 100 * AMP_BLIT_H / AMP_IMG_H — knob Y in rendered space */
 
 /* Interactive knob image-X positions (5 of the 7 wells) */
 static const int AMP_KNOB_IX[5] = { 260, 340, 420, 520, 760 };
@@ -114,7 +115,7 @@ void view_amp_draw(int cx, int cy)
     /* ── Amp head image (top portion of view) ── */
     if (g_imgs_ok && g_amp_w > 0) {
         gfx_icon_blit(g_px_amp, g_amp_w, g_amp_h,
-                      bx, by, AMP_IMG_W, AMP_IMG_H);
+                      bx, by, AMP_IMG_W, AMP_BLIT_H);
     } else {
         gfx_fill((unsigned)bx, (unsigned)by,
                  (unsigned)CONT_W, (unsigned)AMP_IMG_H, GFX_RGB(12, 12, 16));
@@ -132,7 +133,7 @@ void view_amp_draw(int cx, int cy)
     }
 
     /* ── Controls below the amp image ── */
-    int ctrl_y = by + AMP_IMG_H + 10;
+    int ctrl_y = by + AMP_BLIT_H + 10;
 
     /* Tonestack selector */
     gfx_text_transparent((unsigned)(bx + 8), (unsigned)ctrl_y,
@@ -226,7 +227,7 @@ void view_amp_mouse(int mx, int my, unsigned btn, unsigned prev_btn)
     }
 
     /* Tonestack buttons */
-    int ctrl_y = by + AMP_IMG_H + 10;
+    int ctrl_y = by + AMP_BLIT_H + 10;
     for (int t = 0; t < 3; t++) {
         int tx = bx + 100 + t * 96;
         if (btn_hit(tx, ctrl_y, 88, 20, mx, my)) {

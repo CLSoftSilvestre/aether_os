@@ -207,11 +207,10 @@ int main(void)
         audio_client_activate(g_audio);
     }
 
-    /* Initial draw */
+    /* Initial draw — board has full coverage background, no need for draw_content_bg */
     gfx_begin_frame(g_fb, WIN_W, WIN_H, g_win_x, g_win_y);
     draw_chrome();
     draw_tabbar();
-    draw_content_bg();
     view_board_draw(cont_x(), cont_y());
     gfx_end_frame();
 
@@ -281,7 +280,10 @@ int main(void)
         gfx_begin_frame(g_fb, WIN_W, WIN_H, g_win_x, g_win_y);
         draw_chrome();
         draw_tabbar();
-        draw_content_bg();
+        /* Board and Tuner draw their own full-coverage backgrounds;
+         * skipping draw_content_bg() for them eliminates the dark-flash flicker. */
+        if (g_view != VIEW_BOARD && g_view != VIEW_TUNER)
+            draw_content_bg();
 
         switch (g_view) {
         case VIEW_BOARD:    view_board_draw(cont_x(), cont_y());    break;

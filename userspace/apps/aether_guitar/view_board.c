@@ -22,18 +22,22 @@ extern void awgt_circle(int cx, int cy, int r, unsigned color);
 /* ── Layout constants ────────────────────────────────────────────────── */
 
 #define N_SLOTS    5
-#define SLOT_W   144
-#define SLOT_H   248
-#define SLOT_GAP  10
+#define SLOT_W   150   /* render width  — image (144) scaled up */
+#define SLOT_H   340   /* render height — image (248) scaled up */
+#define SLOT_GAP   8
 
-/* Positions within the pedal image (pixels) */
-#define PEDAL_KNOB_Y   45
-#define PEDAL_KNOB_R   20
-static const int PEDAL_KNOB_X[3] = { 34, 72, 110 };
-#define PEDAL_LED_X    72
-#define PEDAL_LED_Y   142
-#define PEDAL_STOMP_X  72
-#define PEDAL_STOMP_Y 186
+/* Positions within the RENDERED slot (proportionally scaled from image):
+ *   scale_x = 150/144, scale_y = 340/248
+ * Original image positions: knob_y=45, knob_r=20, knob_xs=[34,72,110]
+ *                            led=(72,142), stomp=(72,186)
+ */
+#define PEDAL_KNOB_Y   62   /* 45 * 340/248 */
+#define PEDAL_KNOB_R   21   /* 20 * 150/144 */
+static const int PEDAL_KNOB_X[3] = { 35, 75, 115 };  /* 34/72/110 * 150/144 */
+#define PEDAL_LED_X    75   /* 72 * 150/144 */
+#define PEDAL_LED_Y   195   /* 142 * 340/248 */
+#define PEDAL_STOMP_X  75   /* 72 * 150/144 */
+#define PEDAL_STOMP_Y 255   /* 186 * 340/248 */
 
 /* Knob angle maths — match awgt_knob.c conventions */
 #define KNOB_START_DEG  135.0f
@@ -41,7 +45,7 @@ static const int PEDAL_KNOB_X[3] = { 34, 72, 110 };
 #define DEG2RAD(d)      ((d) * 3.14159265f / 180.0f)
 
 /* Indicator line length (slightly shorter than knob radius) */
-#define IND_LEN  (PEDAL_KNOB_R - 3)
+#define IND_LEN  (PEDAL_KNOB_R - 4)
 
 /* ── Image pixel buffers (loaded once at init) ────────────────────────── */
 
@@ -83,7 +87,7 @@ typedef struct {
     int   n_knobs;
     int   active;        /* 1 = not bypassed */
     char  title[32];
-    int   sx, sy;        /* top-left screen position */
+    /* sx/sy NOT stored — computed dynamically each frame so window moves work */
 } slot_t;
 
 static slot_t g_slots[N_SLOTS];
@@ -105,6 +109,15 @@ typedef struct { int slot; } stomp_ctx_t;
 static stomp_ctx_t g_stomp_ctx[N_SLOTS];
 
 /* ── Helpers ─────────────────────────────────────────────────────────── */
+
+/* Compute screen top-left for slot i given the current content origin.
+ * Called every draw/mouse frame so window moves never cause stale positions. */
+static void slot_screen_pos(int i, int bx, int by, int *sx_out, int *sy_out)
+{
+    int total_w = N_SLOTS * SLOT_W + (N_SLOTS - 1) * SLOT_GAP;
+    *sx_out = bx + (CONT_W - total_w) / 2 + i * (SLOT_W + SLOT_GAP);
+    *sy_out = by + (CONT_H - SLOT_H) / 2;
+}
 
 /* Returns denormalized value and (via *param_id_out) the actual param ID. */
 static float knob_denorm(slot_t *sl, int k, float norm, unsigned *param_id_out)
@@ -187,16 +200,9 @@ void view_board_init(void)
 
     if (!g_chain) return;
 
-    /* Compute slot screen positions */
-    int total_w = N_SLOTS * SLOT_W + (N_SLOTS - 1) * SLOT_GAP;
-    int cx0     = cont_x() + (CONT_W - total_w) / 2;
-    int cy0     = cont_y() + (CONT_H - SLOT_H) / 2;
-
     for (int i = 0; i < N_SLOTS; i++) {
         slot_t *sl = &g_slots[i];
         sl->node_idx = i + 1;
-        sl->sx = cx0 + i * (SLOT_W + SLOT_GAP);
-        sl->sy = cy0;
 
         aplug_t *plug = achain_node(g_chain, sl->node_idx);
         if (!plug) { sl->node_idx = -1; continue; }
@@ -255,7 +261,8 @@ void view_board_draw(int cx, int cy)
         slot_t *sl = &g_slots[i];
         if (sl->node_idx < 0) continue;
 
-        int sx = sl->sx, sy = sl->sy;
+        int sx, sy;
+        slot_screen_pos(i, bx, by, &sx, &sy);
 
         /* Pedal body image */
         if (g_pedal_w[i] > 0) {
@@ -338,20 +345,20 @@ void view_board_draw(int cx, int cy)
 
 /* ── Mouse dispatch ──────────────────────────────────────────────────── */
 
-static int knob_hittest(slot_t *sl, int k, int mx, int my)
+static int knob_hittest(int sx, int sy, int k, int mx, int my)
 {
-    int kx = sl->sx + PEDAL_KNOB_X[k];
-    int ky = sl->sy + PEDAL_KNOB_Y;
+    int kx = sx + PEDAL_KNOB_X[k];
+    int ky = sy + PEDAL_KNOB_Y;
     int dx = mx - kx, dy = my - ky;
     return (dx * dx + dy * dy) <= (PEDAL_KNOB_R * PEDAL_KNOB_R);
 }
 
-static int stomp_hittest(slot_t *sl, int mx, int my)
+static int stomp_hittest(int sx, int sy, int mx, int my)
 {
     int stw = (g_stomp_w > 0) ? (int)g_stomp_w : 36;
     int sth = (g_stomp_h > 0) ? (int)g_stomp_h : 36;
-    int x0  = sl->sx + PEDAL_STOMP_X - stw / 2;
-    int y0  = sl->sy + PEDAL_STOMP_Y - sth / 2;
+    int x0  = sx + PEDAL_STOMP_X - stw / 2;
+    int y0  = sy + PEDAL_STOMP_Y - sth / 2;
     return (mx >= x0 && mx < x0 + stw && my >= y0 && my < y0 + sth);
 }
 
@@ -386,12 +393,16 @@ void view_board_mouse(int mx, int my, unsigned btn, unsigned prev_btn)
     /* Click events */
     if (!pressed) return;
 
+    int bx = cont_x(), by = cont_y();
     for (int i = 0; i < N_SLOTS; i++) {
         slot_t *sl = &g_slots[i];
         if (sl->node_idx < 0) continue;
 
+        int sx, sy;
+        slot_screen_pos(i, bx, by, &sx, &sy);
+
         /* Stomp toggle */
-        if (stomp_hittest(sl, mx, my)) {
+        if (stomp_hittest(sx, sy, mx, my)) {
             sl->active = !sl->active;
             achain_set_bypass(g_chain, sl->node_idx, sl->active ? 0 : 1);
             return;
@@ -399,7 +410,7 @@ void view_board_mouse(int mx, int my, unsigned btn, unsigned prev_btn)
 
         /* Knob drag start */
         for (int k = 0; k < sl->n_knobs; k++) {
-            if (knob_hittest(sl, k, mx, my)) {
+            if (knob_hittest(sx, sy, k, mx, my)) {
                 g_drag_slot  = i;
                 g_drag_knob  = k;
                 g_drag_y0    = my;
