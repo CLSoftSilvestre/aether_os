@@ -2035,6 +2035,34 @@ target_compile_options(libAetherChain PRIVATE
 )
 target_link_libraries(libAetherChain PUBLIC libAetherFX libAetherPlugin libAetherDSP)
 
+# ── Phase 8.9 — libAetherAudioWidget ─────────────────────────────────────────
+
+add_library(libAetherAudioWidget STATIC
+    lib/libAetherAudioWidget/src/awgt_prims.c
+    lib/libAetherAudioWidget/src/awgt_knob.c
+    lib/libAetherAudioWidget/src/awgt_led.c
+    lib/libAetherAudioWidget/src/awgt_vu.c
+    lib/libAetherAudioWidget/src/awgt_stomp.c
+    lib/libAetherAudioWidget/src/awgt_fader.c
+    lib/libAetherAudioWidget/src/awgt_panel.c
+)
+target_include_directories(libAetherAudioWidget PUBLIC
+    lib/libAetherAudioWidget/include
+)
+target_include_directories(libAetherAudioWidget PRIVATE
+    lib/libAetherAudioWidget/src
+    ${POSIX_INC_DIR}
+    lib/include
+    ${ADSP_GCC_INCLUDE_DIR}
+)
+target_compile_options(libAetherAudioWidget PRIVATE
+    ${USER_COMPILE_FLAGS}
+    "-I${ADSP_GCC_INCLUDE_DIR}"
+    -Wno-unused-parameter
+    -Wno-unused-function
+)
+target_link_libraries(libAetherAudioWidget PUBLIC libaether_posix)
+
 # ── initrd CPIO archive ───────────────────────────────────────────────────────
 #
 # Step 1 — package all files from initrd_staging/ into a CPIO newc archive.
