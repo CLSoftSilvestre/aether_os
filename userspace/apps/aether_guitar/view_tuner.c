@@ -23,7 +23,7 @@ static int      g_tuner_bg_ok;
 static void tuner_bg_load(void)
 {
     if (g_tuner_bg_w > 0) return;  /* already loaded */
-    int ok = gfx_bmp_load_icon("/aeguitar/tuner_bg.bmp",
+    int ok = gfx_bmp_load_icon("/initrd/aeguitar/tuner_bg.bmp",
                                 g_px_tuner_bg, TUNER_BG_PIXELS,
                                 &g_tuner_bg_w, &g_tuner_bg_h);
     g_tuner_bg_ok = (ok == 0);

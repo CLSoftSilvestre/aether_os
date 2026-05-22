@@ -65,12 +65,12 @@ static float g_drag_val0 = 0.0f;
 
 void view_amp_init(void)
 {
-    int ok = gfx_bmp_load_icon("/aeguitar/amp_head_bg.bmp",
+    int ok = gfx_bmp_load_icon("/initrd/aeguitar/amp_head_bg.bmp",
                                 g_px_amp, AMP_PX,
                                 &g_amp_w, &g_amp_h);
     g_imgs_ok = (ok == 0);
 
-    gfx_bmp_load_icon("/aeguitar/knob_base.bmp",
+    gfx_bmp_load_icon("/initrd/aeguitar/knob_base.bmp",
                       g_px_knob, KNOB_PX,
                       &g_knob_w, &g_knob_h);
 }

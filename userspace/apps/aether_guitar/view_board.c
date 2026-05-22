@@ -68,11 +68,11 @@ static unsigned g_led_w, g_led_h;
 static int g_imgs_ok = 0;  /* set 1 if at least board bg loaded */
 
 static const char *pedal_bmp[N_SLOTS] = {
-    "/aeguitar/pedal_blue.bmp",     /* node 1: Noise Gate   */
-    "/aeguitar/pedal_cobalt.bmp",   /* node 2: Overdrive    */
-    "/aeguitar/pedal_teal.bmp",     /* node 3: Chorus       */
-    "/aeguitar/pedal_amber.bmp",    /* node 4: Delay        */
-    "/aeguitar/pedal_violet.bmp",   /* node 5: Plate Reverb */
+    "/initrd/aeguitar/pedal_blue.bmp",     /* node 1: Noise Gate   */
+    "/initrd/aeguitar/pedal_cobalt.bmp",   /* node 2: Overdrive    */
+    "/initrd/aeguitar/pedal_teal.bmp",     /* node 3: Chorus       */
+    "/initrd/aeguitar/pedal_amber.bmp",    /* node 4: Delay        */
+    "/initrd/aeguitar/pedal_violet.bmp",   /* node 5: Plate Reverb */
 };
 
 /* ── Slot state ──────────────────────────────────────────────────────── */
@@ -152,7 +152,7 @@ static void draw_knob_indicator(int sx, int sy, float value)
 void view_board_init(void)
 {
     /* Load board background */
-    int ok = gfx_bmp_load_icon("/aeguitar/pedalboard_bg.bmp",
+    int ok = gfx_bmp_load_icon("/initrd/aeguitar/pedalboard_bg.bmp",
                                 g_px_board, BOARD_PIXELS,
                                 &g_board_w, &g_board_h);
     g_imgs_ok = (ok == 0);
@@ -165,23 +165,23 @@ void view_board_init(void)
     }
 
     /* Load knob base (Phong-lit sphere) */
-    gfx_bmp_load_icon("/aeguitar/knob_base.bmp",
+    gfx_bmp_load_icon("/initrd/aeguitar/knob_base.bmp",
                       g_px_knob, KNOB_PIXELS,
                       &g_knob_w, &g_knob_h);
 
     /* Load stomp images */
-    gfx_bmp_load_icon("/aeguitar/stomp_off.bmp",
+    gfx_bmp_load_icon("/initrd/aeguitar/stomp_off.bmp",
                       g_px_stomp_off, STOMP_PIXELS,
                       &g_stomp_w, &g_stomp_h);
-    gfx_bmp_load_icon("/aeguitar/stomp_on.bmp",
+    gfx_bmp_load_icon("/initrd/aeguitar/stomp_on.bmp",
                       g_px_stomp_on, STOMP_PIXELS,
                       &g_stomp_w, &g_stomp_h);
 
     /* Load LED images */
-    gfx_bmp_load_icon("/aeguitar/led_green_on.bmp",
+    gfx_bmp_load_icon("/initrd/aeguitar/led_green_on.bmp",
                       g_px_led_on, LED_PIXELS,
                       &g_led_w, &g_led_h);
-    gfx_bmp_load_icon("/aeguitar/led_green_off.bmp",
+    gfx_bmp_load_icon("/initrd/aeguitar/led_green_off.bmp",
                       g_px_led_off, LED_PIXELS,
                       &g_led_w, &g_led_h);
 
