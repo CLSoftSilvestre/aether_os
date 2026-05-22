@@ -2112,6 +2112,33 @@ set_target_properties(user_aether_guitar PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
 )
 
+# Copy AetherGuitar BMP assets into initrd_staging/aeguitar/
+set(AEGUITAR_ASSETS_SRC ${CMAKE_CURRENT_SOURCE_DIR}/apps/aether_guitar/assets)
+set(AEGUITAR_ASSETS_DST ${CMAKE_BINARY_DIR}/initrd_staging/aeguitar)
+add_custom_command(
+    OUTPUT  ${AEGUITAR_ASSETS_DST}/pedalboard_bg.bmp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${AEGUITAR_ASSETS_DST}
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${AEGUITAR_ASSETS_SRC}
+                             ${AEGUITAR_ASSETS_DST}
+    DEPENDS ${AEGUITAR_ASSETS_SRC}/pedalboard_bg.bmp
+            ${AEGUITAR_ASSETS_SRC}/pedal_blue.bmp
+            ${AEGUITAR_ASSETS_SRC}/pedal_cobalt.bmp
+            ${AEGUITAR_ASSETS_SRC}/pedal_teal.bmp
+            ${AEGUITAR_ASSETS_SRC}/pedal_amber.bmp
+            ${AEGUITAR_ASSETS_SRC}/pedal_violet.bmp
+            ${AEGUITAR_ASSETS_SRC}/amp_head_bg.bmp
+            ${AEGUITAR_ASSETS_SRC}/knob_base.bmp
+            ${AEGUITAR_ASSETS_SRC}/stomp_off.bmp
+            ${AEGUITAR_ASSETS_SRC}/stomp_on.bmp
+            ${AEGUITAR_ASSETS_SRC}/led_green_on.bmp
+            ${AEGUITAR_ASSETS_SRC}/led_green_off.bmp
+            ${AEGUITAR_ASSETS_SRC}/tuner_bg.bmp
+    COMMENT "Copying AetherGuitar BMP assets to initrd"
+)
+add_custom_target(aeguitar_assets ALL
+    DEPENDS ${AEGUITAR_ASSETS_DST}/pedalboard_bg.bmp
+)
+
 # ── initrd CPIO archive ───────────────────────────────────────────────────────
 #
 # Step 1 — package all files from initrd_staging/ into a CPIO newc archive.
@@ -2153,7 +2180,7 @@ add_custom_command(
     DEPENDS user_init user_dock user_topbar user_desktop user_compositor user_aether_term user_statusbar user_files
             user_textviewer user_calculator user_tictactoe user_widget_demo
             user_aether_editor user_aether_http user_telnet user_aether_top
-            user_sys_prefs user_aether_sound user_aether_guitar
+            user_sys_prefs user_aether_sound user_aether_guitar aeguitar_assets
             user_posix_test
             ${INTERP_TARGET}
             ${IMG_TEST_TARGET}

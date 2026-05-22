@@ -1209,8 +1209,8 @@ int gfx_bmp_load_icon(const char *path, unsigned *pixels, unsigned buf_pixels,
     } else {
         /* 24-bpp: [B][G][R] per pixel, rows padded to 4-byte boundary */
         unsigned row_stride = (width * 3u + 3u) & ~3u;
-        /* Static row scratch — supports icons up to 256 px wide */
-        static unsigned char s_row24[256 * 3 + 4];
+        /* Static row scratch — supports images up to 4096 px wide */
+        static unsigned char s_row24[4096 * 3 + 4];
         if (row_stride > sizeof(s_row24)) {
             sys_fs_close(vfd); return -1;
         }

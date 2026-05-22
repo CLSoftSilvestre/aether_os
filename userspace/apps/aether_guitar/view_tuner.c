@@ -1,26 +1,33 @@
 /*
- * AetherGuitar — Tuner view (Phase 8.10)
+ * AetherGuitar — Tuner view (Phase 8.10 visual overhaul)
  * File: userspace/apps/aether_guitar/view_tuner.c
  *
- * Chromatic tuner display.
- * Reads detected pitch (Hz) from the tuner node via aplug_param_get,
- * converts to note name + octave + cents deviation, and renders:
- *   - Large circular display with note name
- *   - Horizontal cents needle bar
- *   - 6-string reference row (E2 A2 D3 G3 B3 E4)
- *
- * The tuner plugin (node 0) runs the AMDF algorithm in the audio thread
- * and stores detected_hz in its state.  aplug_param_get(TUNER_P_HZ=1)
- * returns it.  Float32 reads are naturally atomic on AArch64.
+ * Chromatic tuner display with deep-space background image (tuner_bg.bmp).
+ * Renders: large circular display, cents needle bar, 6-string reference row.
  */
 
 #include "aeguitar.h"
-#include "awgt_prims.h"   /* awgt_fill_circle, awgt_line */
+#include "awgt_prims.h"
 
-/* Need prims from the widget library */
 extern void awgt_fill_circle(int cx, int cy, int r, unsigned color);
 extern void awgt_line(int x0, int y0, int x1, int y1, unsigned color);
 extern void awgt_circle(int cx, int cy, int r, unsigned color);
+
+/* ── Tuner background image ──────────────────────────────────────────── */
+
+#define TUNER_BG_PIXELS (804 * 496)
+static unsigned g_px_tuner_bg[TUNER_BG_PIXELS];
+static unsigned g_tuner_bg_w, g_tuner_bg_h;
+static int      g_tuner_bg_ok;
+
+static void tuner_bg_load(void)
+{
+    if (g_tuner_bg_w > 0) return;  /* already loaded */
+    int ok = gfx_bmp_load_icon("/aeguitar/tuner_bg.bmp",
+                                g_px_tuner_bg, TUNER_BG_PIXELS,
+                                &g_tuner_bg_w, &g_tuner_bg_h);
+    g_tuner_bg_ok = (ok == 0);
+}
 
 /* ── Note table ──────────────────────────────────────────────────────── */
 
@@ -85,9 +92,15 @@ void view_tuner_draw(int cx, int cy)
 {
     int bx = cont_x(), by = cont_y();
 
-    /* Dark background */
-    gfx_fill((unsigned)bx, (unsigned)by,
-              (unsigned)CONT_W, (unsigned)CONT_H, GFX_RGB(8, 8, 14));
+    /* Deep-space background image */
+    tuner_bg_load();
+    if (g_tuner_bg_ok && g_tuner_bg_w > 0) {
+        gfx_icon_blit(g_px_tuner_bg, g_tuner_bg_w, g_tuner_bg_h,
+                      bx, by, CONT_W, CONT_H);
+    } else {
+        gfx_fill((unsigned)bx, (unsigned)by,
+                 (unsigned)CONT_W, (unsigned)CONT_H, GFX_RGB(8, 8, 14));
+    }
 
     /* Read detected pitch */
     float hz = 0.0f;
