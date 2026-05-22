@@ -2014,6 +2014,27 @@ target_compile_options(libAetherFX PRIVATE
 
 target_link_libraries(libAetherFX PUBLIC libAetherPlugin libAetherDSP)
 
+# ── Phase 8.8 — libAetherChain ────────────────────────────────────────────────
+
+add_library(libAetherChain STATIC
+    lib/libAetherChain/src/achain.c
+)
+target_include_directories(libAetherChain PUBLIC
+    lib/libAetherChain/include
+    lib/libAetherPlugin/include
+    lib/libAetherDSP/include
+)
+target_include_directories(libAetherChain PRIVATE
+    ${POSIX_INC_DIR}
+    lib/include
+)
+target_compile_options(libAetherChain PRIVATE
+    ${USER_COMPILE_FLAGS}
+    -Wno-unused-parameter
+    -Wno-sign-compare
+)
+target_link_libraries(libAetherChain PUBLIC libAetherFX libAetherPlugin libAetherDSP)
+
 # ── initrd CPIO archive ───────────────────────────────────────────────────────
 #
 # Step 1 — package all files from initrd_staging/ into a CPIO newc archive.
