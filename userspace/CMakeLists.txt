@@ -2063,6 +2063,55 @@ target_compile_options(libAetherAudioWidget PRIVATE
 )
 target_link_libraries(libAetherAudioWidget PUBLIC libaether_posix)
 
+# ── Phase 8.10 — AetherGuitar ─────────────────────────────────────────────────
+
+add_executable(user_aether_guitar
+    apps/aether_guitar/main.c
+    apps/aether_guitar/view_board.c
+    apps/aether_guitar/view_amp.c
+    apps/aether_guitar/view_tuner.c
+    apps/aether_guitar/view_presets.c
+    apps/aether_guitar/view_settings.c
+    lib/crt0.S
+)
+target_include_directories(user_aether_guitar PRIVATE
+    apps/aether_guitar
+    lib/libAetherChain/include
+    lib/libAetherPlugin/include
+    lib/libAetherFX/include
+    lib/libAetherAmp/include
+    lib/libAetherDSP/include
+    lib/libAetherAudioWidget/include
+    lib/libAetherAudioWidget/src
+    lib/libaetheraudio/include
+    lib/include
+    ${POSIX_INC_DIR}
+)
+target_compile_options(user_aether_guitar PRIVATE
+    ${USER_COMPILE_FLAGS}
+    -Wno-unused-parameter
+    -Wno-unused-function
+    -Wno-sign-compare
+)
+target_link_libraries(user_aether_guitar PRIVATE
+    libAetherChain
+    libAetherFX
+    libAetherAmp
+    libAetherPlugin
+    libAetherDSP
+    libAetherAudioWidget
+    libaetheraudio
+    libwidget
+    libaether
+)
+target_link_options(user_aether_guitar PRIVATE
+    -T ${USER_LINKER_SCRIPT} -nostdlib -static -Wl,--build-id=none
+)
+set_target_properties(user_aether_guitar PROPERTIES
+    OUTPUT_NAME "aether_guitar" SUFFIX ""
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
+)
+
 # ── initrd CPIO archive ───────────────────────────────────────────────────────
 #
 # Step 1 — package all files from initrd_staging/ into a CPIO newc archive.
@@ -2104,7 +2153,7 @@ add_custom_command(
     DEPENDS user_init user_dock user_topbar user_desktop user_compositor user_aether_term user_statusbar user_files
             user_textviewer user_calculator user_tictactoe user_widget_demo
             user_aether_editor user_aether_http user_telnet user_aether_top
-            user_sys_prefs user_aether_sound
+            user_sys_prefs user_aether_sound user_aether_guitar
             user_posix_test
             ${INTERP_TARGET}
             ${IMG_TEST_TARGET}
