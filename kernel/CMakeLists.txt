@@ -15,6 +15,8 @@ set(KERNEL_SOURCES
     core/printk.c
     core/exceptions.c
     core/scheduler.c
+    core/sched_rt.c
+    core/cpu_affinity.c
     core/syscall.c
     core/process.c
     core/pipe.c
@@ -72,6 +74,13 @@ set(KERNEL_SOURCES
     drivers/usb/xhci.c
     drivers/usb/msc.c
     fs/usb_fat32.c
+
+    # Drivers — Audio (Phase 8.1 + 8.2)
+    drivers/audio/audio_core.c
+    drivers/audio/pwm_audio.c
+    drivers/audio/i2s_bcm2712.c
+    drivers/usb/audio/uac2.c
+    drivers/usb/midi/usb_midi.c
 
     # Drivers — GPU / V3D (Phase 6.1)
     drivers/gpu/mailbox.c

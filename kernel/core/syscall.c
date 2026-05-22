@@ -52,6 +52,9 @@
 #include "drivers/rtc/pl031.h"
 #include "aether/config.h"
 #include "aether/users.h"
+#include "aether/sched.h"
+#include "aether/audio_dev.h"
+#include "drivers/usb/midi/usb_midi.h"
 #include "drivers/video/ramfb.h"
 
 /* ── Wallpaper sharing globals (Phase 6.1.x) ────────────────────────────── */
@@ -1410,6 +1413,95 @@ long syscall_dispatch(trap_frame_t *frame)
             return 0;
         }
         return -1;
+    }
+
+    /* ── Phase 8.0 — RT scheduling ──────────────────────────────────── */
+
+    case SYS_SCHED_SETPARAM: {
+        /* arg0 = policy (SCHED_NORMAL/FIFO/RR), arg1 = rt_priority (1-99) */
+        int policy   = (int)arg0;
+        int rt_prio  = (int)arg1;
+        return sched_rt_set_policy(task_current_pid(), policy, rt_prio);
+    }
+
+    case SYS_SCHED_SETAFFINITY: {
+        /* arg0 = cpu_mask (bitmask, bit N = core N) */
+        u8 mask = (u8)(arg0 & 0x0F);
+        return sched_rt_set_affinity(task_current_pid(), mask);
+    }
+
+    case SYS_MLOCKALL: {
+        return sched_rt_mlockall(task_current_pid());
+    }
+
+    case SYS_AUDIO_TIMESTAMP: {
+        /* Returns nanoseconds since boot via CNTPCT_EL0 */
+        u64 ns = sched_rt_timestamp_ns();
+        /* Pack into x0 (64-bit) — userspace reads directly */
+        return (long)ns;
+    }
+
+    case SYS_AUDIO_LATENCY_STATS: {
+        /* arg0 = pointer to audio_latency_stats_t in user space */
+        audio_latency_stats_t *out = (audio_latency_stats_t *)arg0;
+        if (!out) return -1;
+        sched_rt_get_latency_stats(out);
+        return 0;
+    }
+
+    /* ── Phase 8.1 audio device syscalls ────────────────────────────── */
+
+    case SYS_AUDIO_ENUM: {
+        /* arg0 = user pointer to audio_dev_info_t array, arg1 = max count */
+        audio_dev_info_t *arr = (audio_dev_info_t *)arg0;
+        int max = (int)arg1;
+        if (!arr || max <= 0) return -1;
+        return audio_dev_enumerate(arr, max);
+    }
+
+    case SYS_AUDIO_OPEN: {
+        /* arg0 = device name pointer ("default" or specific name) */
+        const char *name = (const char *)arg0;
+        audio_dev_t *dev = audio_dev_open(name ? name : "default");
+        /* Return index into device registry (1-based) or -1 */
+        if (!dev) return -1;
+        return 1;  /* handle: Phase 8.3 will map handles to devices */
+    }
+
+    case SYS_AUDIO_CLOSE: {
+        return 0;  /* audio_dev_close is a no-op currently */
+    }
+
+    case SYS_AUDIO_CONFIGURE: {
+        /* arg0=handle, arg1=sample_rate, arg2=(bit_depth<<8)|channels */
+        audio_dev_t *dev = audio_dev_open("default");
+        if (!dev) return -1;
+        u32 sr     = (u32)arg1;
+        u8 bd      = (u8)((arg2 >> 8) & 0xFF);
+        u8 ch      = (u8)(arg2 & 0xFF);
+        return audio_dev_configure(dev, sr, bd, ch);
+    }
+
+    case SYS_AUDIO_START: {
+        audio_dev_t *dev = audio_dev_open("default");
+        if (!dev) return -1;
+        return audio_dev_start(dev);
+    }
+
+    case SYS_MIDI_READ: {
+        /* arg0 = pointer to midi_event_t array, arg1 = max events */
+        midi_event_t *buf = (midi_event_t *)arg0;
+        int max = (int)arg1;
+        if (!buf || max <= 0) return -1;
+        return usb_midi_read(buf, max);
+    }
+
+    case SYS_MIDI_WRITE: {
+        /* arg0 = pointer to midi_event_t array, arg1 = count */
+        const midi_event_t *buf = (const midi_event_t *)arg0;
+        int count = (int)arg1;
+        if (!buf || count <= 0) return -1;
+        return usb_midi_write(buf, count);
     }
 
     default:

@@ -15,6 +15,7 @@
  */
 
 #include "aether/scheduler.h"
+#include "aether/sched.h"
 #include "aether/mm.h"
 #include "aether/pipe.h"
 #include "aether/vmm.h"
@@ -37,27 +38,43 @@ static task_t *current_task(void)
 /*
  * find_next — scan for the next runnable task.
  *
- * Starts searching AFTER the current task (round-robin).
- * Wakes sleeping tasks whose wake_tick has passed.
- * Returns the index of the next task to run, or g_current_idx if none found.
+ * Phase 8.0: RT tasks (SCHED_FIFO / SCHED_RR) always preempt normal tasks.
+ * Among RT tasks, highest rt_priority wins (ties broken by round-robin scan).
+ * Falls through to normal round-robin when no RT task is ready.
  */
 static u32 find_next(void)
 {
     u64 now = timer_get_ticks();
 
+    /* Wake sleeping tasks first */
+    for (u32 i = 0; i < g_num_tasks; i++) {
+        task_t *t = &g_tasks[i];
+        if (t->state == TASK_SLEEPING && now >= t->wake_tick)
+            t->state = TASK_READY;
+    }
+
+    /* Phase 8.0: check for highest-priority RT task first */
+    int rt_idx = sched_rt_find_next();
+    if (rt_idx >= 0)
+        return (u32)rt_idx;
+
+    /* Normal round-robin fallback */
     for (u32 i = 1; i < g_num_tasks; i++) {
         u32 idx = (g_current_idx + i) % g_num_tasks;
         task_t *t = &g_tasks[idx];
-
-        /* Wake sleeping task if its time has come */
-        if (t->state == TASK_SLEEPING && now >= t->wake_tick)
-            t->state = TASK_READY;
-
-        if (t->state == TASK_READY)
+        if (t->state == TASK_READY && t->sched_policy == SCHED_NORMAL)
             return idx;
     }
 
     return g_current_idx;   /* no other task ready — stay current */
+}
+
+/* Phase 8.0 — expose task table for RT scheduler */
+task_t *task_get_table(u32 *count_out)
+{
+    if (count_out)
+        *count_out = g_num_tasks;
+    return g_tasks;
 }
 
 /* ── Public API ─────────────────────────────────────────────────────────── */
@@ -70,7 +87,8 @@ void scheduler_init(void)
     g_num_tasks   = 0;
     g_current_idx = 0;
 
-    kinfo("Scheduler: initialised (max %d tasks)\n", MAX_TASKS);
+    sched_rt_init();
+    kinfo("Scheduler: initialised (max %d tasks, RT enabled)\n", MAX_TASKS);
 }
 
 /*
@@ -146,6 +164,12 @@ static task_t *alloc_task(void (*entry_fn)(void), const char *name)
         t->fd_table[i].type     = FD_TYPE_CLOSED;
         t->fd_table[i].pipe_idx = 0;
     }
+
+    /* Phase 8.0: RT defaults */
+    t->sched_policy  = SCHED_NORMAL;
+    t->rt_priority   = 0;
+    t->cpu_affinity  = CPU_MASK_ALL;
+    t->mlocked       = 0;
 
     return t;
 }

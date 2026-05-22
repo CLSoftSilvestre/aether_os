@@ -31,6 +31,8 @@
 #include "drivers/usb/ohci.h"
 #include "drivers/usb/xhci.h"
 #include "aether/usb_fat32.h"
+#include "aether/audio_dev.h"
+#include "drivers/usb/midi/usb_midi.h"
 #include "aether/net.h"
 #include "aether/vfs.h"
 #include "aether/fat32.h"
@@ -141,6 +143,11 @@ void kernel_main(void)
     usb_fat32_mount();  /* no-op if no USB MSC disk found */
     vfs_init();
     boot_prof_stamp("storage+vfs");
+
+    /* ── Phase 8: Audio subsystem ───────────────────────────────────── */
+    audio_core_init();  /* registers UAC2 / I2S / PWM devices           */
+    usb_midi_init();    /* USB MIDI class driver (UMC202HD etc.)         */
+    boot_prof_stamp("audio");
 
     /* ── 6c.5 System config — display resolution ────────────────────── */
     /*

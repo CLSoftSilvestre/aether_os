@@ -1836,6 +1836,184 @@ else()
     set(AETHER_BROWSER_TARGET "")
 endif()
 
+# ── Phase 8.3 — libaetheraudio + AetherSound server ──────────────────────────
+
+add_library(libaetheraudio STATIC
+    lib/libaetheraudio/src/aetheraudio.c
+)
+target_include_directories(libaetheraudio PUBLIC
+    lib/libaetheraudio/include
+    lib/include
+)
+target_compile_options(libaetheraudio PRIVATE ${USER_COMPILE_FLAGS}
+    -Wno-unused-parameter
+)
+
+add_executable(user_aether_sound
+    apps/aether_sound/main.c
+    lib/crt0.S
+)
+target_include_directories(user_aether_sound PRIVATE
+    lib/libaetheraudio/include
+    lib/include
+)
+target_compile_options(user_aether_sound PRIVATE ${USER_COMPILE_FLAGS}
+    -Wno-unused-parameter
+)
+target_link_libraries(user_aether_sound PRIVATE libaetheraudio libaether)
+target_link_options(user_aether_sound PRIVATE
+    -T ${USER_LINKER_SCRIPT} -nostdlib -static -Wl,--build-id=none
+)
+set_target_properties(user_aether_sound PROPERTIES
+    OUTPUT_NAME "aether_sound" SUFFIX ""
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
+)
+
+# ── Phase 8.4 — libAetherDSP ─────────────────────────────────────────────────
+#
+# NEON-accelerated DSP primitives for the AetherOS audio pipeline.
+# All processing in float32.  Requires AArch64 NEON (arm_neon.h).
+#
+# arm_neon.h lives in the GCC compiler-internal include directory.
+# Under -nostdinc that directory is NOT searched automatically, so we
+# locate it at configure time via -print-libgcc-file-name and add it
+# explicitly.  (Same technique used for QJS_LIBGCC_PATH above.)
+
+execute_process(
+    COMMAND ${CMAKE_C_COMPILER} -march=armv8-a -print-libgcc-file-name
+    OUTPUT_VARIABLE ADSP_LIBGCC_PATH
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+get_filename_component(ADSP_GCC_INCLUDE_DIR "${ADSP_LIBGCC_PATH}" DIRECTORY)
+set(ADSP_GCC_INCLUDE_DIR "${ADSP_GCC_INCLUDE_DIR}/include")
+message(STATUS "[Phase 8.4] GCC internal include (arm_neon.h): ${ADSP_GCC_INCLUDE_DIR}")
+
+add_library(libAetherDSP STATIC
+    lib/libAetherDSP/src/adsp_neon.c
+    lib/libAetherDSP/src/adsp_biquad.c
+    lib/libAetherDSP/src/adsp_fft.c
+    lib/libAetherDSP/src/adsp_conv.c
+    lib/libAetherDSP/src/adsp_env.c
+    lib/libAetherDSP/src/adsp_waveshaper.c
+    lib/libAetherDSP/src/adsp_resampler.c
+    lib/libAetherDSP/src/adsp_smooth.c
+)
+
+target_include_directories(libAetherDSP PUBLIC
+    lib/libAetherDSP/include
+)
+
+target_include_directories(libAetherDSP PRIVATE
+    ${ADSP_GCC_INCLUDE_DIR}   # arm_neon.h, stdint.h (compiler-internal)
+    ${POSIX_INC_DIR}
+    lib/include
+)
+
+target_compile_options(libAetherDSP PRIVATE
+    ${USER_COMPILE_FLAGS}
+    "-I${ADSP_GCC_INCLUDE_DIR}"   # arm_neon.h (bypasses -nostdinc filtering)
+    -Wno-unused-parameter
+    -Wno-unused-function
+    -Wno-strict-aliasing   # adsp_neon.c type-puns float↔uint via union
+)
+
+target_link_libraries(libAetherDSP PUBLIC libaether_posix)
+
+# ── Phase 8.5 — libAetherPlugin ──────────────────────────────────────────────
+#
+# CLAP-inspired internal plugin API: descriptor, parameter, instance vtable,
+# and static plugin registry.  All plugins are statically linked — no dlopen.
+
+add_library(libAetherPlugin STATIC
+    lib/libAetherPlugin/src/aplug_registry.c
+    lib/libAetherPlugin/src/aplug_builtin.c
+)
+
+target_include_directories(libAetherPlugin PUBLIC
+    lib/libAetherPlugin/include
+    lib/libAetherDSP/include
+)
+
+target_include_directories(libAetherPlugin PRIVATE
+    ${POSIX_INC_DIR}
+    lib/include
+)
+
+target_compile_options(libAetherPlugin PRIVATE
+    ${USER_COMPILE_FLAGS}
+    -Wno-unused-parameter
+)
+
+target_link_libraries(libAetherPlugin PUBLIC libAetherDSP)
+
+# ── Phase 8.6 — libAetherAmp ─────────────────────────────────────────────────
+#
+# WAV IR loader, cabinet convolution sim, classic tone stacks (Fender/Marshall/Vox),
+# and NAM neural amp modeling (LSTM + WaveNet-lite inference).
+
+add_library(libAetherAmp STATIC
+    lib/libAetherAmp/src/aamp_wav.c
+    lib/libAetherAmp/src/aamp_cab.c
+    lib/libAetherAmp/src/aamp_tonestack.c
+    lib/libAetherAmp/src/aamp_nam.c
+)
+
+target_include_directories(libAetherAmp PUBLIC
+    lib/libAetherAmp/include
+    lib/libAetherDSP/include
+)
+
+target_include_directories(libAetherAmp PRIVATE
+    ${POSIX_INC_DIR}
+    lib/include
+)
+
+target_compile_options(libAetherAmp PRIVATE
+    ${USER_COMPILE_FLAGS}
+    -Wno-unused-parameter
+    -Wno-sign-compare
+)
+
+target_link_libraries(libAetherAmp PUBLIC libAetherDSP)
+
+# ── Phase 8.7 — libAetherFX ──────────────────────────────────────────────────
+#
+# 25 guitar effects: tuner, gate, boost, compressor, limiter, overdrive,
+# distortion, fuzz, 4-band EQ, wah, auto-wah, chorus, flanger, phaser,
+# tremolo, vibrato, rotary, delay, ping-pong delay, plate, spring, pitch
+# shift, octave, ring modulator, looper.
+
+add_library(libAetherFX STATIC
+    lib/libAetherFX/src/afx_util.c
+    lib/libAetherFX/src/afx_dyn.c
+    lib/libAetherFX/src/afx_dist.c
+    lib/libAetherFX/src/afx_filter.c
+    lib/libAetherFX/src/afx_mod.c
+    lib/libAetherFX/src/afx_time.c
+    lib/libAetherFX/src/afx_special.c
+    lib/libAetherFX/src/afx_register.c
+)
+
+target_include_directories(libAetherFX PUBLIC
+    lib/libAetherFX/include
+    lib/libAetherPlugin/include
+    lib/libAetherDSP/include
+)
+
+target_include_directories(libAetherFX PRIVATE
+    ${POSIX_INC_DIR}
+    lib/include
+)
+
+target_compile_options(libAetherFX PRIVATE
+    ${USER_COMPILE_FLAGS}
+    -Wno-unused-parameter
+    -Wno-unused-function
+    -Wno-sign-compare
+)
+
+target_link_libraries(libAetherFX PUBLIC libAetherPlugin libAetherDSP)
+
 # ── initrd CPIO archive ───────────────────────────────────────────────────────
 #
 # Step 1 — package all files from initrd_staging/ into a CPIO newc archive.
@@ -1877,7 +2055,7 @@ add_custom_command(
     DEPENDS user_init user_dock user_topbar user_desktop user_compositor user_aether_term user_statusbar user_files
             user_textviewer user_calculator user_tictactoe user_widget_demo
             user_aether_editor user_aether_http user_telnet user_aether_top
-            user_sys_prefs
+            user_sys_prefs user_aether_sound
             user_posix_test
             ${INTERP_TARGET}
             ${IMG_TEST_TARGET}

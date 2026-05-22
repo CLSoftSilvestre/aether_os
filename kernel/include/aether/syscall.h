@@ -219,6 +219,21 @@
 #define SYS_USER_SET_ROLE 945  /* (uid, role) → 0 or -1; admin only               */
 #define SYS_USER_LOGIN    946  /* (name, pw) → 0 or -1; sets current user          */
 
+/* ── Phase 8.0 RT scheduling + Phase 8.1 audio syscalls ──────────────── */
+/* Numbers 960–971 — see aether/sched.h for full definitions             */
+#define SYS_SCHED_SETPARAM       960
+#define SYS_SCHED_SETAFFINITY    961
+#define SYS_MLOCKALL             962
+#define SYS_AUDIO_TIMESTAMP      963
+#define SYS_AUDIO_LATENCY_STATS  964
+#define SYS_AUDIO_ENUM           965
+#define SYS_AUDIO_OPEN           966
+#define SYS_AUDIO_CLOSE          967
+#define SYS_AUDIO_CONFIGURE      968
+#define SYS_AUDIO_START          969
+#define SYS_MIDI_READ            970
+#define SYS_MIDI_WRITE           971
+
 /* File descriptor numbers */
 #define FD_STDIN   0
 #define FD_STDOUT  1

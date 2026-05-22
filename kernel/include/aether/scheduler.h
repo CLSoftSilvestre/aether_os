@@ -114,6 +114,11 @@ typedef struct {
     u32           user_stack_pages;
     uintptr_t     bo_va_next;       /* next free VA for GPU BO mappings (0x74000000+) */
     fd_entry_t    fd_table[PROC_MAX_FD];
+    /* Phase 8.0 — RT scheduling */
+    u8            sched_policy;     /* SCHED_NORMAL / SCHED_FIFO / SCHED_RR */
+    u8            rt_priority;      /* 1-99; 0 for SCHED_NORMAL tasks        */
+    u8            cpu_affinity;     /* bitmask: bit N = allowed on core N    */
+    u8            mlocked;          /* 1 = pages locked (no page-fault spikes)*/
 } task_t;
 
 /* ── Public API ─────────────────────────────────────────────────────── */
@@ -218,6 +223,9 @@ uintptr_t task_alloc_bo_va(u32 n_pages);
 
 /* Print all task states (for debugging) */
 void scheduler_print_tasks(void);
+
+/* Phase 8.0 — expose task table for RT scheduler (sched_rt.c) */
+task_t *task_get_table(u32 *count_out);
 
 /* Context switch (implemented in context_switch.S) */
 void context_switch(cpu_context_t *from, cpu_context_t *to);

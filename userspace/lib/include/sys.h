@@ -1091,4 +1091,101 @@ static inline long sys_user_login(const char *name, const char *pw)
                  (long)(const void *)pw);
 }
 
+/* ── Phase 8.0 RT scheduling ─────────────────────────────────────── */
+
+#define SYS_SCHED_SETPARAM      960
+#define SYS_SCHED_SETAFFINITY   961
+#define SYS_MLOCKALL            962
+#define SYS_AUDIO_TIMESTAMP     963
+#define SYS_AUDIO_LATENCY_STATS 964
+
+/* Policy constants (match kernel sched.h) */
+#define SCHED_NORMAL  0
+#define SCHED_FIFO    1
+#define SCHED_RR      2
+
+static inline long sys_sched_setparam(int policy, int rt_priority)
+{
+    return _sys2(SYS_SCHED_SETPARAM, (long)policy, (long)rt_priority);
+}
+
+static inline long sys_sched_setaffinity(unsigned char cpu_mask)
+{
+    return _sys1(SYS_SCHED_SETAFFINITY, (long)cpu_mask);
+}
+
+static inline long sys_mlockall(void)
+{
+    return _sys0(SYS_MLOCKALL);
+}
+
+static inline long long sys_audio_timestamp(void)
+{
+    return (long long)_sys0(SYS_AUDIO_TIMESTAMP);
+}
+
+/* ── Phase 8.1 Audio device syscalls ─────────────────────────────── */
+
+#define SYS_AUDIO_ENUM      965
+#define SYS_AUDIO_OPEN      966
+#define SYS_AUDIO_CLOSE     967
+#define SYS_AUDIO_CONFIGURE 968
+#define SYS_AUDIO_START     969
+#define SYS_MIDI_READ       970
+#define SYS_MIDI_WRITE      971
+
+#define AUDIO_NAME_MAX 32
+
+typedef struct {
+    char          name[AUDIO_NAME_MAX];
+    unsigned int  type;        /* 0=UAC2, 1=I2S, 2=PWM */
+    unsigned char inputs;
+    unsigned char outputs;
+    unsigned int  max_sample_rate;
+} audio_dev_info_t;
+
+typedef struct {
+    unsigned char status;
+    unsigned char data1;
+    unsigned char data2;
+    unsigned char _pad;
+} midi_event_t;
+
+static inline long sys_audio_enum(audio_dev_info_t *arr, int max)
+{
+    return _sys2(SYS_AUDIO_ENUM, (long)(void *)arr, (long)max);
+}
+
+static inline long sys_audio_open(const char *name)
+{
+    return _sys1(SYS_AUDIO_OPEN, (long)(const void *)name);
+}
+
+static inline long sys_audio_close(long handle)
+{
+    return _sys1(SYS_AUDIO_CLOSE, handle);
+}
+
+static inline long sys_audio_configure(long handle, unsigned int sr,
+                                        unsigned char bd, unsigned char ch)
+{
+    return _sys3(SYS_AUDIO_CONFIGURE, handle, (long)sr,
+                 (long)((bd << 8) | ch));
+}
+
+static inline long sys_audio_start(long handle)
+{
+    return _sys1(SYS_AUDIO_START, handle);
+}
+
+static inline long sys_midi_read(midi_event_t *buf, int max)
+{
+    return _sys2(SYS_MIDI_READ, (long)(void *)buf, (long)max);
+}
+
+static inline long sys_midi_write(const midi_event_t *buf, int count)
+{
+    return _sys2(SYS_MIDI_WRITE, (long)(const void *)buf, (long)count);
+}
+
 #endif /* AETHER_USERSPACE_SYS_H */
