@@ -300,6 +300,89 @@ static void fmt_uptime(char *buf, long ticks)
     snprintf(buf, 16, "%02ld:%02ld:%02ld", h, m, s);
 }
 
+/* ── Command history ─────────────────────────────────────────────────────── */
+
+#define HIST_MAX  32
+#define HIST_LEN  256
+
+static char g_hist[HIST_MAX][HIST_LEN];
+static int  g_hist_count = 0;
+static int  g_hist_idx   = -1;
+static char g_hist_saved[HIST_LEN];
+
+static void hist_add(const char *line)
+{
+    if (!line || line[0] == '\0') return;
+    if (g_hist_count > 0 && strcmp(g_hist[0], line) == 0) return;
+    int top = (g_hist_count < HIST_MAX) ? g_hist_count : HIST_MAX - 1;
+    for (int i = top; i > 0; i--)
+        for (int j = 0; j < HIST_LEN; j++) g_hist[i][j] = g_hist[i-1][j];
+    int j;
+    for (j = 0; line[j] && j < HIST_LEN - 1; j++) g_hist[0][j] = line[j];
+    g_hist[0][j] = '\0';
+    if (g_hist_count < HIST_MAX) g_hist_count++;
+}
+
+/* ── Tab autocomplete ────────────────────────────────────────────────────── */
+
+static const char *const g_cmds[] = {
+    "cat", "cd", "clear", "disk", "echo", "exit", "files",
+    "help", "kill", "ls", "mem", "mkdir", "mount",
+    "net", "nslookup", "pid", "ping", "ps", "pwd", "rm",
+    "spawn", "time", "touch", "uname", "view", "wget",
+    NULL
+};
+
+static int autocomplete(const char *prefix, int plen, char *out, int outsz)
+{
+    int matches = 0;
+    const char *first = NULL;
+    for (int i = 0; g_cmds[i]; i++) {
+        if (strncmp(g_cmds[i], prefix, (size_t)plen) == 0) {
+            if (!first) first = g_cmds[i];
+            matches++;
+        }
+    }
+    if (matches == 0) return 0;
+    int common = (int)strlen(first);
+    for (int i = 0; g_cmds[i]; i++) {
+        if (strncmp(g_cmds[i], prefix, (size_t)plen) != 0) continue;
+        int j = 0;
+        while (j < common && g_cmds[i][j] == first[j]) j++;
+        if (j < common) common = j;
+    }
+    int len = (common < outsz - 1) ? common : outsz - 1;
+    for (int i = 0; i < len; i++) out[i] = first[i];
+    out[len] = '\0';
+    return matches;
+}
+
+/* Replace current line in the readline editor and redraw it */
+static void rl_replace_line(char *buf, int *n, int *pos, int max,
+                             int prompt_col, const char *new_str)
+{
+    term_erase_cursor();
+    term_frame_begin();
+    for (int i = 0; i < *n; i++) {
+        t_buf[t_row][prompt_col + i] = ' ';
+        blit_term_bg_cell(t_row, prompt_col + i);
+    }
+    *n = 0;
+    if (new_str)
+        while (*new_str && *n < max - 1) buf[(*n)++] = *new_str++;
+    buf[*n] = '\0';
+    *pos = *n;
+    t_col = prompt_col;
+    for (int i = 0; i < *n; i++) {
+        t_buf[t_row][t_col] = buf[i];
+        gfx_char_transparent(TX + t_col * FONT_W, TY + t_row * FONT_H,
+                             buf[i], C_TEXT);
+        t_col++;
+    }
+    term_frame_end();
+    term_draw_cursor();
+}
+
 /* ── Readline ────────────────────────────────────────────────────────────── */
 
 /*
@@ -311,8 +394,12 @@ static void fmt_uptime(char *buf, long ticks)
  */
 static int term_readline(char *buf, int max)
 {
-    int n   = 0;
-    int pos = 0;
+    int n          = 0;
+    int pos        = 0;
+    int prompt_col = t_col;
+
+    g_hist_idx      = -1;
+    g_hist_saved[0] = '\0';
 
     term_draw_cursor();
 
@@ -384,6 +471,50 @@ static int term_readline(char *buf, int max)
             term_erase_cursor();
             pos++; t_col++;
             term_draw_cursor();
+            continue;
+        }
+
+        /* Arrow UP — step back through history */
+        if (ev.keycode == KEY_UP) {
+            if (g_hist_count == 0) continue;
+            if (g_hist_idx == -1) {
+                for (int i = 0; i <= n; i++) g_hist_saved[i] = buf[i];
+                g_hist_idx = 0;
+            } else if (g_hist_idx < g_hist_count - 1) {
+                g_hist_idx++;
+            } else {
+                continue;
+            }
+            rl_replace_line(buf, &n, &pos, max, prompt_col, g_hist[g_hist_idx]);
+            continue;
+        }
+
+        /* Arrow DOWN — step forward through history */
+        if (ev.keycode == KEY_DOWN) {
+            if (g_hist_idx == -1) continue;
+            if (g_hist_idx == 0) {
+                g_hist_idx = -1;
+                rl_replace_line(buf, &n, &pos, max, prompt_col, g_hist_saved);
+            } else {
+                g_hist_idx--;
+                rl_replace_line(buf, &n, &pos, max, prompt_col, g_hist[g_hist_idx]);
+            }
+            continue;
+        }
+
+        /* Tab — autocomplete command name (first word only) */
+        if (ev.keycode == KEY_TAB) {
+            if (n > 0) {
+                int has_space = 0;
+                for (int i = 0; i < n; i++) { if (buf[i] == ' ') { has_space = 1; break; } }
+                if (!has_space) {
+                    char completed[HIST_LEN];
+                    buf[n] = '\0';
+                    if (autocomplete(buf, n, completed, sizeof(completed)) > 0
+                        && (int)strlen(completed) > n)
+                        rl_replace_line(buf, &n, &pos, max, prompt_col, completed);
+                }
+            }
             continue;
         }
 
@@ -703,6 +834,12 @@ static void cmd_mount(void)
         term_puts("  /afs       AetherFS (virtio-blk hd1)\n");
     else
         term_puts("  /afs       (no AetherFS — run make_afs.sh and attach afs.img)\n");
+
+    n = sys_fs_readdir("/usb", buf, sizeof(buf));
+    if (n > 0 && buf[0] != '(')
+        term_puts("  /usb       FAT32  (USB MSC via xHCI)\n");
+    else
+        term_puts("  /usb       (no USB disk — run make_usb_disk.sh and attach usb_disk.img)\n");
 }
 
 static void cmd_disk(void)
@@ -1079,6 +1216,8 @@ int main(void)
             line[--n] = '\0';
             while (n > 0 && line[n-1] == ' ') line[--n] = '\0';
         }
+
+        hist_add(line);
 
         int argc = parse_args(line, argv, ARGV_MAX);
         if (argc == 0) continue;

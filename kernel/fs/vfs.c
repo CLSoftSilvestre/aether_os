@@ -2,14 +2,16 @@
  * AetherOS — Virtual Filesystem Switch (Phase 5.2)
  * File: kernel/fs/vfs.c
  *
- * Mounts three filesystems:
+ * Mounts four filesystems:
  *   "/initrd"  → embedded CPIO initrd  (read-only, always available)
  *   "/"        → FAT32 on virtio-blk 0 (read-only, when disk.img attached)
  *   "/afs"     → AetherFS on virtio-blk 1 (read-only, when afs.img attached)
+ *   "/usb"     → FAT32 on USB MSC disk   (read-only, when USB disk present)
  *
  * Path routing:
  *   Starts with "/initrd" → initrd backend
  *   Starts with "/afs"   → AetherFS backend
+ *   Starts with "/usb"   → USB FAT32 backend
  *   Everything else       → FAT32 backend (if mounted), else -ENOENT
  *
  * File descriptors: vfd = VFS_FD_BASE + slot (200-215).
@@ -20,6 +22,7 @@
 #include "aether/fat32.h"
 #include "aether/aetherfs.h"
 #include "aether/initrd.h"
+#include "aether/usb_fat32.h"
 #include "aether/printk.h"
 #include "aether/types.h"
 
@@ -30,6 +33,7 @@ typedef enum {
     VFS_BACK_INITRD = 1,
     VFS_BACK_FAT32  = 2,
     VFS_BACK_AFS    = 3,
+    VFS_BACK_USB    = 4,
 } vfs_backend_t;
 
 typedef struct {
@@ -43,6 +47,7 @@ typedef struct {
         } ird;
         struct { int fh; } fat;
         struct { int fh; } afs;
+        struct { int fh; } usb;
     };
 } vfs_fd_t;
 
@@ -94,6 +99,23 @@ static const char *afs_subpath(const char *path)
     return path;
 }
 
+static int is_usb_path(const char *path)
+{
+    if (vfs_strncmp(path, "/usb", 4) == 0) {
+        char next = path[4];
+        return (next == '\0' || next == '/');
+    }
+    return 0;
+}
+
+/* Strip "/usb" prefix, return the remainder (e.g. "/music.wav" or ""). */
+static const char *usb_subpath(const char *path)
+{
+    if (vfs_strncmp(path, "/usb", 4) == 0)
+        return path + 4;   /* may be "" or "/foo" */
+    return path;
+}
+
 /* ── Public: init ────────────────────────────────────────────────────────── */
 
 void vfs_init(void)
@@ -109,6 +131,10 @@ void vfs_init(void)
         kinfo("vfs: AetherFS mounted at /afs\n");
     else
         kinfo("vfs: no AetherFS disk — /afs unavailable\n");
+    if (usb_fat32_ready())
+        kinfo("vfs: USB FAT32 mounted at /usb\n");
+    else
+        kinfo("vfs: no USB disk — /usb unavailable\n");
 }
 
 /* ── Public: open ────────────────────────────────────────────────────────── */
@@ -158,6 +184,21 @@ int vfs_open(const char *path)
         return VFS_FD_BASE + slot;
     }
 
+    /* ── USB FAT32 ── */
+    if (is_usb_path(path)) {
+        if (!usb_fat32_ready()) return -1;
+        const char *sub = usb_subpath(path);
+        if (sub[0] == '\0') return -1;   /* cannot open /usb dir itself as file */
+
+        int fh = usb_fat32_open(sub);
+        if (fh < 0) return -1;
+
+        f->used     = 1;
+        f->backend  = VFS_BACK_USB;
+        f->usb.fh   = fh;
+        return VFS_FD_BASE + slot;
+    }
+
     /* ── FAT32 ── */
     if (!fat32_ready()) return -1;
 
@@ -195,6 +236,9 @@ int vfs_read(int vfd, u8 *buf, u32 len)
     if (f->backend == VFS_BACK_AFS)
         return aetherfs_read(f->afs.fh, buf, len);
 
+    if (f->backend == VFS_BACK_USB)
+        return usb_fat32_read(f->usb.fh, buf, len);
+
     return -1;
 }
 
@@ -211,6 +255,8 @@ void vfs_close(int vfd)
         fat32_close(f->fat.fh);
     else if (f->backend == VFS_BACK_AFS)
         aetherfs_close(f->afs.fh);
+    else if (f->backend == VFS_BACK_USB)
+        usb_fat32_close(f->usb.fh);
 
     f->used = 0;
 }
@@ -219,9 +265,9 @@ void vfs_close(int vfd)
 
 int vfs_create(const char *path)
 {
-    /* Only FAT32 is writable; initrd and AetherFS are read-only */
+    /* Only FAT32 is writable; initrd, AetherFS, and USB are read-only */
     if (!path) return -1;
-    if (is_initrd_path(path) || is_afs_path(path)) return -1;
+    if (is_initrd_path(path) || is_afs_path(path) || is_usb_path(path)) return -1;
     if (!fat32_ready()) return -1;
 
     int slot = -1;
@@ -245,7 +291,7 @@ int vfs_create(const char *path)
 int vfs_mkdir(const char *path)
 {
     if (!path) return -1;
-    if (is_initrd_path(path) || is_afs_path(path)) return -1;
+    if (is_initrd_path(path) || is_afs_path(path) || is_usb_path(path)) return -1;
     if (!fat32_ready()) return -1;
     return fat32_mkdir(path);
 }
@@ -255,7 +301,7 @@ int vfs_mkdir(const char *path)
 int vfs_rm(const char *path)
 {
     if (!path) return -1;
-    if (is_initrd_path(path) || is_afs_path(path)) return -1;
+    if (is_initrd_path(path) || is_afs_path(path) || is_usb_path(path)) return -1;
     if (!fat32_ready()) return -1;
     return fat32_remove(path);
 }
@@ -296,6 +342,20 @@ int vfs_readdir(const char *path, char *buf, u32 len)
         const char *sub = afs_subpath(path);
         if (sub[0] == '\0') sub = "/";   /* bare "/afs" → list root */
         return aetherfs_readdir(sub, buf, len);
+    }
+
+    if (is_usb_path(path)) {
+        if (!usb_fat32_ready()) {
+            const char *msg = "(no USB disk — attach a USB FAT32 image)\n";
+            int n = vfs_strlen(msg);
+            if ((u32)n >= len) n = (int)len - 1;
+            for (int i = 0; i < n; i++) buf[i] = msg[i];
+            buf[n] = '\0';
+            return n;
+        }
+        const char *sub = usb_subpath(path);
+        if (sub[0] == '\0') sub = "/";   /* bare "/usb" → list root */
+        return usb_fat32_readdir(sub, buf, len);
     }
 
     /* FAT32 */

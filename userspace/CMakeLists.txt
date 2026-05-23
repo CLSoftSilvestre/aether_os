@@ -26,6 +26,7 @@ add_library(libaether STATIC
     lib/libaether/stdlib.c
     lib/libaether/math.c
     lib/libaether/gfx.c
+    lib/libaether/gfx_toolbar_icons.c
     lib/libaether/gpu.c
     lib/libaether/manifest.c
     lib/libaether/vfs_mounts.c
@@ -73,6 +74,7 @@ add_library(libwidget STATIC
     lib/libwidget/treeview.c
     lib/libwidget/progress.c
     lib/libwidget/anim.c
+    lib/libwidget/filedlg.c
 )
 
 target_include_directories(libwidget PUBLIC
@@ -237,6 +239,23 @@ target_link_options(user_textviewer PRIVATE
 )
 set_target_properties(user_textviewer PROPERTIES
     OUTPUT_NAME "textviewer" SUFFIX ""
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
+)
+
+# ── sys_prefs — System Preferences application ───────────────────────────────
+add_executable(user_sys_prefs
+    apps/sys_prefs/main.c
+    lib/config.c
+    lib/crt0.S
+)
+target_include_directories(user_sys_prefs PRIVATE lib/include)
+target_compile_options(user_sys_prefs PRIVATE ${USER_COMPILE_FLAGS})
+target_link_libraries(user_sys_prefs PRIVATE libwidget libaether)
+target_link_options(user_sys_prefs PRIVATE
+    -T ${USER_LINKER_SCRIPT} -nostdlib -static -Wl,--build-id=none
+)
+set_target_properties(user_sys_prefs PROPERTIES
+    OUTPUT_NAME "sys_prefs" SUFFIX ""
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
 )
 
@@ -1819,6 +1838,311 @@ else()
     set(AETHER_BROWSER_TARGET "")
 endif()
 
+# ── Phase 8.3 — libaetheraudio + AetherSound server ──────────────────────────
+
+add_library(libaetheraudio STATIC
+    lib/libaetheraudio/src/aetheraudio.c
+)
+target_include_directories(libaetheraudio PUBLIC
+    lib/libaetheraudio/include
+    lib/include
+)
+target_compile_options(libaetheraudio PRIVATE ${USER_COMPILE_FLAGS}
+    -Wno-unused-parameter
+)
+
+add_executable(user_aether_sound
+    apps/aether_sound/main.c
+    lib/crt0.S
+)
+target_include_directories(user_aether_sound PRIVATE
+    lib/libaetheraudio/include
+    lib/include
+)
+target_compile_options(user_aether_sound PRIVATE ${USER_COMPILE_FLAGS}
+    -Wno-unused-parameter
+)
+target_link_libraries(user_aether_sound PRIVATE libaetheraudio libaether)
+target_link_options(user_aether_sound PRIVATE
+    -T ${USER_LINKER_SCRIPT} -nostdlib -static -Wl,--build-id=none
+)
+set_target_properties(user_aether_sound PROPERTIES
+    OUTPUT_NAME "aether_sound" SUFFIX ""
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
+)
+
+# ── Phase 8.4 — libAetherDSP ─────────────────────────────────────────────────
+#
+# NEON-accelerated DSP primitives for the AetherOS audio pipeline.
+# All processing in float32.  Requires AArch64 NEON (arm_neon.h).
+#
+# arm_neon.h lives in the GCC compiler-internal include directory.
+# Under -nostdinc that directory is NOT searched automatically, so we
+# locate it at configure time via -print-libgcc-file-name and add it
+# explicitly.  (Same technique used for QJS_LIBGCC_PATH above.)
+
+execute_process(
+    COMMAND ${CMAKE_C_COMPILER} -march=armv8-a -print-libgcc-file-name
+    OUTPUT_VARIABLE ADSP_LIBGCC_PATH
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+get_filename_component(ADSP_GCC_INCLUDE_DIR "${ADSP_LIBGCC_PATH}" DIRECTORY)
+set(ADSP_GCC_INCLUDE_DIR "${ADSP_GCC_INCLUDE_DIR}/include")
+message(STATUS "[Phase 8.4] GCC internal include (arm_neon.h): ${ADSP_GCC_INCLUDE_DIR}")
+
+add_library(libAetherDSP STATIC
+    lib/libAetherDSP/src/adsp_neon.c
+    lib/libAetherDSP/src/adsp_biquad.c
+    lib/libAetherDSP/src/adsp_fft.c
+    lib/libAetherDSP/src/adsp_conv.c
+    lib/libAetherDSP/src/adsp_env.c
+    lib/libAetherDSP/src/adsp_waveshaper.c
+    lib/libAetherDSP/src/adsp_resampler.c
+    lib/libAetherDSP/src/adsp_smooth.c
+)
+
+target_include_directories(libAetherDSP PUBLIC
+    lib/libAetherDSP/include
+)
+
+target_include_directories(libAetherDSP PRIVATE
+    ${ADSP_GCC_INCLUDE_DIR}   # arm_neon.h, stdint.h (compiler-internal)
+    ${POSIX_INC_DIR}
+    lib/include
+)
+
+target_compile_options(libAetherDSP PRIVATE
+    ${USER_COMPILE_FLAGS}
+    "-I${ADSP_GCC_INCLUDE_DIR}"   # arm_neon.h (bypasses -nostdinc filtering)
+    -Wno-unused-parameter
+    -Wno-unused-function
+    -Wno-strict-aliasing   # adsp_neon.c type-puns float↔uint via union
+)
+
+target_link_libraries(libAetherDSP PUBLIC libaether_posix)
+
+# ── Phase 8.5 — libAetherPlugin ──────────────────────────────────────────────
+#
+# CLAP-inspired internal plugin API: descriptor, parameter, instance vtable,
+# and static plugin registry.  All plugins are statically linked — no dlopen.
+
+add_library(libAetherPlugin STATIC
+    lib/libAetherPlugin/src/aplug_registry.c
+    lib/libAetherPlugin/src/aplug_builtin.c
+)
+
+target_include_directories(libAetherPlugin PUBLIC
+    lib/libAetherPlugin/include
+    lib/libAetherDSP/include
+)
+
+target_include_directories(libAetherPlugin PRIVATE
+    ${POSIX_INC_DIR}
+    lib/include
+)
+
+target_compile_options(libAetherPlugin PRIVATE
+    ${USER_COMPILE_FLAGS}
+    -Wno-unused-parameter
+)
+
+target_link_libraries(libAetherPlugin PUBLIC libAetherDSP)
+
+# ── Phase 8.6 — libAetherAmp ─────────────────────────────────────────────────
+#
+# WAV IR loader, cabinet convolution sim, classic tone stacks (Fender/Marshall/Vox),
+# and NAM neural amp modeling (LSTM + WaveNet-lite inference).
+
+add_library(libAetherAmp STATIC
+    lib/libAetherAmp/src/aamp_wav.c
+    lib/libAetherAmp/src/aamp_cab.c
+    lib/libAetherAmp/src/aamp_tonestack.c
+    lib/libAetherAmp/src/aamp_nam.c
+)
+
+target_include_directories(libAetherAmp PUBLIC
+    lib/libAetherAmp/include
+    lib/libAetherDSP/include
+)
+
+target_include_directories(libAetherAmp PRIVATE
+    ${POSIX_INC_DIR}
+    lib/include
+)
+
+target_compile_options(libAetherAmp PRIVATE
+    ${USER_COMPILE_FLAGS}
+    -Wno-unused-parameter
+    -Wno-sign-compare
+)
+
+target_link_libraries(libAetherAmp PUBLIC libAetherDSP)
+
+# ── Phase 8.7 — libAetherFX ──────────────────────────────────────────────────
+#
+# 25 guitar effects: tuner, gate, boost, compressor, limiter, overdrive,
+# distortion, fuzz, 4-band EQ, wah, auto-wah, chorus, flanger, phaser,
+# tremolo, vibrato, rotary, delay, ping-pong delay, plate, spring, pitch
+# shift, octave, ring modulator, looper.
+
+add_library(libAetherFX STATIC
+    lib/libAetherFX/src/afx_util.c
+    lib/libAetherFX/src/afx_dyn.c
+    lib/libAetherFX/src/afx_dist.c
+    lib/libAetherFX/src/afx_filter.c
+    lib/libAetherFX/src/afx_mod.c
+    lib/libAetherFX/src/afx_time.c
+    lib/libAetherFX/src/afx_special.c
+    lib/libAetherFX/src/afx_register.c
+)
+
+target_include_directories(libAetherFX PUBLIC
+    lib/libAetherFX/include
+    lib/libAetherPlugin/include
+    lib/libAetherDSP/include
+)
+
+target_include_directories(libAetherFX PRIVATE
+    ${POSIX_INC_DIR}
+    lib/include
+)
+
+target_compile_options(libAetherFX PRIVATE
+    ${USER_COMPILE_FLAGS}
+    -Wno-unused-parameter
+    -Wno-unused-function
+    -Wno-sign-compare
+)
+
+target_link_libraries(libAetherFX PUBLIC libAetherPlugin libAetherDSP)
+
+# ── Phase 8.8 — libAetherChain ────────────────────────────────────────────────
+
+add_library(libAetherChain STATIC
+    lib/libAetherChain/src/achain.c
+)
+target_include_directories(libAetherChain PUBLIC
+    lib/libAetherChain/include
+    lib/libAetherPlugin/include
+    lib/libAetherDSP/include
+)
+target_include_directories(libAetherChain PRIVATE
+    ${POSIX_INC_DIR}
+    lib/include
+)
+target_compile_options(libAetherChain PRIVATE
+    ${USER_COMPILE_FLAGS}
+    -Wno-unused-parameter
+    -Wno-sign-compare
+)
+target_link_libraries(libAetherChain PUBLIC libAetherFX libAetherPlugin libAetherDSP)
+
+# ── Phase 8.9 — libAetherAudioWidget ─────────────────────────────────────────
+
+add_library(libAetherAudioWidget STATIC
+    lib/libAetherAudioWidget/src/awgt_prims.c
+    lib/libAetherAudioWidget/src/awgt_knob.c
+    lib/libAetherAudioWidget/src/awgt_led.c
+    lib/libAetherAudioWidget/src/awgt_vu.c
+    lib/libAetherAudioWidget/src/awgt_stomp.c
+    lib/libAetherAudioWidget/src/awgt_fader.c
+    lib/libAetherAudioWidget/src/awgt_panel.c
+)
+target_include_directories(libAetherAudioWidget PUBLIC
+    lib/libAetherAudioWidget/include
+)
+target_include_directories(libAetherAudioWidget PRIVATE
+    lib/libAetherAudioWidget/src
+    ${POSIX_INC_DIR}
+    lib/include
+    ${ADSP_GCC_INCLUDE_DIR}
+)
+target_compile_options(libAetherAudioWidget PRIVATE
+    ${USER_COMPILE_FLAGS}
+    "-I${ADSP_GCC_INCLUDE_DIR}"
+    -Wno-unused-parameter
+    -Wno-unused-function
+)
+target_link_libraries(libAetherAudioWidget PUBLIC libaether_posix)
+
+# ── Phase 8.10 — AetherGuitar ─────────────────────────────────────────────────
+
+add_executable(user_aether_guitar
+    apps/aether_guitar/main.c
+    apps/aether_guitar/view_board.c
+    apps/aether_guitar/view_amp.c
+    apps/aether_guitar/view_tuner.c
+    apps/aether_guitar/view_presets.c
+    apps/aether_guitar/view_settings.c
+    lib/crt0.S
+)
+target_include_directories(user_aether_guitar PRIVATE
+    apps/aether_guitar
+    lib/libAetherChain/include
+    lib/libAetherPlugin/include
+    lib/libAetherFX/include
+    lib/libAetherAmp/include
+    lib/libAetherDSP/include
+    lib/libAetherAudioWidget/include
+    lib/libAetherAudioWidget/src
+    lib/libaetheraudio/include
+    lib/include
+    ${POSIX_INC_DIR}
+)
+target_compile_options(user_aether_guitar PRIVATE
+    ${USER_COMPILE_FLAGS}
+    -Wno-unused-parameter
+    -Wno-unused-function
+    -Wno-sign-compare
+)
+target_link_libraries(user_aether_guitar PRIVATE
+    libAetherChain
+    libAetherFX
+    libAetherAmp
+    libAetherPlugin
+    libAetherDSP
+    libAetherAudioWidget
+    libaetheraudio
+    libwidget
+    libaether
+)
+target_link_options(user_aether_guitar PRIVATE
+    -T ${USER_LINKER_SCRIPT} -nostdlib -static -Wl,--build-id=none
+)
+set_target_properties(user_aether_guitar PROPERTIES
+    OUTPUT_NAME "aether_guitar" SUFFIX ""
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
+)
+
+# Copy AetherGuitar BMP assets into initrd_staging/aeguitar/
+set(AEGUITAR_ASSETS_SRC ${CMAKE_CURRENT_SOURCE_DIR}/apps/aether_guitar/assets)
+set(AEGUITAR_ASSETS_DST ${CMAKE_BINARY_DIR}/initrd_staging/aeguitar)
+add_custom_command(
+    OUTPUT  ${AEGUITAR_ASSETS_DST}/pedalboard_bg.bmp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${AEGUITAR_ASSETS_DST}
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${AEGUITAR_ASSETS_SRC}
+                             ${AEGUITAR_ASSETS_DST}
+    DEPENDS ${AEGUITAR_ASSETS_SRC}/pedalboard_bg.bmp
+            ${AEGUITAR_ASSETS_SRC}/pedal_blue.bmp
+            ${AEGUITAR_ASSETS_SRC}/pedal_cobalt.bmp
+            ${AEGUITAR_ASSETS_SRC}/pedal_teal.bmp
+            ${AEGUITAR_ASSETS_SRC}/pedal_amber.bmp
+            ${AEGUITAR_ASSETS_SRC}/pedal_violet.bmp
+            ${AEGUITAR_ASSETS_SRC}/marshall_amp.bmp
+            ${AEGUITAR_ASSETS_SRC}/fender_amp.bmp
+            ${AEGUITAR_ASSETS_SRC}/vox_amp.bmp
+            ${AEGUITAR_ASSETS_SRC}/knob_base.bmp
+            ${AEGUITAR_ASSETS_SRC}/stomp_off.bmp
+            ${AEGUITAR_ASSETS_SRC}/stomp_on.bmp
+            ${AEGUITAR_ASSETS_SRC}/led_green_on.bmp
+            ${AEGUITAR_ASSETS_SRC}/led_green_off.bmp
+            ${AEGUITAR_ASSETS_SRC}/tuner_bg.bmp
+    COMMENT "Copying AetherGuitar BMP assets to initrd"
+)
+add_custom_target(aeguitar_assets ALL
+    DEPENDS ${AEGUITAR_ASSETS_DST}/pedalboard_bg.bmp
+)
+
 # ── initrd CPIO archive ───────────────────────────────────────────────────────
 #
 # Step 1 — package all files from initrd_staging/ into a CPIO newc archive.
@@ -1860,6 +2184,7 @@ add_custom_command(
     DEPENDS user_init user_dock user_topbar user_desktop user_compositor user_aether_term user_statusbar user_files
             user_textviewer user_calculator user_tictactoe user_widget_demo
             user_aether_editor user_aether_http user_telnet user_aether_top
+            user_sys_prefs user_aether_sound user_aether_guitar aeguitar_assets
             user_posix_test
             ${INTERP_TARGET}
             ${IMG_TEST_TARGET}

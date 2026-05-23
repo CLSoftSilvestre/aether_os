@@ -293,3 +293,37 @@ int pci_scan_ohci(pci_dev_t *r)
     }
     return 0;
 }
+
+int pci_scan_xhci(pci_dev_t *r)
+{
+    for (u8 d = 0; d < 32u; d++) {
+        u16 vendor = pci_read16(0, d, 0, PCI_VENDOR_ID);
+        if (vendor == 0xFFFFu) continue;
+
+        u8 class_code = pci_read8(0, d, 0, 0x0Bu);
+        u8 subclass   = pci_read8(0, d, 0, 0x0Au);
+        u8 prog_if    = pci_read8(0, d, 0, 0x09u);
+
+        /* USB Serial Bus Controller, USB, xHCI */
+        if (class_code != 0x0Cu || subclass != 0x03u || prog_if != 0x30u)
+            continue;
+
+        r->bus = 0; r->dev = d; r->fn = 0;
+
+        for (int b = 0; b < 6; ) {
+            int skip = 0;
+            r->bar[b] = assign_bar(0, d, 0, b, &skip);
+            b += skip ? 2 : 1;
+        }
+
+        u16 cmd = pci_read16(0, d, 0, PCI_COMMAND);
+        pci_write16(0, d, 0, PCI_COMMAND,
+                    (u16)(cmd | PCI_CMD_MEM | PCI_CMD_MASTER));
+
+        kinfo("PCI: xHCI USB at 00:%02x.0 bar[0]=0x%lx\n",
+              (unsigned)d, (unsigned long)r->bar[0]);
+
+        return 1;
+    }
+    return 0;
+}

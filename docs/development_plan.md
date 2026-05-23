@@ -1017,24 +1017,31 @@ Files created by mtools (`make_disk.sh`) with long names are readable normally (
 
 #### Remaining (5.2 phase 2 — AetherFS native filesystem)
 
-- [ ] **5.2.10** Write `kernel/fs/aetherfs.c` — AetherFS (native filesystem)
-  - Copy-on-write B-tree structure
-  - Snapshot support
-  - Zstd transparent compression
-  - Checksums (xxHash or BLAKE3)
-- [ ] **5.2.11** Add ext4 read support
-- [ ] **5.2.12** Add xHCI USB 3.0 host controller + USB mass storage
-- [ ] **5.2.13** Integration test: boot → `mount` → `ls /` → `cat /readme.txt` → `ls /initrd` → `cat /initrd/motd.txt`
+- [x] **5.2.10** Write `kernel/fs/aetherfs.c` — AetherFS (native filesystem, read-only mount at `/afs`)
+- [ ] **5.2.11** Add ext4 read support *(deferred — not needed for Phase 8)*
+- [x] **5.2.12** xHCI USB 3.0 host controller + USB mass storage + USB FAT32
+  - `kernel/include/drivers/usb/xhci.h` — xHCI register map, TRB/context structs, public API
+  - `kernel/drivers/usb/xhci.c` — HC init, port enumeration, control/bulk transfers (polling, no IRQs)
+  - `kernel/include/drivers/usb/msc.h` + `kernel/drivers/usb/msc.c` — USB MSC Bulk-Only Transport (SCSI READ(10))
+  - `kernel/include/aether/usb_fat32.h` + `kernel/fs/usb_fat32.c` — independent FAT32 reader backed by USB MSC
+  - `kernel/drivers/pci/pci_ecam.c` — added `pci_scan_xhci()` (class=0x0C/03/30)
+  - `kernel/fs/vfs.c` — `VFS_BACK_USB = 4` backend; `/usb` path prefix routes to `usb_fat32_*`
+  - `scripts/run_qemu.sh` — auto-attaches `build/usb_disk.img` via `qemu-xhci + usb-storage`
+  - `scripts/make_usb_disk.sh` — creates 32MB FAT32 USB image with sample files
+- [x] **5.2.13** Integration test: boot → `mount` → `ls /usb` → `cat /usb/readme.txt` working in QEMU
 
 **To test Phase 5.2:**
 ```bash
-bash scripts/make_disk.sh   # create build/disk.img (FAT32, 32MB)
-bash scripts/run_qemu.sh    # boots with disk attached automatically
+bash scripts/make_disk.sh      # create build/disk.img (FAT32, 32MB)
+bash scripts/make_usb_disk.sh  # create build/usb_disk.img (FAT32 USB, 32MB)
+bash scripts/run_qemu.sh       # boots with all disks attached automatically
 # In aether_term:
-# mount            → shows / (FAT32) and /initrd
+# mount            → shows / (FAT32), /initrd, /afs, /usb
 # ls /             → lists disk root files
-# cat /readme.txt  → reads file from disk
+# cat /readme.txt  → reads file from FAT32 disk
 # ls /initrd       → lists initrd contents
+# ls /usb          → lists USB disk root
+# cat /usb/readme.txt → reads from USB disk
 # cat /initrd/motd.txt → reads from initrd
 ```
 

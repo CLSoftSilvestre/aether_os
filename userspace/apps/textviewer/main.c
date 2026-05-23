@@ -52,25 +52,19 @@ static long g_win_id = -1;
 
 /* ── Toolbar layout ──────────────────────────────────────────────────────── */
 
-#define TOOLBAR_H    30
+#define TOOLBAR_H    32
 #define SEP_H         2
-#define BTN_H        26
+#define BTN_SZ       28   /* icon buttons are square */
 
 #define BTN_NEW_X     2
-#define BTN_NEW_W    50
-#define BTN_OPN_X    58
-#define BTN_OPN_W    58
-#define BTN_SAV_X   122
-#define BTN_SAV_W    58
-#define LBL_FIL_X   190
-#define LBL_FIL_W    36
-#define INP_FIL_X   228
-#define INP_FIL_W   (CONT_W - INP_FIL_X - 2)       /* 474 */
+#define BTN_OPN_X    (BTN_NEW_X + BTN_SZ + 2)
+#define BTN_SAV_X    (BTN_OPN_X + BTN_SZ + 2)
+#define BTN_Y         2
 
-#define EDITOR_Y     (TOOLBAR_H + SEP_H)                    /* 32  */
+#define EDITOR_Y     (TOOLBAR_H + SEP_H)
 #define STATUSBAR_H   18
-#define STATUSBAR_Y  (CONT_H - STATUSBAR_H - SEP_H)         /* 464 */
-#define EDITOR_H     (STATUSBAR_Y - SEP_H - EDITOR_Y)       /* 430 */
+#define STATUSBAR_Y  (CONT_H - STATUSBAR_H - SEP_H)
+#define EDITOR_H     (STATUSBAR_Y - SEP_H - EDITOR_Y)
 
 /* ── Editor state ─────────────────────────────────────────────────────────── */
 
@@ -87,8 +81,6 @@ static widget_t g_root;
 static widget_t g_btn_new;
 static widget_t g_btn_open;
 static widget_t g_btn_save;
-static widget_t g_lbl_file;
-static widget_t g_inp_file;
 static widget_t g_sep_toolbar;
 static widget_t g_editor;
 static widget_t g_sep_status;
@@ -166,7 +158,6 @@ static void do_new(void)
 {
     textarea_set_text(&g_editor, "");
     g_filename[0] = '\0';
-    textinput_set_text(&g_inp_file, "");
     g_modified = 0;
     draw_title_text();
     set_status("New file.");
@@ -175,11 +166,10 @@ static void do_new(void)
 
 static void do_open(void)
 {
-    const char *path = textinput_get_text(&g_inp_file);
-    if (!path || !path[0]) {
-        set_status("Open: enter a filename in the File field first.");
+    char path[FILEDLG_PATH_MAX];
+    path[0] = '\0';
+    if (!filedlg_open("/", "*.*", path) || !path[0])
         return;
-    }
 
     /* Try AetherFS first */
     long vfd = sys_fs_open(path);
@@ -193,7 +183,7 @@ static void do_open(void)
             g_filename[sizeof(g_filename) - 1] = '\0';
             g_modified = 0;
             draw_title_text();
-            set_status("Opened from AetherFS.");
+            set_status("Opened.");
             widget_set_focused(&g_editor);
             return;
         }
@@ -208,20 +198,19 @@ static void do_open(void)
         g_filename[sizeof(g_filename) - 1] = '\0';
         g_modified = 0;
         draw_title_text();
-        set_status("Opened from initrd (read-only source).");
+        set_status("Opened from initrd (read-only).");
         widget_set_focused(&g_editor);
     } else {
-        set_status("Open: file not found in AetherFS or initrd.");
+        set_status("Open: file not found.");
     }
 }
 
 static void do_save(void)
 {
-    const char *path = textinput_get_text(&g_inp_file);
-    if (!path || !path[0]) {
-        set_status("Save: enter a filename in the File field first.");
+    char path[FILEDLG_PATH_MAX];
+    path[0] = '\0';
+    if (!filedlg_save("/", "*.*", g_filename[0] ? g_filename : NULL, path) || !path[0])
         return;
-    }
 
     textarea_get_text(&g_editor, g_filebuf, FILEBUF_MAX);
     int len = 0;
@@ -229,10 +218,9 @@ static void do_save(void)
 
     long vfd = sys_fs_create(path);
     if (vfd < 0) {
-        set_status("Save: AetherFS write not yet available (Phase 5.5).");
+        set_status("Save: cannot create file.");
         return;
     }
-
     long written = sys_fs_write(vfd, g_filebuf, (long)len);
     sys_fs_close(vfd);
 
@@ -249,10 +237,9 @@ static void do_save(void)
 
 /* ── Button / input callbacks ──────────────────────────────────────────────── */
 
-static void on_new_click(widget_t *w)       { (void)w; do_new();  }
-static void on_open_click(widget_t *w)      { (void)w; do_open(); }
-static void on_save_click(widget_t *w)      { (void)w; do_save(); }
-static void on_filename_submit(widget_t *w) { (void)w; do_open(); }
+static void on_new_click(widget_t *w)  { (void)w; do_new();  }
+static void on_open_click(widget_t *w) { (void)w; do_open(); }
+static void on_save_click(widget_t *w) { (void)w; do_save(); }
 
 /* ── Textarea event wrapper ─────────────────────────────────────────────────
  * Intercepts Ctrl+N/O/S/W before the textarea sees them.
@@ -317,17 +304,12 @@ static void build_ui(void)
 {
     widget_init_panel(&g_root, 0, 0, CONT_W, CONT_H, C_WIN_BG);
 
-    widget_init_button(&g_btn_new,  BTN_NEW_X, 2, BTN_NEW_W, BTN_H,
-                       "New",  on_new_click);
-    widget_init_button(&g_btn_open, BTN_OPN_X, 2, BTN_OPN_W, BTN_H,
-                       "Open", on_open_click);
-    widget_init_button(&g_btn_save, BTN_SAV_X, 2, BTN_SAV_W, BTN_H,
-                       "Save", on_save_click);
-
-    widget_init_label(&g_lbl_file, LBL_FIL_X, 8, LBL_FIL_W, 16,
-                      "File:", WGT_ALIGN_LEFT);
-    widget_init_textinput(&g_inp_file, INP_FIL_X, 2, INP_FIL_W, BTN_H,
-                          NULL, on_filename_submit);
+    widget_init_icon_button(&g_btn_new,  BTN_NEW_X, BTN_Y, BTN_SZ, BTN_SZ,
+                            ICON_BTN_NEW,  on_new_click);
+    widget_init_icon_button(&g_btn_open, BTN_OPN_X, BTN_Y, BTN_SZ, BTN_SZ,
+                            ICON_BTN_OPEN, on_open_click);
+    widget_init_icon_button(&g_btn_save, BTN_SAV_X, BTN_Y, BTN_SZ, BTN_SZ,
+                            ICON_BTN_SAVE, on_save_click);
 
     widget_init_panel(&g_sep_toolbar, 0, TOOLBAR_H, CONT_W, SEP_H, C_SEP);
 
@@ -342,8 +324,6 @@ static void build_ui(void)
     widget_add_child(&g_root, &g_btn_new);
     widget_add_child(&g_root, &g_btn_open);
     widget_add_child(&g_root, &g_btn_save);
-    widget_add_child(&g_root, &g_lbl_file);
-    widget_add_child(&g_root, &g_inp_file);
     widget_add_child(&g_root, &g_sep_toolbar);
     widget_add_child(&g_root, &g_editor);
     widget_add_child(&g_root, &g_sep_status);
@@ -367,10 +347,21 @@ int main(int argc, const char *const *argv)
     draw_frame();
     build_ui();
 
-    /* Phase 5.6: if launched with a path argument, open it immediately */
+    /* If launched with a path argument, open it immediately */
     if (argc >= 2 && argv[1] && argv[1][0]) {
-        textinput_set_text(&g_inp_file, argv[1]);
-        do_open();
+        strncpy(g_filename, argv[1], sizeof(g_filename) - 1);
+        g_filename[sizeof(g_filename) - 1] = '\0';
+
+        long vfd = sys_fs_open(argv[1]);
+        if (vfd >= 0) {
+            long n = sys_fs_read(vfd, g_filebuf, FILEBUF_MAX - 1);
+            sys_fs_close(vfd);
+            if (n >= 0) {
+                g_filebuf[n] = '\0';
+                textarea_set_text(&g_editor, g_filebuf);
+                draw_title_text();
+            }
+        }
     }
 
     g_ctx.win_x         = &g_win_x;

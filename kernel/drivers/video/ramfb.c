@@ -8,6 +8,11 @@
  * address into the display window.
  *
  * Requires QEMU flags: -device ramfb -vga none
+ *
+ * Dynamic resolution (System Preferences):
+ *   ramfb_reconfigure(w, h) re-allocates the FB and re-writes fw_cfg.
+ *   Call it after fat32_mount() and before process_spawn() so init sees
+ *   the correct dimensions.  The old FB memory is orphaned (no pmm_free yet).
  */
 
 #include "drivers/video/ramfb.h"
@@ -19,12 +24,18 @@
 
 /* ── ramfb configuration struct (all fields big-endian) ─────────────── */
 
-#define RAMFB_WIDTH   1280U
-#define RAMFB_HEIGHT   720U
+#define RAMFB_DEFAULT_W  1280U
+#define RAMFB_DEFAULT_H   720U
+
+/*
+ * Supported resolution presets — ramfb_reconfigure validates against this list.
+ */
+#define RAMFB_NUM_PRESETS  5
+static const u32 k_preset_w[RAMFB_NUM_PRESETS] = { 640, 800, 1024, 1280, 1920 };
+static const u32 k_preset_h[RAMFB_NUM_PRESETS] = { 480, 600,  768,  720, 1080 };
 
 /*
  * DRM_FORMAT_XRGB8888 = fourcc('X','R','2','4') = 0x34325258
- * Stored big-endian: 0x58523234
  */
 #define DRM_FORMAT_XRGB8888_LE  0x34325258U
 
@@ -53,67 +64,97 @@ static inline u64 bswap64(u64 v)
          |  (u64)bswap32((u32)(v >> 32));
 }
 
-/* ── Framebuffer global state (declared in fb.c) ─────────────────────── */
+/* ── Framebuffer global state (declared in fb.h, used by fb.c et al.) ── */
 
 volatile u32 *fb_base;
 u32           fb_width;
 u32           fb_height;
 u32           fb_stride;
 
-/* ── ramfb_init ──────────────────────────────────────────────────────── */
+/* fw_cfg selector saved by ramfb_init() for later reconfiguration */
+static u16 g_ramfb_sel = 0;
 
-void ramfb_init(void)
+/* ── ramfb_configure_hw — common setup helper ───────────────────────── */
+
+static void ramfb_configure_hw(u32 w, u32 h)
 {
-    /* 1. Find "etc/ramfb" in the fw_cfg file directory */
-    u32 cfg_size = 0;
-    u16 selector = fwcfg_find_file("etc/ramfb", &cfg_size);
-    if (selector == 0) {
-        kwarn("ramfb: 'etc/ramfb' not found in fw_cfg — no display device?\n");
-        kwarn("ramfb: ensure QEMU is launched with:  -device ramfb -vga none\n");
-        return;
-    }
-    kinfo("ramfb: found 'etc/ramfb' selector=0x%x size=%lu\n",
-          (unsigned)selector, (unsigned long)cfg_size);
-
-    /* 2. Allocate contiguous physical pages for the framebuffer.
-     *    1024×768×4 = 3,145,728 bytes = 768 pages at 4KB each. */
-    u32 fb_pages = (RAMFB_WIDTH * RAMFB_HEIGHT * 4 + 4095u) / 4096u;
+    u32 fb_pages = (w * h * 4u + 4095u) / 4096u;
     uintptr_t fb_phys = pmm_alloc_pages(fb_pages);
     if (fb_phys == 0) {
-        kerror("ramfb: PMM cannot allocate %lu contiguous pages\n",
-               (unsigned long)fb_pages);
+        kerror("ramfb: PMM cannot allocate %lu pages for %ux%u\n",
+               (unsigned long)fb_pages, (unsigned)w, (unsigned)h);
         return;
     }
-    kinfo("ramfb: framebuffer at 0x%lx (%lu pages, %lu KB)\n",
-          (unsigned long)fb_phys,
-          (unsigned long)fb_pages,
-          (unsigned long)(fb_pages * 4));
 
-    /* 3. Build the RamFBCfg struct (big-endian fields) */
     struct ramfb_cfg cfg;
     cfg.addr   = bswap64((u64)fb_phys);
     cfg.fourcc = bswap32(DRM_FORMAT_XRGB8888_LE);
     cfg.flags  = 0;
-    cfg.width  = bswap32(RAMFB_WIDTH);
-    cfg.height = bswap32(RAMFB_HEIGHT);
-    cfg.stride = bswap32(RAMFB_WIDTH * 4u);
+    cfg.width  = bswap32(w);
+    cfg.height = bswap32(h);
+    cfg.stride = bswap32(w * 4u);
 
-    /* 4. Write the config to fw_cfg (triggers QEMU to register the display) */
-    fwcfg_write_file(selector, &cfg, sizeof(cfg));
+    fwcfg_write_file(g_ramfb_sel, &cfg, sizeof(cfg));
 
-    /* 5. Set up the fb_* globals for fb.c / fb_console.c */
     fb_base   = (volatile u32 *)fb_phys;
-    fb_width  = RAMFB_WIDTH;
-    fb_height = RAMFB_HEIGHT;
-    fb_stride = RAMFB_WIDTH * 4u;
+    fb_width  = w;
+    fb_height = h;
+    fb_stride = w * 4u;
 
-    /* 6. Clear the framebuffer to a dark background */
-    u32 total = RAMFB_WIDTH * RAMFB_HEIGHT;
+    u32 total = w * h;
     for (u32 i = 0; i < total; i++)
         fb_base[i] = FB_RGB(18, 18, 24);   /* near-black #121218 */
 
     __asm__ volatile("dsb sy\nisb" ::: "memory");
 
-    kinfo("ramfb: %ux%u XRGB8888 framebuffer ready\n",
-          (unsigned)RAMFB_WIDTH, (unsigned)RAMFB_HEIGHT);
+    kinfo("ramfb: %ux%u XRGB8888 framebuffer at 0x%lx (%lu KB)\n",
+          (unsigned)w, (unsigned)h,
+          (unsigned long)fb_phys,
+          (unsigned long)(fb_pages * 4));
+}
+
+/* ── ramfb_init ──────────────────────────────────────────────────────── */
+
+void ramfb_init(void)
+{
+    u32 cfg_size = 0;
+    g_ramfb_sel = fwcfg_find_file("etc/ramfb", &cfg_size);
+    if (g_ramfb_sel == 0) {
+        kwarn("ramfb: 'etc/ramfb' not found — no display device?\n");
+        kwarn("ramfb: ensure QEMU is launched with: -device ramfb -vga none\n");
+        return;
+    }
+    kinfo("ramfb: found 'etc/ramfb' selector=0x%x\n", (unsigned)g_ramfb_sel);
+    ramfb_configure_hw(RAMFB_DEFAULT_W, RAMFB_DEFAULT_H);
+}
+
+/* ── ramfb_reconfigure ───────────────────────────────────────────────── */
+
+/*
+ * Switch to a new resolution.  Only call this before spawning init (no apps
+ * are running, so no compositor buffers need to be invalidated).
+ * The old framebuffer memory is orphaned — acceptable while pmm_free is absent.
+ * Returns 0 on success, -1 if w/h is not in the supported preset list.
+ */
+int ramfb_reconfigure(u32 w, u32 h)
+{
+    if (g_ramfb_sel == 0) return -1;
+    if (w == fb_width && h == fb_height) return 0;   /* already correct */
+
+    /* Validate against supported presets */
+    int ok = 0;
+    for (int i = 0; i < RAMFB_NUM_PRESETS; i++) {
+        if (k_preset_w[i] == w && k_preset_h[i] == h) { ok = 1; break; }
+    }
+    if (!ok) {
+        kwarn("ramfb: unsupported resolution %ux%u — keeping %ux%u\n",
+              (unsigned)w, (unsigned)h,
+              (unsigned)fb_width, (unsigned)fb_height);
+        return -1;
+    }
+
+    kinfo("ramfb: reconfiguring %ux%u → %ux%u\n",
+          (unsigned)fb_width, (unsigned)fb_height, (unsigned)w, (unsigned)h);
+    ramfb_configure_hw(w, h);
+    return 0;
 }

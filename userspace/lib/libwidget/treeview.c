@@ -117,6 +117,7 @@ static void treeview_draw(widget_t *w, int ax, int ay)
         case TVICON_DRIVE_FAT32:   gfx_icon_drive_fat32(cx, row_y + 2, TV_ICON_W);   break;
         case TVICON_DRIVE_INITRD:  gfx_icon_drive_initrd(cx, row_y + 2, TV_ICON_W);  break;
         case TVICON_DRIVE_AFS:     gfx_icon_drive_afs(cx, row_y + 2, TV_ICON_W);     break;
+        case TVICON_DRIVE_USB:     gfx_icon_drive_fat32(cx, row_y + 2, TV_ICON_W);   break;
         case TVICON_FOLDER_OPEN:   gfx_icon_folder_open(cx, row_y + 2, TV_ICON_W);   break;
         case TVICON_FOLDER_CLOSED: gfx_icon_folder(cx, row_y + 2, TV_ICON_W);        break;
         default:                   gfx_icon_file_generic(cx, row_y + 2, TV_ICON_W);  break;

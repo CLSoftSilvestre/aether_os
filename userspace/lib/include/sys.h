@@ -982,4 +982,256 @@ static inline long sys_puts(const char *s)
     return sys_write(STDOUT_FILENO, s, len);
 }
 
+/* ── System Preferences syscall numbers ──────────────────────────── */
+#define SYS_DISPLAY_GET_RES  930
+#define SYS_DISPLAY_SET_RES  931
+#define SYS_NET_CONF_GET     932
+#define SYS_NET_CONF_SET     933
+#define SYS_USER_LIST        940
+#define SYS_USER_CREATE      941
+#define SYS_USER_DELETE      942
+#define SYS_USER_SET_PW      943
+#define SYS_USER_GET_CUR     944
+#define SYS_USER_SET_ROLE    945
+#define SYS_USER_LOGIN       946
+
+/* ── System Preferences — Display ────────────────────────────────── */
+
+/* Returns current resolution packed as (w << 32) | h */
+static inline long sys_display_get_res(unsigned int *w, unsigned int *h)
+{
+    long r = _sys0(SYS_DISPLAY_GET_RES);
+    if (r < 0) return r;
+    if (w) *w = (unsigned int)((unsigned long long)r >> 32);
+    if (h) *h = (unsigned int)((unsigned long long)r & 0xFFFFFFFFu);
+    return 0;
+}
+
+/* Store new resolution in /config/display.conf (applies on reboot) */
+static inline long sys_display_set_res(unsigned int w, unsigned int h)
+{
+    long packed = (long)(((unsigned long long)w << 32) | (unsigned long long)h);
+    return _sys1(SYS_DISPLAY_SET_RES, packed);
+}
+
+/* ── System Preferences — Network config ─────────────────────────── */
+
+typedef struct {
+    unsigned char  mode;     /* 0 = DHCP, 1 = static */
+    unsigned int   ip;
+    unsigned int   mask;
+    unsigned int   gateway;
+    unsigned int   dns;
+    unsigned char  mac[6];
+    unsigned char  ready;
+} net_conf_t;
+
+static inline long sys_net_conf_get(net_conf_t *out)
+{
+    return _sys1(SYS_NET_CONF_GET, (long)(void *)out);
+}
+
+static inline long sys_net_conf_set(const net_conf_t *cfg)
+{
+    return _sys1(SYS_NET_CONF_SET, (long)(const void *)cfg);
+}
+
+/* ── System Preferences — User management ────────────────────────── */
+
+typedef struct {
+    unsigned int  uid;
+    char          name[32];
+    unsigned char role;    /* 0 = user, 1 = admin */
+} user_info_t;
+
+/* List up to `max` users into `arr`; returns count or -1 */
+static inline long sys_user_list(user_info_t *arr, unsigned int max)
+{
+    return _sys2(SYS_USER_LIST, (long)(void *)arr, (long)max);
+}
+
+/* Create a new user (admin only); returns uid or -1 */
+static inline long sys_user_create(const char *name, const char *pw,
+                                    unsigned char role)
+{
+    return _sys3(SYS_USER_CREATE, (long)(const void *)name,
+                 (long)(const void *)pw, (long)role);
+}
+
+/* Delete user by uid (admin only); returns 0 or -1 */
+static inline long sys_user_delete(unsigned int uid)
+{
+    return _sys1(SYS_USER_DELETE, (long)uid);
+}
+
+/* Change password; admin can skip old_pw for other users */
+static inline long sys_user_set_pw(unsigned int uid, const char *old_pw,
+                                    const char *new_pw)
+{
+    return _sys3(SYS_USER_SET_PW, (long)uid, (long)(const void *)old_pw,
+                 (long)(const void *)new_pw);
+}
+
+/* Get current user; fills *out if non-NULL; returns uid or -1 */
+static inline long sys_user_get_cur(user_info_t *out)
+{
+    return _sys1(SYS_USER_GET_CUR, (long)(void *)out);
+}
+
+/* Change role (admin only); returns 0 or -1 */
+static inline long sys_user_set_role(unsigned int uid, unsigned char role)
+{
+    return _sys2(SYS_USER_SET_ROLE, (long)uid, (long)role);
+}
+
+/* Authenticate user; returns 0 on success, -1 on failure */
+static inline long sys_user_login(const char *name, const char *pw)
+{
+    return _sys2(SYS_USER_LOGIN, (long)(const void *)name,
+                 (long)(const void *)pw);
+}
+
+/* ── Phase 8.0 RT scheduling ─────────────────────────────────────── */
+
+#define SYS_SCHED_SETPARAM      960
+#define SYS_SCHED_SETAFFINITY   961
+#define SYS_MLOCKALL            962
+#define SYS_AUDIO_TIMESTAMP     963
+#define SYS_AUDIO_LATENCY_STATS 964
+
+/* Policy constants (match kernel sched.h) */
+#define SCHED_NORMAL  0
+#define SCHED_FIFO    1
+#define SCHED_RR      2
+
+static inline long sys_sched_setparam(int policy, int rt_priority)
+{
+    return _sys2(SYS_SCHED_SETPARAM, (long)policy, (long)rt_priority);
+}
+
+static inline long sys_sched_setaffinity(unsigned char cpu_mask)
+{
+    return _sys1(SYS_SCHED_SETAFFINITY, (long)cpu_mask);
+}
+
+static inline long sys_mlockall(void)
+{
+    return _sys0(SYS_MLOCKALL);
+}
+
+static inline long long sys_audio_timestamp(void)
+{
+    return (long long)_sys0(SYS_AUDIO_TIMESTAMP);
+}
+
+/* ── Phase 8.1 Audio device syscalls ─────────────────────────────── */
+
+#define SYS_AUDIO_ENUM      965
+#define SYS_AUDIO_OPEN      966
+#define SYS_AUDIO_CLOSE     967
+#define SYS_AUDIO_CONFIGURE 968
+#define SYS_AUDIO_START     969
+#define SYS_AUDIO_READ      972
+#define SYS_AUDIO_WRITE     973
+#define SYS_MIDI_READ       970
+#define SYS_MIDI_WRITE      971
+
+#define AUDIO_NAME_MAX 32
+
+typedef struct {
+    char          name[AUDIO_NAME_MAX];
+    unsigned int  type;        /* 0=UAC2, 1=I2S, 2=PWM */
+    unsigned char inputs;
+    unsigned char outputs;
+    unsigned int  max_sample_rate;
+} audio_dev_info_t;
+
+typedef struct {
+    unsigned char status;
+    unsigned char data1;
+    unsigned char data2;
+    unsigned char _pad;
+} midi_event_t;
+
+static inline long sys_audio_enum(audio_dev_info_t *arr, int max)
+{
+    return _sys2(SYS_AUDIO_ENUM, (long)(void *)arr, (long)max);
+}
+
+static inline long sys_audio_open(const char *name)
+{
+    return _sys1(SYS_AUDIO_OPEN, (long)(const void *)name);
+}
+
+static inline long sys_audio_close(long handle)
+{
+    return _sys1(SYS_AUDIO_CLOSE, handle);
+}
+
+static inline long sys_audio_configure(long handle, unsigned int sr,
+                                        unsigned char bd, unsigned char ch)
+{
+    return _sys3(SYS_AUDIO_CONFIGURE, handle, (long)sr,
+                 (long)((bd << 8) | ch));
+}
+
+static inline long sys_audio_start(long handle)
+{
+    return _sys1(SYS_AUDIO_START, handle);
+}
+
+/* Read up to 'frames' interleaved s16 samples from the capture ring.
+ * Returns the number of frames actually read (may be less than requested). */
+static inline long sys_audio_read(long handle, short *buf, unsigned int frames)
+{
+    return _sys3(SYS_AUDIO_READ, handle, (long)(void *)buf, (long)frames);
+}
+
+/* Write 'frames' interleaved s16 samples to the playback ring.
+ * Returns the number of frames accepted. */
+static inline long sys_audio_write(long handle, const short *buf, unsigned int frames)
+{
+    return _sys3(SYS_AUDIO_WRITE, handle, (long)(const void *)buf, (long)frames);
+}
+
+static inline long sys_midi_read(midi_event_t *buf, int max)
+{
+    return _sys2(SYS_MIDI_READ, (long)(void *)buf, (long)max);
+}
+
+static inline long sys_midi_write(const midi_event_t *buf, int count)
+{
+    return _sys2(SYS_MIDI_WRITE, (long)(const void *)buf, (long)count);
+}
+
+/* ── Audio configuration (System Preferences Sound pane) ─────────── */
+
+#define SYS_AUDIO_CONF_GET  974
+#define SYS_AUDIO_CONF_SET  975
+
+#define AUDIO_CONF_NAME_MAX 32
+
+typedef struct {
+    char           output_dev[AUDIO_CONF_NAME_MAX]; /* "" = default priority */
+    char           input_dev[AUDIO_CONF_NAME_MAX];
+    unsigned int   sample_rate;     /* 44100 / 48000 / 96000 Hz */
+    unsigned short period_frames;   /* 64 / 128 / 256 / 512 */
+    unsigned char  output_mute;     /* 0 = on, 1 = muted */
+    unsigned char  output_volume;   /* 0-100 */
+    signed char    output_balance;  /* -100 (L) .. 0 (center) .. +100 (R) */
+    unsigned char  input_gain;      /* 0-100 */
+    unsigned char  alert_volume;    /* 0-100 */
+    unsigned char  bit_depth;       /* 16 / 24 / 32 */
+} audio_conf_t;
+
+static inline long sys_audio_conf_get(audio_conf_t *out)
+{
+    return _sys1(SYS_AUDIO_CONF_GET, (long)(void *)out);
+}
+
+static inline long sys_audio_conf_set(const audio_conf_t *cfg)
+{
+    return _sys1(SYS_AUDIO_CONF_SET, (long)(const void *)cfg);
+}
+
 #endif /* AETHER_USERSPACE_SYS_H */

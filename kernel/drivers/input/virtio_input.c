@@ -16,6 +16,7 @@
 #include "drivers/input/pl050_mouse.h"
 #include "drivers/input/keycodes.h"
 #include "drivers/pci/pci_ecam.h"
+#include "drivers/power/dpms.h"
 #include "aether/printk.h"
 #include "aether/types.h"
 #include "drivers/video/fb.h"
@@ -229,6 +230,8 @@ static void service_device(vi_dev_t *dev)
         dev->last_used++;
 
         virtio_input_event_t *ev = &dev->bufs[desc_id];
+
+        dpms_activity();
 
         if (dev->dbg_count < 32) {
             kinfo("vi ev type=%u code=%u val=%lu\n",

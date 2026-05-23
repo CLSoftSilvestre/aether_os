@@ -32,6 +32,7 @@ BUILD_DIR="${SCRIPT_DIR}/../build"
 KERNEL_IMG="${BUILD_DIR}/kernel8.img"
 DISK_IMG="${BUILD_DIR}/disk.img"
 AFS_IMG="${BUILD_DIR}/afs.img"
+USB_IMG="${BUILD_DIR}/usb_disk.img"
 
 if [ ! -f "${KERNEL_IMG}" ]; then
     echo "[ERROR] Kernel image not found: ${KERNEL_IMG}"
@@ -50,6 +51,12 @@ for arg in "$@"; do
         --debug)    DEBUG=1    ;;
     esac
 done
+
+# Detect Behringer UMC202HD (VID 0x1397, PID 0x0507)
+UMC_PRESENT=0
+if system_profiler SPUSBDataType 2>/dev/null | grep -q "UMC202HD"; then
+    UMC_PRESENT=1
+fi
 
 echo "[QEMU] Starting AetherOS..."
 echo "[QEMU] Kernel: ${KERNEL_IMG}"
@@ -92,7 +99,32 @@ QEMU_ARGS=(
     -netdev user,id=n0
     -object filter-dump,id=pcap0,netdev=n0,file=/tmp/aether.pcap
     -device virtio-net-pci,netdev=n0,disable-legacy=on
+
+    # USB (Phase 5.2.12): xHCI USB 3.0 host controller
+    -device qemu-xhci,id=xhci
 )
+
+# USB audio passthrough — Behringer UMC202HD
+# When the device is present: pass it directly to the guest so the AetherOS
+# UAC2 driver can claim it (guitar in → DSP chain → headphone out).
+# When absent: the guest falls back to the kernel's PWM software device
+# (capture ring filled with silence, playback ring drained and discarded).
+# macOS Sequoia may require 'sudo' for libusb to claim the USB device;
+# if QEMU exits with "failed to open device" or "permission denied", re-run
+# the script with: sudo ./scripts/run_qemu.sh [flags]
+if [ "$UMC_PRESENT" = "1" ]; then
+    echo "[QEMU] Audio: UMC202HD detected — USB passthrough enabled (VID 0x1397, PID 0x0507)"
+    echo "[QEMU]        Plug headphones into the UMC202HD for guitar monitor output."
+    echo "[QEMU]        If QEMU reports a USB permission error, re-run with sudo."
+    QEMU_ARGS+=(-device usb-host,vendorid=0x1397,productid=0x0507)
+else
+    echo "[QEMU] Audio: UMC202HD not detected — QEMU virtual USB audio enabled"
+    echo "[QEMU]        Processed guitar output will play through Mac speakers via CoreAudio."
+    QEMU_ARGS+=(
+        -audiodev coreaudio,id=snd0
+        -device usb-audio,bus=xhci.0,audiodev=snd0
+    )
+fi
 
 # Block storage (Phase 5.2): hd0 = FAT32 disk.img, hd1 = AetherFS afs.img
 # Create with: bash scripts/make_disk.sh  and  bash scripts/make_afs.sh
@@ -114,6 +146,16 @@ if [ -f "${AFS_IMG}" ]; then
     )
 else
     echo "[QEMU] hd1: not found — run scripts/make_afs.sh to create AetherFS image"
+fi
+
+if [ -f "${USB_IMG}" ]; then
+    echo "[QEMU] usb: ${USB_IMG} (FAT32 USB MSC → /usb)"
+    QEMU_ARGS+=(
+        -drive file="${USB_IMG}",format=raw,if=none,id=usb0
+        -device usb-storage,bus=xhci.0,drive=usb0
+    )
+else
+    echo "[QEMU] usb: not found — run scripts/make_usb_disk.sh to create USB FAT32 image"
 fi
 
 if [ "$HEADLESS" = "1" ]; then

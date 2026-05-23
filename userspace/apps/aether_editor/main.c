@@ -73,28 +73,16 @@ static char g_output[OUTPUT_MAX];
 /* ── Widgets ─────────────────────────────────────────────────────────────── */
 
 static widget_t g_root;
-static widget_t g_editor;       /* textarea — source */
-static widget_t g_btn_run;
-static widget_t g_btn_clear;
-static widget_t g_btn_open;
-static widget_t g_btn_save;
-static widget_t g_output_label; /* output panel */
+static widget_t g_editor;         /* textarea — source */
+static widget_t g_btn_new;        /* toolbar: new */
+static widget_t g_btn_open;       /* toolbar: open */
+static widget_t g_btn_save;       /* toolbar: save */
+static widget_t g_btn_run;        /* toolbar: run */
+static widget_t g_btn_clear;      /* toolbar: clear */
+static widget_t g_output_label;   /* output panel */
 
-/* sub-panel for run toolbar */
+/* toolbar panel */
 static widget_t g_run_panel;
-
-/* file picker state */
-static int g_picker_active = 0;
-static widget_t g_picker_list;
-static widget_t g_btn_picker_cancel;
-static widget_t g_btn_picker_open;
-
-/* save dialog */
-static int g_save_active = 0;
-static widget_t g_save_input;
-static widget_t g_btn_save_ok;
-static widget_t g_btn_save_cancel;
-static widget_t g_save_panel;
 
 static widget_ctx_t g_ctx;
 
@@ -191,24 +179,9 @@ static void run_script(void)
 
 /* ── Save / Open logic ───────────────────────────────────────────────────── */
 
-static void save_script(const char *name)
+static void save_script(const char *path)
 {
-    if (!name || !name[0]) return;
-
-    /* Ensure /scripts/ directory exists (best-effort) */
-    char path[128];
-    snprintf(path, sizeof(path), "%s/%s", SCRIPTS_DIR, name);
-
-    /* Add .as extension if missing */
-    size_t plen = strlen(path);
-    if (plen < 3 || path[plen-3] != '.' ||
-        path[plen-2] != 'a' || path[plen-1] != 's') {
-        /* append .as */
-        if (plen + 3 < sizeof(path)) {
-            path[plen] = '.'; path[plen+1] = 'a'; path[plen+2] = 's';
-            path[plen+3] = '\0';
-        }
-    }
+    if (!path || !path[0]) return;
 
     char script[8192];
     textarea_get_text(&g_editor, script, sizeof(script));
@@ -249,30 +222,14 @@ static void load_script_from(const char *path)
     set_output("[Loaded]");
 }
 
-/* ── Overlay visibility helpers ──────────────────────────────────────────── */
-
-static void set_picker_visible(int v)
-{
-    int h = !v;
-    g_picker_list.hidden        = h;
-    g_btn_picker_open.hidden    = h;
-    g_btn_picker_cancel.hidden  = h;
-    g_picker_active = v;
-    widget_invalidate_all(&g_root);
-}
-
-static void set_save_visible(int v)
-{
-    int h = !v;
-    g_save_panel.hidden    = h;
-    g_save_input.hidden    = h;
-    g_btn_save_ok.hidden   = h;
-    g_btn_save_cancel.hidden = h;
-    g_save_active = v;
-    widget_invalidate_all(&g_root);
-}
-
 /* ── Button callbacks ────────────────────────────────────────────────────── */
+
+static void on_new_click(widget_t *w)
+{
+    (void)w;
+    textarea_set_text(&g_editor, "");
+    set_output("");
+}
 
 static void on_run_click(widget_t *w)
 {
@@ -291,84 +248,20 @@ static void on_clear_click(widget_t *w)
 static void on_save_click(widget_t *w)
 {
     (void)w;
-    set_save_visible(1);
+    char path[FILEDLG_PATH_MAX];
+    path[0] = '\0';
+    if (filedlg_save(SCRIPTS_DIR, "*.as", NULL, path) && path[0])
+        save_script(path);
 }
 
 static void on_open_click(widget_t *w)
 {
     (void)w;
-
-    char dir_buf[2048];
-    long n = sys_fs_readdir(SCRIPTS_DIR, dir_buf, sizeof(dir_buf) - 1);
-    if (n < 0) {
-        set_output("[Error: cannot list /scripts/]");
-        return;
-    }
-    dir_buf[n] = '\0';
-
-    listview_clear(&g_picker_list);
-
-    /* readdir_cb format: "filename.as       <size> bytes\n"
-       or "[dirname]\n" for directories.
-       Extract just the filename (everything up to the first space or '\n'). */
-    char *s = dir_buf;
-    while (*s) {
-        char *end = s;
-        while (*end && *end != '\n') end++;
-
-        /* Skip directories */
-        if (*s != '[' && s != end) {
-            char entry[WGT_LISTITEM_LABEL];
-            size_t j = 0;
-            char *p = s;
-            while (p < end && *p != ' ' && j < sizeof(entry) - 1)
-                entry[j++] = *p++;
-            entry[j] = '\0';
-            if (entry[0]) listview_add_item(&g_picker_list, entry, NULL);
-        }
-
-        if (!*end) break;
-        s = end + 1;
-    }
-
-    set_picker_visible(1);
+    char path[FILEDLG_PATH_MAX];
+    path[0] = '\0';
+    if (filedlg_open(SCRIPTS_DIR, "*.as", path) && path[0])
+        load_script_from(path);
 }
-
-static void on_picker_open(widget_t *w)
-{
-    (void)w;
-    int sel = listview_get_selected(&g_picker_list);
-    if (sel < 0) { set_picker_visible(0); return; }
-    wdata_listview_t *lv = &g_picker_list.data.listview;
-    if (sel >= lv->n_items) { set_picker_visible(0); return; }
-    char path[128];
-    snprintf(path, sizeof(path), "%s/%s", SCRIPTS_DIR, lv->items[sel].label);
-    set_picker_visible(0);
-    load_script_from(path);
-    widget_invalidate_all(&g_root);
-}
-
-static void on_picker_cancel(widget_t *w)
-{
-    (void)w;
-    set_picker_visible(0);
-}
-
-static void on_save_ok(widget_t *w)
-{
-    (void)w;
-    const char *name = textinput_get_text(&g_save_input);
-    set_save_visible(0);
-    save_script(name);
-}
-
-static void on_save_cancel(widget_t *w)
-{
-    (void)w;
-    set_save_visible(0);
-}
-
-static void on_save_submit(widget_t *w) { on_save_ok(w); }
 
 /* ── Window frame ────────────────────────────────────────────────────────── */
 
@@ -401,75 +294,37 @@ static void build_ui(void)
         "    print(i)\n"
         "end\n");
 
-    /* Run toolbar */
+    /* Icon toolbar — 30×30 icon buttons, 2px gaps, grouped by function:
+     *   [New] [Open] [Save]  <4px gap>  [Run] [Clear]             */
     int run_y = EDITOR_H + 2;
     widget_init_panel(&g_run_panel, 0, run_y, CONT_W, RUN_BAR_H, C_TITLEBAR);
-    widget_init_button(&g_btn_run,   0, run_y, 80, RUN_BAR_H,
-                       "Run \xe2\x96\xb6", on_run_click);
-    widget_init_button(&g_btn_clear, 88, run_y, 70, RUN_BAR_H,
-                       "Clear",       on_clear_click);
-    widget_init_button(&g_btn_open,  CONT_W - 160, run_y, 74, RUN_BAR_H,
-                       "Open",        on_open_click);
-    widget_init_button(&g_btn_save,  CONT_W - 80,  run_y, 74, RUN_BAR_H,
-                       "Save",        on_save_click);
+
+    widget_init_icon_button(&g_btn_new,   0,  run_y, RUN_BAR_H, RUN_BAR_H,
+                            ICON_BTN_NEW,   on_new_click);
+    widget_init_icon_button(&g_btn_open,  32, run_y, RUN_BAR_H, RUN_BAR_H,
+                            ICON_BTN_OPEN,  on_open_click);
+    widget_init_icon_button(&g_btn_save,  64, run_y, RUN_BAR_H, RUN_BAR_H,
+                            ICON_BTN_SAVE,  on_save_click);
+    /* 4px visual gap at x=96 separates file ops from script ops */
+    widget_init_icon_button(&g_btn_run,  100, run_y, RUN_BAR_H, RUN_BAR_H,
+                            ICON_BTN_RUN,   on_run_click);
+    widget_init_icon_button(&g_btn_clear,132, run_y, RUN_BAR_H, RUN_BAR_H,
+                            ICON_BTN_CLEAR, on_clear_click);
 
     /* Output panel */
     int out_y = run_y + RUN_BAR_H + 2;
     widget_init_label(&g_output_label, 0, out_y, CONT_W, OUTPUT_H,
                       "", WGT_ALIGN_LEFT);
 
-    /* File picker overlay */
-    int ov_y = EDITOR_H / 4;
-    widget_init_listview(&g_picker_list,
-                         CONT_W / 4, ov_y,
-                         CONT_W / 2, EDITOR_H / 2 - 32,
-                         64, NULL);
-    int pb_y = ov_y + EDITOR_H / 2 - 30;
-    widget_init_button(&g_btn_picker_open,
-                       CONT_W / 4,        pb_y, 80, 28,
-                       "Open",  on_picker_open);
-    widget_init_button(&g_btn_picker_cancel,
-                       CONT_W / 4 + 88,   pb_y, 80, 28,
-                       "Cancel", on_picker_cancel);
-
-    /* Save dialog overlay */
-    int sv_y = CONT_H / 2 - 40;
-    widget_init_panel(&g_save_panel,
-                      CONT_W / 4, sv_y,
-                      CONT_W / 2, 80,
-                      C_TITLEBAR);
-    widget_init_textinput(&g_save_input,
-                          CONT_W / 4 + 4, sv_y + 8,
-                          CONT_W / 2 - 8, 26,
-                          NULL, on_save_submit);
-    int sb_y = sv_y + 40;
-    widget_init_button(&g_btn_save_ok,
-                       CONT_W / 4,       sb_y, 80, 28,
-                       "Save", on_save_ok);
-    widget_init_button(&g_btn_save_cancel,
-                       CONT_W / 4 + 88,  sb_y, 80, 28,
-                       "Cancel", on_save_cancel);
-
     /* Build widget tree */
     widget_add_child(&g_root, &g_editor);
     widget_add_child(&g_root, &g_run_panel);
-    widget_add_child(&g_root, &g_btn_run);
-    widget_add_child(&g_root, &g_btn_clear);
+    widget_add_child(&g_root, &g_btn_new);
     widget_add_child(&g_root, &g_btn_open);
     widget_add_child(&g_root, &g_btn_save);
+    widget_add_child(&g_root, &g_btn_run);
+    widget_add_child(&g_root, &g_btn_clear);
     widget_add_child(&g_root, &g_output_label);
-
-    /* Overlay widgets — in tree but hidden until activated */
-    widget_add_child(&g_root, &g_picker_list);
-    widget_add_child(&g_root, &g_btn_picker_open);
-    widget_add_child(&g_root, &g_btn_picker_cancel);
-    widget_add_child(&g_root, &g_save_panel);
-    widget_add_child(&g_root, &g_save_input);
-    widget_add_child(&g_root, &g_btn_save_ok);
-    widget_add_child(&g_root, &g_btn_save_cancel);
-
-    set_picker_visible(0);
-    set_save_visible(0);
 
     widget_set_focused(&g_editor);
 }

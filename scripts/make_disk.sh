@@ -154,6 +154,24 @@ printf "name=Aether IDE\nicon=icon_editor\nexec=/aether_editor\ndescription=Scri
 printf "name=Web Browser\nicon=icon_browser\nexec=/aether_browser\ndescription=Web browser (NetSurf)\n" \
     | mcopy -i "${DISK}" - ::apps/aether_browser.app
 
+printf "name=System Preferences\nicon=icon_hardware\nexec=/sys_prefs\ndescription=System settings\n" \
+    | mcopy -i "${DISK}" - ::apps/sys_prefs.app
+
+# /config/ — persistent system configuration (System Preferences)
+mmd -i "${DISK}" ::config
+
+printf "# AetherOS display configuration\n# width and height apply on next reboot\nwidth=1280\nheight=720\n" \
+    | mcopy -i "${DISK}" - ::config/display.conf
+
+printf "# AetherOS network configuration\n# mode: dhcp | static\nmode=dhcp\nip=0.0.0.0\nmask=255.255.255.0\ngateway=0.0.0.0\ndns=8.8.8.8\n" \
+    | mcopy -i "${DISK}" - ::config/network.conf
+
+printf "# AetherOS audio configuration\noutput_volume=80\ninput_gain=80\nalert_volume=75\noutput_mute=0\noutput_balance=0\nsample_rate=48000\nperiod_frames=64\nbit_depth=16\noutput_dev=\ninput_dev=\n" \
+    | mcopy -i "${DISK}" - ::config/audio.conf
+
+# users.conf is intentionally NOT pre-created here.
+# The kernel creates it on first boot with a default admin account.
+
 echo "[DISK] Contents:"
 echo "  /:"
 mdir -i "${DISK}" :: 2>/dev/null | grep -v "Volume\|^$" || true

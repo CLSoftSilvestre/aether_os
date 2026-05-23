@@ -50,6 +50,13 @@
 #include "drivers/power/thermal.h"
 #include "drivers/power/dpms.h"
 #include "drivers/rtc/pl031.h"
+#include "aether/config.h"
+#include "aether/users.h"
+#include "aether/audio_conf.h"
+#include "aether/sched.h"
+#include "aether/audio_dev.h"
+#include "drivers/usb/midi/usb_midi.h"
+#include "drivers/video/ramfb.h"
 
 /* ── Wallpaper sharing globals (Phase 6.1.x) ────────────────────────────── */
 static uintptr_t g_wp_ptr   = 0;   /* PMM physical address (kernel range) */
@@ -513,6 +520,7 @@ static long do_sys_cursor_move(u64 xy)
 {
     u32 x = (u32)(xy >> 32);
     u32 y = (u32)(xy & 0xFFFFFFFFu);
+    dpms_activity();
     cursor_move(x, y);
     return 0;
 }
@@ -1220,6 +1228,382 @@ long syscall_dispatch(trap_frame_t *frame)
         if (cmd == 1) { dpms_force_wake();  return 0; }
         /* cmd == 2: status query */
         return dpms_is_blanked() ? 1L : 0L;
+    }
+
+    /* ── Display (System Preferences) ────────────────────────────────── */
+
+    case SYS_DISPLAY_GET_RES:
+        return (long)(((u64)fb_width << 32) | (u64)fb_height);
+
+    case SYS_DISPLAY_SET_RES: {
+        u32 w = (u32)((u64)arg0 >> 32);
+        u32 h = (u32)((u64)arg0 & 0xFFFFFFFFu);
+        /* Validate preset list (same as ramfb.c) */
+        static const u32 pw[] = { 640, 800, 1024, 1280, 1920 };
+        static const u32 ph[] = { 480, 600,  768,  720, 1080 };
+        int ok = 0;
+        for (int i = 0; i < 5; i++)
+            if (pw[i] == w && ph[i] == h) { ok = 1; break; }
+        if (!ok) return -1;
+        char wbuf[8], hbuf[8];
+        kitoa((int)w, wbuf, 8);
+        kitoa((int)h, hbuf, 8);
+        kconfig_write("/config/display.conf", "width",  wbuf);
+        kconfig_write("/config/display.conf", "height", hbuf);
+        return 0;
+    }
+
+    /* ── Network config (System Preferences) ─────────────────────────── */
+
+    case SYS_NET_CONF_GET: {
+        net_conf_t *out = (net_conf_t *)arg0;
+        if (!out) return -1;
+        net_conf_get(out);
+        return 0;
+    }
+
+    case SYS_NET_CONF_SET: {
+        const net_conf_t *cfg = (const net_conf_t *)arg0;
+        if (!cfg) return -1;
+        return (long)net_conf_set(cfg);
+    }
+
+    /* ── User management (System Preferences) ────────────────────────── */
+
+    case SYS_USER_LIST: {
+        /* arg0 = user_info_t *arr, arg1 = u32 max */
+        typedef struct { unsigned int uid; char name[32]; unsigned char role; } user_info_t;
+        user_info_t *arr = (user_info_t *)arg0;
+        u32 max = (u32)arg1;
+        if (!arr || max == 0) return -1;
+        u32 n = 0;
+        for (u32 i = 0; i < AETHER_MAX_USERS && n < max; i++) {
+            if (!g_users[i].active) continue;
+            arr[n].uid  = i;
+            arr[n].role = g_users[i].role;
+            /* copy name */
+            int j = 0;
+            while (j < 31 && g_users[i].name[j]) {
+                arr[n].name[j] = g_users[i].name[j]; j++;
+            }
+            arr[n].name[j] = '\0';
+            n++;
+        }
+        return (long)n;
+    }
+
+    case SYS_USER_CREATE: {
+        /* arg0=name_ptr, arg1=pw_ptr, arg2=role */
+        if (g_current_uid < 0 ||
+            g_users[g_current_uid].role != AETHER_ROLE_ADMIN) return -1;
+        const char *name = (const char *)arg0;
+        const char *pw   = (const char *)arg1;
+        u8   role = (u8)arg2;
+        if (!name || !pw) return -1;
+        /* Check name not empty and not duplicate */
+        if (!name[0]) return -1;
+        for (u32 i = 0; i < AETHER_MAX_USERS; i++) {
+            if (!g_users[i].active) continue;
+            int eq = 1;
+            for (int j = 0; name[j] || g_users[i].name[j]; j++)
+                if (name[j] != g_users[i].name[j]) { eq = 0; break; }
+            if (eq) return -1;   /* duplicate name */
+        }
+        /* Find free slot */
+        int slot = -1;
+        for (int i = 0; i < AETHER_MAX_USERS; i++)
+            if (!g_users[i].active) { slot = i; break; }
+        if (slot < 0) return -1;
+        int j = 0;
+        while (j < AETHER_NAME_MAX - 1 && name[j])
+            { g_users[slot].name[j] = name[j]; j++; }
+        g_users[slot].name[j] = '\0';
+        g_users[slot].pw_hash = users_djb2(pw);
+        g_users[slot].role    = (role == AETHER_ROLE_ADMIN) ? AETHER_ROLE_ADMIN : AETHER_ROLE_USER;
+        g_users[slot].active  = 1;
+        g_user_count++;
+        users_save();
+        return (long)slot;
+    }
+
+    case SYS_USER_DELETE: {
+        u32 uid = (u32)arg0;
+        if (g_current_uid < 0 ||
+            g_users[g_current_uid].role != AETHER_ROLE_ADMIN) return -1;
+        if (uid >= AETHER_MAX_USERS || !g_users[uid].active) return -1;
+        if ((int)uid == g_current_uid) return -1;   /* cannot delete self */
+        /* Cannot remove last admin */
+        if (g_users[uid].role == AETHER_ROLE_ADMIN) {
+            int admin_cnt = 0;
+            for (int i = 0; i < AETHER_MAX_USERS; i++)
+                if (g_users[i].active && g_users[i].role == AETHER_ROLE_ADMIN) admin_cnt++;
+            if (admin_cnt <= 1) return -1;
+        }
+        g_users[uid].active = 0;
+        g_users[uid].name[0] = '\0';
+        if (g_user_count > 0) g_user_count--;
+        users_save();
+        return 0;
+    }
+
+    case SYS_USER_SET_PW: {
+        /* arg0=uid, arg1=old_pw_ptr, arg2=new_pw_ptr */
+        u32 uid = (u32)arg0;
+        const char *old_pw = (const char *)arg1;
+        const char *new_pw = (const char *)arg2;
+        if (uid >= AETHER_MAX_USERS || !g_users[uid].active) return -1;
+        if (!new_pw) return -1;
+        /* Admins can skip old password check for other users */
+        int is_admin = (g_current_uid >= 0 &&
+                        g_users[g_current_uid].role == AETHER_ROLE_ADMIN);
+        if (!is_admin || (int)uid == g_current_uid) {
+            if (!old_pw || users_djb2(old_pw) != g_users[uid].pw_hash)
+                return -1;
+        }
+        g_users[uid].pw_hash = users_djb2(new_pw);
+        users_save();
+        return 0;
+    }
+
+    case SYS_USER_GET_CUR: {
+        typedef struct { unsigned int uid; char name[32]; unsigned char role; } user_info_t;
+        user_info_t *out = (user_info_t *)arg0;
+        if (g_current_uid < 0) return -1;
+        if (out) {
+            out->uid  = (unsigned int)g_current_uid;
+            out->role = g_users[g_current_uid].role;
+            int j = 0;
+            while (j < 31 && g_users[g_current_uid].name[j]) {
+                out->name[j] = g_users[g_current_uid].name[j]; j++;
+            }
+            out->name[j] = '\0';
+        }
+        return (long)g_current_uid;
+    }
+
+    case SYS_USER_SET_ROLE: {
+        u32 uid  = (u32)arg0;
+        u8  role = (u8)arg1;
+        if (g_current_uid < 0 ||
+            g_users[g_current_uid].role != AETHER_ROLE_ADMIN) return -1;
+        if (uid >= AETHER_MAX_USERS || !g_users[uid].active) return -1;
+        /* Cannot demote self if last admin */
+        if ((int)uid == g_current_uid && role != AETHER_ROLE_ADMIN) {
+            int admin_cnt = 0;
+            for (int i = 0; i < AETHER_MAX_USERS; i++)
+                if (g_users[i].active && g_users[i].role == AETHER_ROLE_ADMIN) admin_cnt++;
+            if (admin_cnt <= 1) return -1;
+        }
+        g_users[uid].role = (role == AETHER_ROLE_ADMIN) ? AETHER_ROLE_ADMIN : AETHER_ROLE_USER;
+        users_save();
+        return 0;
+    }
+
+    case SYS_USER_LOGIN: {
+        const char *name = (const char *)arg0;
+        const char *pw   = (const char *)arg1;
+        if (!name || !pw) return -1;
+        u32 hash = users_djb2(pw);
+        for (int i = 0; i < AETHER_MAX_USERS; i++) {
+            if (!g_users[i].active) continue;
+            /* compare name */
+            int j = 0;
+            while (name[j] && g_users[i].name[j] == name[j]) j++;
+            if (name[j] != '\0' || g_users[i].name[j] != '\0') continue;
+            if (g_users[i].pw_hash != hash) return -1;
+            g_current_uid = i;
+            return 0;
+        }
+        return -1;
+    }
+
+    /* ── Phase 8.0 — RT scheduling ──────────────────────────────────── */
+
+    case SYS_SCHED_SETPARAM: {
+        /* arg0 = policy (SCHED_NORMAL/FIFO/RR), arg1 = rt_priority (1-99) */
+        int policy   = (int)arg0;
+        int rt_prio  = (int)arg1;
+        return sched_rt_set_policy(task_current_pid(), policy, rt_prio);
+    }
+
+    case SYS_SCHED_SETAFFINITY: {
+        /* arg0 = cpu_mask (bitmask, bit N = core N) */
+        u8 mask = (u8)(arg0 & 0x0F);
+        return sched_rt_set_affinity(task_current_pid(), mask);
+    }
+
+    case SYS_MLOCKALL: {
+        return sched_rt_mlockall(task_current_pid());
+    }
+
+    case SYS_AUDIO_TIMESTAMP: {
+        /* Returns nanoseconds since boot via CNTPCT_EL0 */
+        u64 ns = sched_rt_timestamp_ns();
+        /* Pack into x0 (64-bit) — userspace reads directly */
+        return (long)ns;
+    }
+
+    case SYS_AUDIO_LATENCY_STATS: {
+        /* arg0 = pointer to audio_latency_stats_t in user space */
+        audio_latency_stats_t *out = (audio_latency_stats_t *)arg0;
+        if (!out) return -1;
+        sched_rt_get_latency_stats(out);
+        return 0;
+    }
+
+    /* ── Phase 8.1 audio device syscalls ────────────────────────────── */
+
+    case SYS_AUDIO_ENUM: {
+        /* arg0 = user pointer to audio_dev_info_t array, arg1 = max count */
+        audio_dev_info_t *arr = (audio_dev_info_t *)arg0;
+        int max = (int)arg1;
+        if (!arr || max <= 0) return -1;
+        return audio_dev_enumerate(arr, max);
+    }
+
+    case SYS_AUDIO_OPEN: {
+        /* arg0 = device name pointer ("default" or specific name) */
+        const char *name = (const char *)arg0;
+        audio_dev_t *dev = audio_dev_open(name ? name : "default");
+        /* Return index into device registry (1-based) or -1 */
+        if (!dev) return -1;
+        return 1;  /* handle: Phase 8.3 will map handles to devices */
+    }
+
+    case SYS_AUDIO_CLOSE: {
+        return 0;  /* audio_dev_close is a no-op currently */
+    }
+
+    case SYS_AUDIO_CONFIGURE: {
+        /* arg0=handle, arg1=sample_rate, arg2=(bit_depth<<8)|channels */
+        audio_dev_t *dev = audio_dev_open("default");
+        if (!dev) return -1;
+        u32 sr     = (u32)arg1;
+        u8 bd      = (u8)((arg2 >> 8) & 0xFF);
+        u8 ch      = (u8)(arg2 & 0xFF);
+        return audio_dev_configure(dev, sr, bd, ch);
+    }
+
+    case SYS_AUDIO_START: {
+        audio_dev_t *dev = audio_dev_open("default");
+        if (!dev) return -1;
+        return audio_dev_start(dev);
+    }
+
+    case SYS_AUDIO_READ: {
+        /* arg1 = s16* buf (interleaved, channels × frames)
+         * arg2 = frame count to read
+         * For the PWM device: generate frames on demand then drain the ring.
+         * Returns frames actually delivered. */
+        short *buf    = (short *)(void *)arg1;
+        u32    frames = (u32)arg2;
+        if (!buf || !frames) return -1;
+
+        audio_dev_t *dev = audio_dev_open("default");
+        if (!dev) return -1;
+
+        /* Generate the requested frames (PWM path: 440 Hz test tone).
+         * For UAC2 the DMA already filled the ring; pwm_audio_fill is a no-op
+         * on UAC2 because it only touches the g_pwm_dev capture ring. */
+        extern void pwm_audio_fill(u32 n);
+        pwm_audio_fill(frames);
+
+        /* Drain from capture ring into userspace buffer */
+        audio_pcm_ring_t *cap = &dev->capture_ring;
+        u32 ch        = dev->channels ? dev->channels : 2u;
+        u32 available = (cap->write_idx - cap->read_idx + AUDIO_PCM_RING_FRAMES)
+                        % AUDIO_PCM_RING_FRAMES;
+        u32 to_read   = available < frames ? available : frames;
+
+        u32 gain = g_audio_conf.input_gain;
+        for (u32 f = 0; f < to_read; f++) {
+            for (u32 c = 0; c < ch; c++) {
+                u32 ri = (cap->read_idx * ch + c) % (AUDIO_PCM_RING_FRAMES * ch);
+                s32 s  = (s32)cap->pcm[ri];
+                s = s * (s32)gain / 100;
+                if (s >  32767) s =  32767;
+                if (s < -32768) s = -32768;
+                buf[f * ch + c] = (s16)s;
+            }
+            cap->read_idx = (cap->read_idx + 1) % AUDIO_PCM_RING_FRAMES;
+        }
+        return (long)to_read;
+    }
+
+    case SYS_AUDIO_WRITE: {
+        /* arg1 = const s16* buf (interleaved, channels × frames)
+         * arg2 = frame count to write
+         * Enqueues into the playback ring (drained by the backend driver). */
+        const short *buf    = (const short *)(const void *)arg1;
+        u32          frames = (u32)arg2;
+        if (!buf || !frames) return -1;
+
+        audio_dev_t *dev = audio_dev_open("default");
+        if (!dev) return -1;
+
+        audio_pcm_ring_t *play = &dev->playback_ring;
+        u32 ch    = dev->channels ? dev->channels : 2u;
+        u32 space = (AUDIO_PCM_RING_FRAMES - 1 -
+                     (play->write_idx - play->read_idx + AUDIO_PCM_RING_FRAMES)
+                      % AUDIO_PCM_RING_FRAMES);
+        u32 to_write = space < frames ? space : frames;
+
+        u32 vol   = g_audio_conf.output_mute ? 0u : (u32)g_audio_conf.output_volume;
+        s32 bal   = (s32)(s8)g_audio_conf.output_balance;  /* -100..+100 */
+        for (u32 f = 0; f < to_write; f++) {
+            for (u32 c = 0; c < ch; c++) {
+                s32 s = (s32)buf[f * ch + c];
+                /* Master volume */
+                s = s * (s32)vol / 100;
+                /* Balance (stereo only): attenuate left when bal>0, right when bal<0 */
+                if (ch == 2) {
+                    if (c == 0 && bal > 0) s = s * (100 - bal) / 100;
+                    if (c == 1 && bal < 0) s = s * (100 + bal) / 100;
+                }
+                if (s >  32767) s =  32767;
+                if (s < -32768) s = -32768;
+                u32 wi = (play->write_idx * ch + c) % (AUDIO_PCM_RING_FRAMES * ch);
+                play->pcm[wi] = (s16)s;
+            }
+            play->write_idx = (play->write_idx + 1) % AUDIO_PCM_RING_FRAMES;
+        }
+
+        /* Mirror output to the UAC1 USB device if present (QEMU virtual audio) */
+        extern void uac1_write_pcm(const s16 *b, u32 n, u8 c);
+        uac1_write_pcm(buf, to_write, (u8)ch);
+
+        return (long)to_write;
+    }
+
+    case SYS_MIDI_READ: {
+        /* arg0 = pointer to midi_event_t array, arg1 = max events */
+        midi_event_t *buf = (midi_event_t *)arg0;
+        int max = (int)arg1;
+        if (!buf || max <= 0) return -1;
+        return usb_midi_read(buf, max);
+    }
+
+    case SYS_MIDI_WRITE: {
+        /* arg0 = pointer to midi_event_t array, arg1 = count */
+        const midi_event_t *buf = (const midi_event_t *)arg0;
+        int count = (int)arg1;
+        if (!buf || count <= 0) return -1;
+        return usb_midi_write(buf, count);
+    }
+
+    /* ── Audio configuration (System Preferences Sound pane) ──────── */
+
+    case SYS_AUDIO_CONF_GET: {
+        audio_conf_t *out = (audio_conf_t *)(void *)arg0;
+        if (!out) return -1;
+        audio_conf_get(out);
+        return 0;
+    }
+
+    case SYS_AUDIO_CONF_SET: {
+        const audio_conf_t *cfg = (const audio_conf_t *)(const void *)arg0;
+        if (!cfg) return -1;
+        return audio_conf_set(cfg);
     }
 
     default:

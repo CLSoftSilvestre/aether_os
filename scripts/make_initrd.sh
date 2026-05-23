@@ -23,9 +23,10 @@ if [ ! -d "$STAGING" ]; then
     exit 1
 fi
 
-# List bare filenames in staging dir and feed to cpio.
-# 'find . -maxdepth 1 -type f -printf "%f\n"' is GNU-only; use portable form.
-(cd "$STAGING" && find . -maxdepth 1 -type f | sed 's|^\./||' \
+# List all files (including subdirectories like aeguitar/, apps/) and feed to cpio.
+# Paths are stored relative to the staging root (e.g. "aeguitar/pedal_blue.bmp").
+# The VFS accesses them via /initrd/<relpath> (e.g. /initrd/aeguitar/pedal_blue.bmp).
+(cd "$STAGING" && find . -type f | sed 's|^\./||' \
     | cpio -o -H newc 2>/dev/null) > "$OUTPUT"
 
 echo "initrd: $(wc -c < "$OUTPUT") bytes → $OUTPUT"

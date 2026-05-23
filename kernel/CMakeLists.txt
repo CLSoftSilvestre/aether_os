@@ -15,10 +15,15 @@ set(KERNEL_SOURCES
     core/printk.c
     core/exceptions.c
     core/scheduler.c
+    core/sched_rt.c
+    core/cpu_affinity.c
     core/syscall.c
     core/process.c
     core/pipe.c
     core/wm.c
+    core/config.c
+    core/users.c
+    core/audio_conf.c
 
     # Memory management
     mm/pmm.c
@@ -65,6 +70,19 @@ set(KERNEL_SOURCES
 
     # Drivers — USB OHCI + HID (Phase 4.6)
     drivers/usb/ohci.c
+
+    # Drivers — USB xHCI + MSC + FAT32 (Phase 5.2.12)
+    drivers/usb/xhci.c
+    drivers/usb/msc.c
+    fs/usb_fat32.c
+
+    # Drivers — Audio (Phase 8.1 + 8.2)
+    drivers/audio/audio_core.c
+    drivers/audio/pwm_audio.c
+    drivers/audio/i2s_bcm2712.c
+    drivers/usb/audio/uac2.c
+    drivers/usb/audio/uac1.c
+    drivers/usb/midi/usb_midi.c
 
     # Drivers — GPU / V3D (Phase 6.1)
     drivers/gpu/mailbox.c
