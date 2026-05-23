@@ -166,12 +166,33 @@ void audio_client_run_once(audio_client_t *client)
     unsigned int frames = client->period_frames;
     unsigned int ch     = client->channels;
 
-    /* Zero input buffers (PCM ring read would happen via SHM in full impl) */
-    for (unsigned int i = 0; i < frames * ch; i++)
-        client->in_f32[i] = 0.0f;
+    /* Read interleaved s16 from the kernel capture ring, convert to
+     * deinterleaved float32.  A static scratch buffer avoids malloc on
+     * the hot path; period_frames is capped at 1024 by the ring size. */
+    static short s_pcm_in[1024 * 2];
+    long got = sys_audio_read(client->handle, s_pcm_in, frames);
+    if (got < 0) got = 0;
+
+    /* Interleaved s16 → deinterleaved float32 */
+    for (unsigned int f = 0; f < frames; f++) {
+        for (unsigned int c = 0; c < ch; c++) {
+            float s = (f * ch + c < (unsigned int)got * ch)
+                      ? s16_to_f32(s_pcm_in[f * ch + c])
+                      : 0.0f;
+            client->in_f32[c * frames + f] = s;
+        }
+    }
 
     /* Fire the DSP callback */
     client->callback(client->in_f32, client->out_f32, frames, client->userdata);
+
+    /* Convert deinterleaved float32 → interleaved s16, write to playback ring */
+    static short s_pcm_out[1024 * 2];
+    for (unsigned int f = 0; f < frames; f++) {
+        for (unsigned int c = 0; c < ch; c++)
+            s_pcm_out[f * ch + c] = f32_to_s16(client->out_f32[c * frames + f]);
+    }
+    sys_audio_write(client->handle, s_pcm_out, frames);
 }
 
 float *audio_client_get_input_buffer(audio_client_t *client)

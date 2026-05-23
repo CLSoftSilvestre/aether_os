@@ -1131,6 +1131,8 @@ static inline long long sys_audio_timestamp(void)
 #define SYS_AUDIO_CLOSE     967
 #define SYS_AUDIO_CONFIGURE 968
 #define SYS_AUDIO_START     969
+#define SYS_AUDIO_READ      972
+#define SYS_AUDIO_WRITE     973
 #define SYS_MIDI_READ       970
 #define SYS_MIDI_WRITE      971
 
@@ -1176,6 +1178,20 @@ static inline long sys_audio_configure(long handle, unsigned int sr,
 static inline long sys_audio_start(long handle)
 {
     return _sys1(SYS_AUDIO_START, handle);
+}
+
+/* Read up to 'frames' interleaved s16 samples from the capture ring.
+ * Returns the number of frames actually read (may be less than requested). */
+static inline long sys_audio_read(long handle, short *buf, unsigned int frames)
+{
+    return _sys3(SYS_AUDIO_READ, handle, (long)(void *)buf, (long)frames);
+}
+
+/* Write 'frames' interleaved s16 samples to the playback ring.
+ * Returns the number of frames accepted. */
+static inline long sys_audio_write(long handle, const short *buf, unsigned int frames)
+{
+    return _sys3(SYS_AUDIO_WRITE, handle, (long)(const void *)buf, (long)frames);
 }
 
 static inline long sys_midi_read(midi_event_t *buf, int max)

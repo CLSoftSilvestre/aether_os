@@ -1237,46 +1237,78 @@ int gfx_bmp_load_icon(const char *path, unsigned *pixels, unsigned buf_pixels,
 
 /* ── Chroma-key icon blit with nearest-neighbor scaling ─────────────────── */
 
-/* Scratch row buffer used by gfx_icon_blit — sized for the largest icon */
-static unsigned s_icon_row[64];
+/* Scratch row buffer used by gfx_icon_blit — sized for the widest blit needed
+ * (full content width 804 + margin; 2048 covers any current or near-future image) */
+static unsigned s_icon_row[2048];
 
 void gfx_icon_blit(const unsigned *pixels, unsigned src_w, unsigned src_h,
                     int dst_x, int dst_y, int dst_w, int dst_h)
 {
     if (!pixels || src_w == 0 || src_h == 0 || dst_w <= 0 || dst_h <= 0) return;
-    if ((unsigned)dst_w > 64u) dst_w = 64;   /* clamp to scratch row size */
+    if ((unsigned)dst_w > 2048u) dst_w = 2048;
 
-    unsigned transp = GFX_ICON_TRANSPARENT & 0x00FFFFFFu;
+    unsigned transp  = GFX_ICON_TRANSPARENT & 0x00FFFFFFu;
+    int      no_scale = ((unsigned)dst_w == src_w && (unsigned)dst_h == src_h);
 
-    for (int dy = 0; dy < dst_h; dy++) {
-        unsigned sy = (unsigned)dy * src_h / (unsigned)dst_h;
-        if (sy >= src_h) sy = src_h - 1u;
+    if (g_rt_buf) {
+        /* ── Render-target path ── */
+        int base_rx = dst_x - g_rt_off_x;
+        int base_ry = dst_y - g_rt_off_y;
 
-        /* Build a scaled row, masking alpha so comparison is RGB-only */
-        for (int dx = 0; dx < dst_w; dx++) {
-            unsigned sx = (unsigned)dx * src_w / (unsigned)dst_w;
-            if (sx >= src_w) sx = src_w - 1u;
-            s_icon_row[dx] = pixels[sy * src_w + sx] & 0x00FFFFFFu;
-        }
+        /* Clip to render-target bounds once. */
+        int dy0 = base_ry < 0            ? -base_ry                    : 0;
+        int dy1 = base_ry + dst_h > (int)g_rt_h ? (int)g_rt_h - base_ry : dst_h;
+        int dx0 = base_rx < 0            ? -base_rx                    : 0;
+        int dx1 = base_rx + dst_w > (int)g_rt_w ? (int)g_rt_w - base_rx : dst_w;
+        if (dx1 <= dx0 || dy1 <= dy0) return;
 
-        if (g_rt_buf) {
-            /* Render-target path: write opaque pixels directly into the buffer. */
-            int ry = dst_y + dy - g_rt_off_y;
-            if (ry < 0 || ry >= (int)g_rt_h) continue;
-            for (int dx = 0; dx < dst_w; dx++) {
-                if (s_icon_row[dx] == transp) continue;
-                int rx = dst_x + dx - g_rt_off_x;
-                if (rx < 0 || rx >= (int)g_rt_w) continue;
-                g_rt_buf[ry * (int)g_rt_w + rx] = s_icon_row[dx];
-                /* Expand dirty rect per written pixel */
-                if (rx     < g_dr_x0) g_dr_x0 = rx;
-                if (ry     < g_dr_y0) g_dr_y0 = ry;
-                if (rx + 1 > g_dr_x1) g_dr_x1 = rx + 1;
-                if (ry + 1 > g_dr_y1) g_dr_y1 = ry + 1;
-                g_rt_dirty = 1;
+        /* Expand dirty rect once for the whole blit region. */
+        int bx0 = base_rx + dx0, by0 = base_ry + dy0;
+        int bx1 = base_rx + dx1, by1 = base_ry + dy1;
+        if (bx0 < g_dr_x0) g_dr_x0 = bx0;
+        if (by0 < g_dr_y0) g_dr_y0 = by0;
+        if (bx1 > g_dr_x1) g_dr_x1 = bx1;
+        if (by1 > g_dr_y1) g_dr_y1 = by1;
+        g_rt_dirty = 1;
+
+        for (int dy = dy0; dy < dy1; dy++) {
+            unsigned sy = no_scale ? (unsigned)dy
+                                   : (unsigned)dy * src_h / (unsigned)dst_h;
+            if (sy >= src_h) sy = src_h - 1u;
+            const unsigned *src_row = pixels + sy * src_w;
+            unsigned       *dst_row = g_rt_buf + (base_ry + dy) * (int)g_rt_w + base_rx;
+
+            if (no_scale) {
+                /* 1:1 blit: index directly, no multiply/divide per pixel. */
+                for (int dx = dx0; dx < dx1; dx++) {
+                    unsigned p = src_row[dx] & 0x00FFFFFFu;
+                    if (p != transp) dst_row[dx] = p;
+                }
+            } else {
+                /* Scaled blit. */
+                for (int dx = dx0; dx < dx1; dx++) {
+                    unsigned sx = (unsigned)dx * src_w / (unsigned)dst_w;
+                    if (sx >= src_w) sx = src_w - 1u;
+                    unsigned p = src_row[sx] & 0x00FFFFFFu;
+                    if (p != transp) dst_row[dx] = p;
+                }
             }
-        } else {
-            /* Live framebuffer: blit contiguous opaque runs — minimises syscalls. */
+        }
+    } else {
+        /* ── Live-framebuffer path: blit contiguous opaque runs. ── */
+        for (int dy = 0; dy < dst_h; dy++) {
+            unsigned sy = no_scale ? (unsigned)dy
+                                   : (unsigned)dy * src_h / (unsigned)dst_h;
+            if (sy >= src_h) sy = src_h - 1u;
+            const unsigned *src_row = pixels + sy * src_w;
+
+            for (int dx = 0; dx < dst_w; dx++) {
+                unsigned sx = no_scale ? (unsigned)dx
+                                       : (unsigned)dx * src_w / (unsigned)dst_w;
+                if (sx >= src_w) sx = src_w - 1u;
+                s_icon_row[dx] = src_row[sx] & 0x00FFFFFFu;
+            }
+
             int dx = 0;
             while (dx < dst_w) {
                 while (dx < dst_w && s_icon_row[dx] == transp) dx++;

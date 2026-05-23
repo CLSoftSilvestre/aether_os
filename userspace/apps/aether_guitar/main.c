@@ -27,6 +27,7 @@ int             g_running = 1;
 unsigned int    g_sr      = 48000;
 unsigned int    g_period  = 256;
 unsigned       *g_fb      = (void *)0;
+gpu_bo_t        g_win_bo  = GPU_BO_INVALID;
 
 /* ── Audio callback (RT thread) ───────────────────────────────────────── */
 
@@ -188,9 +189,27 @@ int main(void)
     /* Register window with WM */
     g_win_id = (int)sys_wm_register(g_win_x, g_win_y, WIN_W, WIN_H, "AetherGuitar");
 
-    /* Allocate frame buffer (GPU BO path falls through to malloc) */
-    g_fb = (unsigned *)malloc(WIN_W * WIN_H * sizeof(unsigned));
-    if (!g_fb) { sys_exit(1); return 1; }
+    /* Allocate GPU Buffer Object so the compositor can composite this window.
+     * Falls back to malloc if the GPU allocator is unavailable. */
+    {
+        unsigned bo_bytes = (unsigned)WIN_W * (unsigned)WIN_H * 4u;
+        g_win_bo = gpu_alloc(bo_bytes);
+        if (g_win_bo != GPU_BO_INVALID) {
+            void *bo_ptr = gpu_map(g_win_bo);
+            if (bo_ptr) {
+                g_fb = (unsigned *)bo_ptr;
+                sys_wm_set_buffer(g_win_id, g_win_bo);
+                gfx_set_damage_target(g_win_id);
+            } else {
+                gpu_free(g_win_bo);
+                g_win_bo = GPU_BO_INVALID;
+            }
+        }
+        if (g_win_bo == GPU_BO_INVALID) {
+            g_fb = (unsigned *)malloc(bo_bytes);
+            if (!g_fb) { sys_exit(1); return 1; }
+        }
+    }
 
     /* Initialise audio chain */
     chain_init();
@@ -215,10 +234,16 @@ int main(void)
     gfx_end_frame();
 
     /* ── Main event loop ── */
-    unsigned prev_btn = 0;
-    unsigned cur_btn  = 0;
+    unsigned prev_btn  = 0;
+    unsigned cur_btn   = 0;
+    int      view_dirty = 1;   /* 1 = must redraw; cleared after each render */
 
     while (g_running) {
+        /* Audio poll — runs the DSP callback when a full period of capture
+         * data is ready.  run_once() returns immediately if the period hasn't
+         * elapsed yet, so calling it every iteration is safe. */
+        if (g_audio) audio_client_run_once(g_audio);
+
         int had_event = 0;
         unsigned long long raw;
 
@@ -231,9 +256,9 @@ int main(void)
             }
 
             if (wm_event_is_redraw(raw)) {
-                g_win_x = wm_event_redraw_x(raw);
-                g_win_y = wm_event_redraw_y(raw);
-                had_event = 1;
+                g_win_x    = wm_event_redraw_x(raw);
+                g_win_y    = wm_event_redraw_y(raw);
+                view_dirty = 1;   /* compositor uncovered/moved our window */
                 continue;
             }
 
@@ -243,12 +268,17 @@ int main(void)
                 prev_btn = cur_btn;
                 cur_btn  = mev.buttons;
 
+                /* Pure cursor movement with no button held needs no redraw.
+                 * Any button activity (press, hold/drag, release) does. */
+                if (cur_btn != prev_btn || (cur_btn & 1))
+                    view_dirty = 1;
+
                 /* Tab click */
                 if ((cur_btn & 1) && !(prev_btn & 1)) {
                     int t = tab_hit(mx, my);
                     if (t >= 0 && t != g_view) {
-                        g_view = t;
-                        had_event = 1;
+                        g_view     = t;
+                        view_dirty = 1;
                         continue;
                     }
                 }
@@ -271,31 +301,44 @@ int main(void)
             /* Key event */
             key_event_t kev = key_event_unpack(raw);
             if (!kev.is_press) continue;
+            view_dirty = 1;
             if (kev.keycode == KEY_ESC) { g_running = 0; break; }
             if (g_view == VIEW_PRESETS)
                 view_presets_key(kev.keycode, kev.modifiers);
         }
 
-        /* Redraw every iteration (audio widgets update continuously) */
+        /* Always begin a frame so gfx_end_frame can re-blit our window if the
+         * compositor overwrote it (legacy FB mode).  gfx_end_frame is a no-op
+         * when g_rt_dirty==0, so skipping draw functions costs almost nothing. */
         gfx_begin_frame(g_fb, WIN_W, WIN_H, g_win_x, g_win_y);
-        draw_chrome();
-        draw_tabbar();
-        /* Board and Tuner draw their own full-coverage backgrounds;
-         * skipping draw_content_bg() for them eliminates the dark-flash flicker. */
-        if (g_view != VIEW_BOARD && g_view != VIEW_TUNER)
-            draw_content_bg();
 
-        switch (g_view) {
-        case VIEW_BOARD:    view_board_draw(cont_x(), cont_y());    break;
-        case VIEW_AMP:      view_amp_draw(cont_x(), cont_y());      break;
-        case VIEW_TUNER:    view_tuner_draw(cont_x(), cont_y());    break;
-        case VIEW_PRESETS:  view_presets_draw(cont_x(), cont_y()); break;
-        case VIEW_SETTINGS: view_settings_draw(cont_x(), cont_y());break;
+        int did_render = view_dirty || (g_view == VIEW_TUNER);
+        if (did_render) {
+            draw_chrome();
+            draw_tabbar();
+            /* Board and Tuner draw their own full-coverage backgrounds. */
+            if (g_view != VIEW_BOARD && g_view != VIEW_TUNER)
+                draw_content_bg();
+
+            switch (g_view) {
+            case VIEW_BOARD:    view_board_draw(cont_x(), cont_y());    break;
+            case VIEW_AMP:      view_amp_draw(cont_x(), cont_y());      break;
+            case VIEW_TUNER:    view_tuner_draw(cont_x(), cont_y());    break;
+            case VIEW_PRESETS:  view_presets_draw(cont_x(), cont_y()); break;
+            case VIEW_SETTINGS: view_settings_draw(cont_x(), cont_y());break;
+            }
+
+            view_dirty = 0;
         }
 
         gfx_end_frame();
 
-        if (had_event)
+        /* After a real render, sync to vsync so we don't render faster than
+         * the display can show.  Otherwise yield briefly so the event queue
+         * drains as fast as possible (pure mouse-move stays near zero cost). */
+        if (did_render)
+            sys_vsync_wait();
+        else if (had_event)
             sys_sched_yield();
         else
             sys_vsync_wait();
@@ -307,7 +350,8 @@ int main(void)
         audio_client_close(g_audio);
     }
     if (g_chain)  achain_destroy(g_chain);
-    if (g_fb)     free(g_fb);
+    if (g_win_bo != GPU_BO_INVALID) gpu_free(g_win_bo);
+    else if (g_fb) free(g_fb);
     if (g_win_id >= 0) sys_wm_unregister(g_win_id);
     sys_exit(0);
     return 0;

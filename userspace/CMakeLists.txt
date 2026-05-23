@@ -2126,7 +2126,9 @@ add_custom_command(
             ${AEGUITAR_ASSETS_SRC}/pedal_teal.bmp
             ${AEGUITAR_ASSETS_SRC}/pedal_amber.bmp
             ${AEGUITAR_ASSETS_SRC}/pedal_violet.bmp
-            ${AEGUITAR_ASSETS_SRC}/amp_head_bg.bmp
+            ${AEGUITAR_ASSETS_SRC}/marshall_amp.bmp
+            ${AEGUITAR_ASSETS_SRC}/fender_amp.bmp
+            ${AEGUITAR_ASSETS_SRC}/vox_amp.bmp
             ${AEGUITAR_ASSETS_SRC}/knob_base.bmp
             ${AEGUITAR_ASSETS_SRC}/stomp_off.bmp
             ${AEGUITAR_ASSETS_SRC}/stomp_on.bmp

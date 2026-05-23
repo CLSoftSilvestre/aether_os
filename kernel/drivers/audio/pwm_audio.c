@@ -7,13 +7,19 @@
  * real hardware.
  *
  * Architecture:
- *   A timer-driven polling function fills the capture_ring with silence
- *   (no ADC on QEMU) and advances write_idx at the configured sample rate.
+ *   A timer-driven polling function fills the capture_ring with a 440 Hz
+ *   sine test tone so the DSP chain (AetherGuitar, AetherSound) has a real
+ *   signal to process even without a USB audio interface connected.
  *   The AetherSound server (Phase 8.3) reads the capture ring, runs the
  *   DSP chain in userspace (float32), and writes processed PCM to the
  *   playback_ring.  The kernel reads the playback_ring and "plays" it
  *   (currently: drains the ring to maintain timing; real PWM output is a
  *   future enhancement using the BCM2712 PWM peripheral on Pi 5).
+ *
+ * Test tone:
+ *   Recursive digital sine oscillator — y[n] = K·y[n-1] − y[n-2]
+ *   K = 2·cos(2π·440/48000) in Q15 = 65422.  Amplitude −12 dBFS (8192).
+ *   One s64 multiply per sample; no float, no lookup table.
  *
  * No float operations in this file — all PCM is s16 integer.
  */
@@ -29,6 +35,18 @@
 #define PWM_DEFAULT_SR     48000   /* default sample rate Hz             */
 #define PWM_DEFAULT_CH     2       /* stereo                             */
 #define PWM_PERIOD_FRAMES  64      /* default block size                 */
+
+/* ── 440 Hz test tone oscillator ─────────────────────────────────────── */
+/* Recursive digital sine: y[n] = K*y[n-1] - y[n-2]
+ * K  = 2*cos(2π*440/48000) in Q15 = 65422
+ * y0 = -round(8192 * sin(2π*440/48000)) = -472  (primes the recurrence)
+ * y1 = 0
+ * Produces A*sin(n*ω) at A=8192 (-12 dBFS) once the first period runs. */
+#define OSC_K_Q15  65422
+#define OSC_AMP    8192
+
+static s32 g_osc_y0 = -472;
+static s32 g_osc_y1 =    0;
 
 /* ── Backend private state ────────────────────────────────────────────── */
 
@@ -88,6 +106,28 @@ static int pwm_stop(audio_dev_t *dev)
 
 static void pwm_close(audio_dev_t *dev) { (void)dev; }
 
+/* ── Direct fill — called from SYS_AUDIO_READ (userspace polling model) ── */
+/* Generates exactly 'frames' samples into capture_ring regardless of timing.
+ * Used when userspace drives the period rather than a kernel timer. */
+void pwm_audio_fill(u32 frames)
+{
+    u32 ch  = g_pwm_dev.channels ? g_pwm_dev.channels : 2u;
+    audio_pcm_ring_t *cap = &g_pwm_dev.capture_ring;
+
+    for (u32 f = 0; f < frames; f++) {
+        s32 y2 = (s32)(((s64)OSC_K_Q15 * g_osc_y1) >> 15) - g_osc_y0;
+        g_osc_y0 = g_osc_y1;
+        g_osc_y1 = y2;
+        s16 sample = (s16)(y2 > 32767 ? 32767 : y2 < -32767 ? -32767 : y2);
+
+        for (u32 c = 0; c < ch; c++) {
+            u32 wi = (cap->write_idx * ch + c) % (AUDIO_PCM_RING_FRAMES * ch);
+            cap->pcm[wi] = sample;
+        }
+        cap->write_idx = (cap->write_idx + 1) % AUDIO_PCM_RING_FRAMES;
+    }
+}
+
 /* ── Polling tick — called from audio_server poll loop ──────────────── */
 
 void pwm_audio_poll(void)
@@ -102,12 +142,19 @@ void pwm_audio_poll(void)
     u32 frames   = g_pwm_dev.period_frames;
     u32 ch       = g_pwm_dev.channels;
 
-    /* Write silence (s16 zeros) to capture ring — no ADC on QEMU */
+    /* Write 440 Hz sine test tone to capture ring (simulates guitar input).
+     * Oscillator: y[n] = (OSC_K_Q15 * y[n-1] >> 15) - y[n-2].
+     * The same sample goes to all channels — mono test signal. */
     audio_pcm_ring_t *cap = &g_pwm_dev.capture_ring;
     for (u32 f = 0; f < frames; f++) {
+        s32 y2 = (s32)(((s64)OSC_K_Q15 * g_osc_y1) >> 15) - g_osc_y0;
+        g_osc_y0 = g_osc_y1;
+        g_osc_y1 = y2;
+        s16 sample = (s16)(y2 > 32767 ? 32767 : y2 < -32767 ? -32767 : y2);
+
         for (u32 c = 0; c < ch; c++) {
             u32 wi = (cap->write_idx * ch + c) % (AUDIO_PCM_RING_FRAMES * ch);
-            cap->pcm[wi] = 0;
+            cap->pcm[wi] = sample;
         }
         cap->write_idx = (cap->write_idx + 1) % AUDIO_PCM_RING_FRAMES;
     }
@@ -143,7 +190,7 @@ void pwm_audio_init(void)
         { g_pwm_dev.info.name[i] = nm[i]; i++; }
     g_pwm_dev.info.name[i]         = '\0';
     g_pwm_dev.info.type            = AUDIO_DEV_PWM;
-    g_pwm_dev.info.inputs          = 0;
+    g_pwm_dev.info.inputs          = 2;   /* synthetic: 440 Hz test tone */
     g_pwm_dev.info.outputs         = 2;
     g_pwm_dev.info.max_sample_rate = 96000;
 

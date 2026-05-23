@@ -24,6 +24,9 @@ from PIL import Image, ImageDraw, ImageFilter, ImageEnhance
 OUT = os.path.join(os.path.dirname(__file__), "assets")
 os.makedirs(OUT, exist_ok=True)
 
+# Transparency key that matches GFX_ICON_TRANSPARENT in gfx.h (255,0,255 = magenta)
+TRANSPARENT_COL = (255, 0, 255)
+
 # ── helpers ────────────────────────────────────────────────────────────
 
 def save_bmp32(img: Image.Image, name: str):
@@ -326,147 +329,243 @@ def gen_pedal(color_name, base_col, hi_col, effect_name, short_name):
     save_bmp32(pil_out, f"pedal_{color_name}.bmp")
     return pil_out
 
-# ── AMP HEAD (804×200) ────────────────────────────────────────────────
+# ── AMP HEAD PANELS (804×200) — one per amp model ─────────────────────
+#
+# Knob well X positions (image-relative, match AMP_KNOB_IX in view_amp.c):
+#   Fender   (ts=0): [260, 350, 440, 530, 650]  VOL  TREBLE  MID   BASS   MASTER
+#   Marshall (ts=1): [260, 345, 430, 515, 670]  PRE  BASS    MID   TREBLE MASTER
+#   Vox      (ts=2): [270, 365, 460, 555, 655]  VOL  TREBLE  BASS  CUT    MASTER
+#
+# knob_y = 100 (centre of 200px image) → 140 after AMP_BLIT_H scaling in C.
 
-def gen_amp_head():
-    W, H = 804, 200
-    arr = np.zeros((H, W, 3), dtype=np.float32)
-
-    # === Outer cabinet — black tolex ===
-    tolex_dark = np.array([14, 13, 14], dtype=np.float32)
-    tolex_light = np.array([24, 23, 24], dtype=np.float32)
-    arr[:] = tolex_dark
-
-    # tolex bump pattern
+def _amp_cabinet_and_chrome(arr, W, H):
+    """Black tolex cabinet + chrome bezel. Modifies arr in-place, returns arr."""
+    arr[:] = np.array([12, 11, 12], dtype=np.float32)
     xs, ys = np.meshgrid(np.arange(W), np.arange(H))
     bump = (np.sin(xs * 0.3 + 0.5) * np.sin(ys * 0.4) * 0.5 + 0.5).astype(np.float32)
-    arr += bump[..., None] * 6
+    arr += bump[..., None] * 5
+    arr += (noise2d(W, H, scale=0.1, seed=55)[..., None] - 0.5) * 4
 
-    # tolex leather grain
-    g = noise2d(W, H, scale=0.1, seed=55)
-    arr += (g[..., None] - 0.5) * 5
-
-    # === Chrome bezel (full width, H: 20..180) ===
     bz_y0, bz_y1 = 20, 180
     BH = bz_y1 - bz_y0
     chrome = np.zeros((BH, W, 3), dtype=np.float32)
-
-    # chrome gradient: dark→light→medium
     for y in range(BH):
         t = y / BH
         if t < 0.12:
             chrome[y, :] = np.array([200, 205, 215], dtype=np.float32) * (t / 0.12)
         elif t < 0.22:
-            chrome[y, :] = blend(
-                np.array([200, 205, 215], dtype=np.float32),
-                np.array([240, 245, 255], dtype=np.float32), (t - 0.12) / 0.1)
+            chrome[y, :] = blend(np.array([200, 205, 215], dtype=np.float32),
+                                  np.array([240, 245, 255], dtype=np.float32), (t-0.12)/0.1)
         elif t < 0.35:
-            chrome[y, :] = blend(
-                np.array([240, 245, 255], dtype=np.float32),
-                np.array([165, 168, 178], dtype=np.float32), (t - 0.22) / 0.13)
+            chrome[y, :] = blend(np.array([240, 245, 255], dtype=np.float32),
+                                  np.array([165, 168, 178], dtype=np.float32), (t-0.22)/0.13)
         else:
-            chrome[y, :] = blend(
-                np.array([165, 168, 178], dtype=np.float32),
-                np.array([130, 133, 143], dtype=np.float32), (t - 0.35) / 0.65)
-
+            chrome[y, :] = blend(np.array([165, 168, 178], dtype=np.float32),
+                                  np.array([130, 133, 143], dtype=np.float32), (t-0.35)/0.65)
     arr[bz_y0:bz_y1, :] = chrome
-
-    # chrome brushed horizontal lines
-    cn = noise2d(W, BH, scale=0.8, seed=22)
-    arr[bz_y0:bz_y1, :] += (cn[..., None] - 0.5) * 8
-
-    # chrome outer border highlight
+    arr[bz_y0:bz_y1, :] += (noise2d(W, BH, scale=0.8, seed=22)[..., None] - 0.5) * 8
     arr[bz_y0:bz_y0+2, :] = np.array([250, 255, 255], dtype=np.float32)
     arr[bz_y1-2:bz_y1, :] = np.array([90, 92, 100], dtype=np.float32)
+    return arr
 
-    # === Fabric grill section (H: 28..172, X: 30..200) ===
-    grill_x0, grill_x1 = 28, 200
-    grill_y0, grill_y1 = 28, 172
-    GW = grill_x1 - grill_x0
-    GH = grill_y1 - grill_y0
-
-    grill_base = np.array([12, 12, 14], dtype=np.float32)
-    grill = np.zeros((GH, GW, 3), dtype=np.float32) + grill_base
-
-    # grill cloth weave
+def _amp_grill(arr, grill_base_col, grill_seed=33):
+    """Dark fabric grill section (x:28–200, y:28–172). Modifies arr in-place."""
+    grill_x0, grill_x1, grill_y0, grill_y1 = 28, 200, 28, 172
+    GW, GH = grill_x1 - grill_x0, grill_y1 - grill_y0
+    grill = np.zeros((GH, GW, 3), dtype=np.float32) + np.array(grill_base_col, dtype=np.float32)
     xs_g, ys_g = np.meshgrid(np.arange(GW), np.arange(GH))
-    weave = ((xs_g % 3 == 0) | (ys_g % 3 == 0)).astype(np.float32)
-    grill += weave[..., None] * 12
-
-    # grill noise
-    gn = noise2d(GW, GH, scale=0.25, seed=33)
-    grill += (gn[..., None] - 0.5) * 5
-
+    grill += ((xs_g % 3 == 0) | (ys_g % 3 == 0)).astype(np.float32)[..., None] * 10
+    grill += (noise2d(GW, GH, scale=0.25, seed=grill_seed)[..., None] - 0.5) * 5
     arr[grill_y0:grill_y1, grill_x0:grill_x1] = grill
 
-    # grill border
-    pil_tmp = Image.fromarray(clamp_u8(arr))
-    d = ImageDraw.Draw(pil_tmp)
+    pil = Image.fromarray(clamp_u8(arr))
+    d   = ImageDraw.Draw(pil)
     d.rectangle([grill_x0-2, grill_y0-2, grill_x1+2, grill_y1+2],
                 outline=(100, 102, 110), width=2)
-    arr = np.array(pil_tmp, dtype=np.float32)
+    return np.array(pil, dtype=np.float32)
 
-    # === Control section (X: 210..795) ===
-    ctrl_x0, ctrl_x1 = 210, 795
-    ctrl_y0, ctrl_y1 = 30, 170
-    # Lighter chrome sub-panel
+def _amp_ctrl_panel(arr, ctrl_top_col, ctrl_bot_col):
+    """Chrome sub-panel for the control section (x:210–795, y:30–170)."""
+    ctrl_x0, ctrl_x1, ctrl_y0, ctrl_y1 = 210, 795, 30, 170
     sub = np.zeros((ctrl_y1 - ctrl_y0, ctrl_x1 - ctrl_x0, 3), dtype=np.float32)
     for y in range(ctrl_y1 - ctrl_y0):
         t = y / (ctrl_y1 - ctrl_y0)
-        sub[y, :] = blend(
-            np.array([220, 223, 230], dtype=np.float32),
-            np.array([175, 178, 188], dtype=np.float32), t)
+        sub[y, :] = blend(np.array(ctrl_top_col, dtype=np.float32),
+                          np.array(ctrl_bot_col, dtype=np.float32), t)
     arr[ctrl_y0:ctrl_y1, ctrl_x0:ctrl_x1] = sub
+    arr[ctrl_y0:ctrl_y1, ctrl_x0:ctrl_x1] += \
+        (noise2d(ctrl_x1-ctrl_x0, ctrl_y1-ctrl_y0, scale=0.9, seed=88)[..., None] - 0.5) * 5
+    return arr
 
-    sub_n = noise2d(ctrl_x1 - ctrl_x0, ctrl_y1 - ctrl_y0, scale=0.9, seed=88)
-    arr[ctrl_y0:ctrl_y1, ctrl_x0:ctrl_x1] += (sub_n[..., None] - 0.5) * 5
-
-    # === Knob wells in control panel ===
-    knob_y = (ctrl_y0 + ctrl_y1) // 2
-    knob_cxs = [260, 340, 420, 520, 600, 680, 760]
-    knob_labels = ["GAIN", "BASS", "MID", "TREBLE", "PRES", "VOL", "MASTER"]
-    pil_k = Image.fromarray(clamp_u8(arr))
-    d = ImageDraw.Draw(pil_k)
+def _amp_knob_wells(d, knob_cxs, knob_labels, knob_y, label_col, well_fill, well_rim):
+    """Draw recessed knob wells + labels onto a PIL ImageDraw."""
     for kcx, klbl in zip(knob_cxs, knob_labels):
-        # recessed well
-        d.ellipse([kcx-22, knob_y-22, kcx+22, knob_y+22],
-                  fill=(140, 143, 152), outline=(100, 103, 112))
-        d.ellipse([kcx-20, knob_y-20, kcx+20, knob_y+20],
-                  fill=(155, 158, 167))
-        # label
+        d.ellipse([kcx-23, knob_y-23, kcx+23, knob_y+23], fill=well_rim)
+        d.ellipse([kcx-20, knob_y-20, kcx+20, knob_y+20], fill=well_fill)
         lx = kcx - len(klbl) * 3
-        d.text((lx, knob_y + 25), klbl, fill=(50, 52, 60))
+        d.text((lx, knob_y + 26), klbl, fill=label_col)
 
-    # === Logo area ===
-    d.text((220, ctrl_y0 + 6), "AetherAmp", fill=(30, 30, 40))
-    d.text((220, ctrl_y0 + 20), "  MODEL 50",  fill=(60, 62, 75))
+def _amp_power_leds(d, x0=762):
+    """Power + Standby indicator LEDs at the far right of the control section."""
+    d.ellipse([x0, 38, x0+18, 56], fill=(150, 10, 10), outline=(200, 40, 40))
+    d.text((x0-10, 60), "POWER", fill=(50, 52, 60))
+    d.ellipse([x0, 76, x0+18, 94], fill=(10, 90, 10), outline=(40, 170, 40))
+    d.text((x0-14, 98), "STANDBY", fill=(50, 52, 60))
 
-    # === Power section labels ===
-    d.ellipse([770, 38, 790, 58], fill=(140, 10, 10), outline=(180, 40, 40))   # power LED bezel
-    d.text((758, 62), "POWER", fill=(50, 52, 60))
-    d.ellipse([770, 80, 790, 100], fill=(10, 80, 10), outline=(40, 160, 40))   # standby
-    d.text((752, 104), "STANDBY", fill=(50, 52, 60))
+# ── Marshall JCM800 ────────────────────────────────────────────────────
 
-    # === VU meter graphic ===
-    vu_x0, vu_x1 = 215, 255
-    vu_y0, vu_y1 = ctrl_y0 + 4, ctrl_y1 - 4
-    d.rectangle([vu_x0, vu_y0, vu_x1, vu_y1], fill=(5, 8, 5), outline=(80, 100, 80))
-    # VU segments
-    seg_h = (vu_y1 - vu_y0 - 4) // 14
-    for i in range(14):
-        vy = vu_y1 - 2 - (i + 1) * seg_h
-        if i < 9:
-            col = (20, 160, 20)
-        elif i < 12:
-            col = (200, 180, 20)
-        else:
-            col = (200, 30, 30)
-        lit = i < 6  # show partial fill
-        fill_col = col if lit else tuple(c // 6 for c in col)
-        d.rectangle([vu_x0 + 2, vy, vu_x1 - 2, vy + seg_h - 1], fill=fill_col)
+def gen_amp_marshall():
+    W, H = 804, 200
+    arr = np.zeros((H, W, 3), dtype=np.float32)
+    arr = _amp_cabinet_and_chrome(arr, W, H)
+    arr = _amp_grill(arr, [8, 8, 9], grill_seed=33)        # very dark grill cloth
+
+    # Control panel: warm brushed chrome (Marshall signature look)
+    arr = _amp_ctrl_panel(arr, [215, 218, 224], [168, 171, 180])
+
+    knob_y   = 100
+    knob_cxs = [260, 345, 430, 515, 670]
+    labels   = ["PREAMP", "BASS", "MIDDLE", "TREBLE", "MASTER"]
+
+    pil = Image.fromarray(clamp_u8(arr))
+    d   = ImageDraw.Draw(pil)
+
+    # Gold "Marshall" logo
+    d.text((218, 32), "Marshall", fill=(210, 178, 55))
+    d.text((222, 50), "JCM 800", fill=(180, 150, 42))
+    # Channel label
+    d.text((218, 74), "CHANNEL I",  fill=(55, 57, 68))
+    d.text((218, 88), "HIGH GAIN",  fill=(55, 57, 68))
+
+    # Knob wells (dark chrome with gold-tinted labels)
+    _amp_knob_wells(d, knob_cxs, labels, knob_y,
+                    label_col=(42, 38, 22),
+                    well_fill=(130, 133, 142), well_rim=(95, 98, 108))
+
+    # Channel-selector toggle between knobs 0 and 1
+    toggle_x = (knob_cxs[0] + knob_cxs[1]) // 2
+    d.rounded_rectangle([toggle_x-8, knob_y-18, toggle_x+8, knob_y+18],
+                        radius=4, fill=(50, 52, 60), outline=(100, 103, 115), width=1)
+    d.ellipse([toggle_x-4, knob_y-14, toggle_x+4, knob_y-6], fill=(200, 200, 210))
+
+    _amp_power_leds(d)
 
     arr = np.array(d._image, dtype=np.float32)
-    save_bmp32(Image.fromarray(clamp_u8(arr)), "amp_head_bg.bmp")
+    save_bmp32(Image.fromarray(clamp_u8(arr)), "marshall_amp.bmp")
+
+# ── Fender Deluxe Reverb (Blackface) ──────────────────────────────────
+
+def gen_amp_fender():
+    W, H = 804, 200
+    arr = np.zeros((H, W, 3), dtype=np.float32)
+    arr = _amp_cabinet_and_chrome(arr, W, H)
+    # Fender grill cloth is a lighter weave (lighter gray, slight blue tint)
+    arr = _amp_grill(arr, [14, 14, 17], grill_seed=51)
+
+    # Blackface silver control panel (brighter, cooler tone)
+    arr = _amp_ctrl_panel(arr, [230, 233, 238], [185, 188, 198])
+
+    knob_y   = 100
+    knob_cxs = [260, 350, 440, 530, 650]
+    labels   = ["VOLUME", "TREBLE", "MIDDLE", "BASS", "MASTER"]
+
+    pil = Image.fromarray(clamp_u8(arr))
+    d   = ImageDraw.Draw(pil)
+
+    # Fender "block" logo (white/light on silver)
+    d.text((218, 30), "FENDER",        fill=(20, 22, 32))
+    d.text((218, 48), "DELUXE REVERB", fill=(40, 42, 55))
+    # Channel inputs label
+    d.text((218, 72), "NORMAL",  fill=(50, 52, 65))
+    d.text((218, 85), "BRIGHT",  fill=(50, 52, 65))
+
+    # Chicken-head style reference lines under/above the knob wells
+    for kx in knob_cxs:
+        for ang_deg in [-135, -90, -45, 0, 45, 90, 135]:
+            ang = math.radians(ang_deg)
+            ox = int(kx + math.cos(ang) * 23)
+            oy = int(knob_y + math.sin(ang) * 23)
+            ix = int(kx + math.cos(ang) * 18)
+            iy = int(knob_y + math.sin(ang) * 18)
+            d.line([ix, iy, ox, oy], fill=(160, 163, 172), width=1)
+
+    # Knob wells (chrome on silver, dark Fender-blue label text)
+    _amp_knob_wells(d, knob_cxs, labels, knob_y,
+                    label_col=(18, 22, 55),
+                    well_fill=(140, 143, 155), well_rim=(100, 103, 115))
+
+    # Input jacks (two small circles = NORMAL / BRIGHT channels)
+    for jy, lbl in [(62, "NORM"), (88, "BRITE")]:
+        d.ellipse([730, jy, 748, jy+16], fill=(20, 20, 25), outline=(110, 113, 125))
+        d.ellipse([733, jy+3, 745, jy+13], fill=(55, 57, 65))
+        d.text((752, jy+2), lbl, fill=(40, 42, 55))
+
+    _amp_power_leds(d, x0=762)
+
+    arr = np.array(d._image, dtype=np.float32)
+    save_bmp32(Image.fromarray(clamp_u8(arr)), "fender_amp.bmp")
+
+# ── Vox AC30 ──────────────────────────────────────────────────────────
+
+def gen_amp_vox():
+    W, H = 804, 200
+    arr = np.zeros((H, W, 3), dtype=np.float32)
+    arr = _amp_cabinet_and_chrome(arr, W, H)
+    # Vox grill cloth is a lighter warm gray/beige
+    arr = _amp_grill(arr, [20, 18, 16], grill_seed=77)
+
+    # Cream/ivory control panel — the AC30's signature look
+    ctrl_x0, ctrl_x1, ctrl_y0, ctrl_y1 = 210, 795, 30, 170
+    sub = np.zeros((ctrl_y1 - ctrl_y0, ctrl_x1 - ctrl_x0, 3), dtype=np.float32)
+    for y in range(ctrl_y1 - ctrl_y0):
+        t = y / (ctrl_y1 - ctrl_y0)
+        sub[y, :] = blend(np.array([232, 228, 210], dtype=np.float32),
+                          np.array([210, 205, 188], dtype=np.float32), t)
+    arr[ctrl_y0:ctrl_y1, ctrl_x0:ctrl_x1] = sub
+    arr[ctrl_y0:ctrl_y1, ctrl_x0:ctrl_x1] += \
+        (noise2d(ctrl_x1-ctrl_x0, ctrl_y1-ctrl_y0, scale=0.9, seed=91)[..., None] - 0.5) * 4
+
+    knob_y   = 100
+    knob_cxs = [270, 365, 460, 555, 655]
+    labels   = ["VOLUME", "TREBLE", "BASS", "CUT", "MASTER"]
+
+    pil = Image.fromarray(clamp_u8(arr))
+    d   = ImageDraw.Draw(pil)
+
+    # Vox diamond / AC30 logo (dark text on cream)
+    d.text((218, 30), "VOX",   fill=(15, 12, 10))
+    d.text((218, 48), "AC 30", fill=(30, 27, 22))
+    d.text((218, 68), "TOP BOOST", fill=(55, 52, 44))
+
+    # Decorative diamond motif around logo
+    cx_d, cy_d = 218 + 35, 44
+    for r in [14, 11]:
+        pts = [(cx_d, cy_d-r), (cx_d+r, cy_d), (cx_d, cy_d+r), (cx_d-r, cy_d)]
+        d.polygon(pts, outline=(80, 75, 60) if r == 14 else (130, 125, 105))
+
+    # Normal channel controls indicator
+    d.text((218, 90), "NORMAL CH",  fill=(60, 57, 48))
+    d.text((218, 103), "TOP BOOST", fill=(60, 57, 48))
+
+    # Knob wells (dark bronze-tinted wells on cream panel)
+    _amp_knob_wells(d, knob_cxs, labels, knob_y,
+                    label_col=(30, 25, 18),
+                    well_fill=(90, 82, 70), well_rim=(60, 55, 44))
+
+    # Vox cut-filter "CUT" label has an extra line to indicate it's a reverse-taper control
+    cut_x = knob_cxs[3]
+    d.line([cut_x - 28, knob_y + 24, cut_x + 28, knob_y + 24],
+           fill=(120, 115, 98), width=1)
+
+    # Power indicator (red Vox jewel)
+    d.ellipse([764, 38, 782, 56], fill=(160, 12, 12), outline=(210, 50, 50))
+    d.ellipse([768, 42, 778, 52], fill=(220, 40, 40))     # inner jewel
+    d.text((751, 60), "POWER",   fill=(35, 30, 22))
+    d.ellipse([764, 76, 782, 94], fill=(12, 100, 12), outline=(40, 180, 40))
+    d.text((745, 98), "STANDBY", fill=(35, 30, 22))
+
+    arr = np.array(d._image, dtype=np.float32)
+    save_bmp32(Image.fromarray(clamp_u8(arr)), "vox_amp.bmp")
 
 # ── KNOB BASE (64×64) — static part, indicator drawn in C ─────────────
 
@@ -567,9 +666,9 @@ def gen_knob_base():
         d.line([ix, iy, ox, oy], fill=col, width=1)
 
     arr = np.array(img, dtype=np.float32)
+    # Paint outside-circle pixels magenta so gfx_icon_blit skips them (GFX_ICON_TRANSPARENT)
+    arr[dist > R, :3] = [255, 0, 255]
     out = Image.fromarray(clamp_u8(arr), mode='RGBA')
-    # Save as 24bpp (no transparency in BMP easily) — we'll use the RGBA info via
-    # rendering the knob onto the panel background.
     out.convert('RGB').save(os.path.join(OUT, "knob_base.bmp"), format="BMP")
     print(f"  knob_base.bmp  ({SZ}×{SZ})")
 
@@ -584,7 +683,7 @@ def gen_knob_base():
 
 def gen_stomp(state_name, active):
     W, H = 100, 60
-    img = Image.new('RGB', (W, H), (25, 25, 30))
+    img = Image.new('RGB', (W, H), TRANSPARENT_COL)  # corners become transparent
     d = ImageDraw.Draw(img)
 
     # Raised collar
@@ -656,7 +755,7 @@ def gen_led(color_name, on_col, off_col):
         ("off", off_col, off_col),
     ]:
         W = H = 20
-        img = Image.new('RGB', (W, H), (15, 15, 20))
+        img = Image.new('RGB', (W, H), TRANSPARENT_COL)  # corners become transparent
         d = ImageDraw.Draw(img)
         # bezel
         d.ellipse([0, 0, W-1, H-1], fill=(20, 20, 25), outline=(80, 82, 90))
@@ -699,32 +798,35 @@ def gen_tuner_bg():
 if __name__ == "__main__":
     print("Generating AetherGuitar assets...")
 
-    print("\n[1/7] Pedalboard background")
+    print("\n[1/8] Pedalboard background")
     gen_pedalboard_bg()
 
-    print("\n[2/7] Effect pedals")
+    print("\n[2/8] Effect pedals")
     for color_name, base, hi, name, short in PEDAL_COLORS:
         gen_pedal(color_name, base, hi, name, short)
 
-    print("\n[3/7] Amp head face plate")
-    gen_amp_head()
+    print("\n[3/8] Amp head face plates (Marshall / Fender / Vox)")
+    gen_amp_marshall()
+    gen_amp_fender()
+    gen_amp_vox()
 
-    print("\n[4/7] Knob base")
+    print("\n[4/8] Knob base")
     gen_knob_base()
 
-    print("\n[5/7] Stomp switches")
+    print("\n[5/8] Stomp switches")
     gen_stomp("off", active=False)
     gen_stomp("on",  active=True)
 
-    print("\n[6/7] Cables")
+    print("\n[6/8] Cables")
     for cn, ch, cl in CABLE_COLORS:
         gen_cable(cn, ch, cl)
 
-    print("\n[7/7] LEDs")
+    print("\n[7/8] LEDs")
     gen_led("green", (40, 220, 40),   (12, 55, 12))
     gen_led("red",   (230, 40, 40),   (60, 12, 12))
     gen_led("amber", (230, 170, 10),  (70, 48, 5))
 
+    print("\n[8/8] Tuner background")
     gen_tuner_bg()
 
     print(f"\nDone — {len(os.listdir(OUT))} files in {OUT}/")

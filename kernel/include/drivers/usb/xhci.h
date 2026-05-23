@@ -254,7 +254,7 @@ typedef struct {
 
 #define XHCI_CMD_RING_SIZE   16u   /* command ring TRBs (last is Link) */
 #define XHCI_EVT_RING_SIZE   32u   /* event ring TRBs  */
-#define XHCI_XFER_RING_SIZE  16u   /* per-endpoint transfer ring TRBs */
+#define XHCI_XFER_RING_SIZE  32u   /* per-endpoint transfer ring TRBs */
 #define XHCI_MAX_SLOTS        8u   /* max device slots we enable */
 #define XHCI_MAX_PORTS        8u   /* max root hub ports to scan */
 
@@ -328,5 +328,13 @@ int  xhci_ctrl_xfer(u8 slot_id, const usb_setup_t *setup, void *data);
  */
 int  xhci_bulk_xfer(u8 slot_id, u8 ep_id, u8 dbi, void *buf,
                     u32 len, int dir_in);
+
+/*
+ * xhci_configure_bulk_out_ep — configure a single OUT endpoint on a slot.
+ * Used by UAC1 to activate the isochronous OUT endpoint (treated as bulk).
+ * ep_out_num: USB endpoint number (bits 3:0 of bEndpointAddress)
+ * ep_mps:     max packet size in bytes (0 → default 192 for FS audio)
+ */
+void xhci_configure_bulk_out_ep(u8 slot_id, u8 ep_out_num, u16 ep_mps);
 
 #endif /* AETHER_USB_XHCI_H */

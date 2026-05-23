@@ -231,6 +231,8 @@
 #define SYS_AUDIO_CLOSE          967
 #define SYS_AUDIO_CONFIGURE      968
 #define SYS_AUDIO_START          969
+#define SYS_AUDIO_READ           972   /* (handle, s16*buf, u32 frames) → frames read */
+#define SYS_AUDIO_WRITE          973   /* (handle, s16*buf, u32 frames) → frames written */
 #define SYS_MIDI_READ            970
 #define SYS_MIDI_WRITE           971
 

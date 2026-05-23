@@ -80,6 +80,7 @@ set(KERNEL_SOURCES
     drivers/audio/pwm_audio.c
     drivers/audio/i2s_bcm2712.c
     drivers/usb/audio/uac2.c
+    drivers/usb/audio/uac1.c
     drivers/usb/midi/usb_midi.c
 
     # Drivers — GPU / V3D (Phase 6.1)

@@ -6,6 +6,7 @@
 #define AEGUITAR_H
 
 #include <gfx.h>
+#include <gpu.h>
 #include <sys.h>
 #include <input.h>
 #include <string.h>

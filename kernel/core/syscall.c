@@ -519,6 +519,7 @@ static long do_sys_cursor_move(u64 xy)
 {
     u32 x = (u32)(xy >> 32);
     u32 y = (u32)(xy & 0xFFFFFFFFu);
+    dpms_activity();
     cursor_move(x, y);
     return 0;
 }
@@ -1486,6 +1487,74 @@ long syscall_dispatch(trap_frame_t *frame)
         audio_dev_t *dev = audio_dev_open("default");
         if (!dev) return -1;
         return audio_dev_start(dev);
+    }
+
+    case SYS_AUDIO_READ: {
+        /* arg1 = s16* buf (interleaved, channels × frames)
+         * arg2 = frame count to read
+         * For the PWM device: generate frames on demand then drain the ring.
+         * Returns frames actually delivered. */
+        short *buf    = (short *)(void *)arg1;
+        u32    frames = (u32)arg2;
+        if (!buf || !frames) return -1;
+
+        audio_dev_t *dev = audio_dev_open("default");
+        if (!dev) return -1;
+
+        /* Generate the requested frames (PWM path: 440 Hz test tone).
+         * For UAC2 the DMA already filled the ring; pwm_audio_fill is a no-op
+         * on UAC2 because it only touches the g_pwm_dev capture ring. */
+        extern void pwm_audio_fill(u32 n);
+        pwm_audio_fill(frames);
+
+        /* Drain from capture ring into userspace buffer */
+        audio_pcm_ring_t *cap = &dev->capture_ring;
+        u32 ch        = dev->channels ? dev->channels : 2u;
+        u32 available = (cap->write_idx - cap->read_idx + AUDIO_PCM_RING_FRAMES)
+                        % AUDIO_PCM_RING_FRAMES;
+        u32 to_read   = available < frames ? available : frames;
+
+        for (u32 f = 0; f < to_read; f++) {
+            for (u32 c = 0; c < ch; c++) {
+                u32 ri = (cap->read_idx * ch + c) % (AUDIO_PCM_RING_FRAMES * ch);
+                buf[f * ch + c] = cap->pcm[ri];
+            }
+            cap->read_idx = (cap->read_idx + 1) % AUDIO_PCM_RING_FRAMES;
+        }
+        return (long)to_read;
+    }
+
+    case SYS_AUDIO_WRITE: {
+        /* arg1 = const s16* buf (interleaved, channels × frames)
+         * arg2 = frame count to write
+         * Enqueues into the playback ring (drained by the backend driver). */
+        const short *buf    = (const short *)(const void *)arg1;
+        u32          frames = (u32)arg2;
+        if (!buf || !frames) return -1;
+
+        audio_dev_t *dev = audio_dev_open("default");
+        if (!dev) return -1;
+
+        audio_pcm_ring_t *play = &dev->playback_ring;
+        u32 ch    = dev->channels ? dev->channels : 2u;
+        u32 space = (AUDIO_PCM_RING_FRAMES - 1 -
+                     (play->write_idx - play->read_idx + AUDIO_PCM_RING_FRAMES)
+                      % AUDIO_PCM_RING_FRAMES);
+        u32 to_write = space < frames ? space : frames;
+
+        for (u32 f = 0; f < to_write; f++) {
+            for (u32 c = 0; c < ch; c++) {
+                u32 wi = (play->write_idx * ch + c) % (AUDIO_PCM_RING_FRAMES * ch);
+                play->pcm[wi] = buf[f * ch + c];
+            }
+            play->write_idx = (play->write_idx + 1) % AUDIO_PCM_RING_FRAMES;
+        }
+
+        /* Mirror output to the UAC1 USB device if present (QEMU virtual audio) */
+        extern void uac1_write_pcm(const s16 *b, u32 n, u8 c);
+        uac1_write_pcm(buf, to_write, (u8)ch);
+
+        return (long)to_write;
     }
 
     case SYS_MIDI_READ: {

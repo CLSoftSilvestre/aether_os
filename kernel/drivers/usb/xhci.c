@@ -61,13 +61,14 @@ static void xm_copy(void *dst, const void *src, u32 n)
 /*
  * DCBAA: Device Context Base Address Array.
  * Entry 0 = scratchpad pointer (we leave it 0).
- * Entry 1 = Output Device Context for slot 1 (our single device).
+ * Entry 1..2 = Output Device Contexts for slots 1 and 2.
  */
 static u64 g_dcbaa[XHCI_MAX_SLOTS + 1]
     __attribute__((aligned(64)));
 
-/* Output Device Context for slot 1 */
-static xhci_dev_ctx_t g_dev_ctx
+/* Output Device Contexts — one per slot (supports up to 2 devices) */
+#define XHCI_MAX_DEV_SLOTS 2
+static xhci_dev_ctx_t g_dev_ctx[XHCI_MAX_DEV_SLOTS]
     __attribute__((aligned(64)));
 
 /* Input Context used for Address Device and Configure Endpoint commands */
@@ -86,8 +87,8 @@ static xhci_trb_t g_evt_ring[XHCI_EVT_RING_SIZE]
 static xhci_erst_entry_t g_erst[1]
     __attribute__((aligned(64)));
 
-/* Transfer Ring for EP0 (control) */
-static xhci_trb_t g_ep0_ring[XHCI_XFER_RING_SIZE]
+/* Transfer Rings for EP0 — one per slot (indexed 0=slot1, 1=slot2) */
+static xhci_trb_t g_ep0_ring[XHCI_MAX_DEV_SLOTS][XHCI_XFER_RING_SIZE]
     __attribute__((aligned(64)));
 
 /* Transfer Rings for bulk endpoints */
@@ -119,9 +120,9 @@ static u8  g_cmd_pcs;    /* producer cycle state (starts 1) */
 static u32 g_evt_deq;    /* dequeue index into g_evt_ring[] */
 static u8  g_evt_ccs;    /* consumer cycle state (starts 1) */
 
-/* EP0 transfer ring producer state */
-static u32 g_ep0_enq;
-static u8  g_ep0_pcs;
+/* EP0 transfer ring producer state — per slot (0=slot1, 1=slot2) */
+static u32 g_ep0_enq[XHCI_MAX_DEV_SLOTS];
+static u8  g_ep0_pcs[XHCI_MAX_DEV_SLOTS];
 
 /* Bulk endpoint transfer ring producer states */
 static u32 g_ep_out_enq;
@@ -259,10 +260,11 @@ static void trb_enqueue(xhci_trb_t *ring, u32 *enq_ptr, u8 *pcs_ptr,
     enq++;
     if (enq >= size - 1u) {
         /* Reached Link TRB — ring it (cycle bit already in place at init) */
-        /* Toggle cycle bit of Link TRB to match new PCS */
+        /* Link TRB cycle must match current PCS so hardware can follow it,
+         * then hardware toggles its own cycle when it sees TC=1. */
         xhci_trb_t *link = &ring[size - 1u];
         u32 lctl = link->dw[3];
-        lctl = (lctl & ~1u) | ((u32)pcs ^ 1u);   /* link stays ahead */
+        lctl = (lctl & ~1u) | (u32)pcs;
         link->dw[3] = lctl;
         DSB();
         enq = 0;
@@ -332,11 +334,15 @@ static usb_setup_t make_set_cfg(u8 cfg)
  * Issue one control transfer (SETUP + optional DATA + STATUS) on EP0
  * of slot slot_id.
  *
- * Uses the static EP0 transfer ring (g_ep0_ring).
+ * Uses the per-slot EP0 transfer ring (g_ep0_ring[slot_id-1]).
  * Returns 0 on success, -1 on error.
  */
 int xhci_ctrl_xfer(u8 slot_id, const usb_setup_t *setup, void *data)
 {
+    /* Route to the per-slot EP0 ring so concurrent scans don't cross-contaminate */
+    u8 si = (slot_id > 0u && slot_id <= XHCI_MAX_DEV_SLOTS) ? slot_id - 1u : 0u;
+    xhci_trb_t *ring = g_ep0_ring[si];
+
     int data_in  = (setup->bmRequestType & 0x80u) ? 1 : 0;
     u16 data_len = setup->wLength;
 
@@ -346,7 +352,7 @@ int xhci_ctrl_xfer(u8 slot_id, const usb_setup_t *setup, void *data)
     /* ── SETUP Stage TRB ── */
     u32 trt = data_len ? (data_in ? TRB_SETUP_TRT_IN : TRB_SETUP_TRT_OUT)
                        : TRB_SETUP_TRT_NONE;
-    trb_enqueue(g_ep0_ring, &g_ep0_enq, &g_ep0_pcs, XHCI_XFER_RING_SIZE,
+    trb_enqueue(ring, &g_ep0_enq[si], &g_ep0_pcs[si], XHCI_XFER_RING_SIZE,
         /* dw0 */ *(u32 *)&g_ctrl_buf[0],
         /* dw1 */ *(u32 *)&g_ctrl_buf[4],
         /* dw2 */ 8u,                               /* always 8-byte SETUP */
@@ -358,7 +364,7 @@ int xhci_ctrl_xfer(u8 slot_id, const usb_setup_t *setup, void *data)
         if (!data_in && data)
             xm_copy(buf, data, data_len);
 
-        trb_enqueue(g_ep0_ring, &g_ep0_enq, &g_ep0_pcs, XHCI_XFER_RING_SIZE,
+        trb_enqueue(ring, &g_ep0_enq[si], &g_ep0_pcs[si], XHCI_XFER_RING_SIZE,
             PHYS(buf), 0,
             data_len,
             TRB_CTRL_TYPE(TRB_DATA_STAGE) | TRB_CTRL_CHAIN
@@ -368,7 +374,7 @@ int xhci_ctrl_xfer(u8 slot_id, const usb_setup_t *setup, void *data)
     /* ── STATUS Stage TRB ── */
     u32 status_dir = data_len ? (data_in ? 0u : TRB_DATA_DIR_IN)
                                : TRB_DATA_DIR_IN;
-    trb_enqueue(g_ep0_ring, &g_ep0_enq, &g_ep0_pcs, XHCI_XFER_RING_SIZE,
+    trb_enqueue(ring, &g_ep0_enq[si], &g_ep0_pcs[si], XHCI_XFER_RING_SIZE,
         0, 0, 0,
         TRB_CTRL_TYPE(TRB_STATUS_STAGE) | TRB_CTRL_IOC | status_dir);
 
@@ -431,8 +437,12 @@ int xhci_bulk_xfer(u8 slot_id, u8 ep_id, u8 dbi, void *buf,
  * setup_ep0_context — populate g_input_ctx for a control-only device
  * (Address Device BSR=1 or BSR=0).
  */
-static void setup_ep0_context(u8 port1, usb_speed_t speed, u16 ep0_mps)
+static void setup_ep0_context(u8 slot_id, u8 port1, usb_speed_t speed, u16 ep0_mps)
 {
+    u8 si = (slot_id > 0u && slot_id <= XHCI_MAX_DEV_SLOTS)
+            ? slot_id - 1u : 0u;
+    xhci_trb_t *ring = g_ep0_ring[si];
+
     xm_zero(&g_input_ctx, sizeof(g_input_ctx));
 
     /* Add Slot (A0) and EP0 (A1) contexts */
@@ -444,20 +454,20 @@ static void setup_ep0_context(u8 port1, usb_speed_t speed, u16 ep0_mps)
     g_input_ctx.slot.dw[1] = SLOT_CTX_PORT(port1);
 
     /* EP0 Context: control endpoint, CErr=3, MPS from device */
-    g_ep0_enq = 0;
-    g_ep0_pcs = 1;
-    /* Link TRB at end of EP0 ring */
-    g_ep0_ring[XHCI_XFER_RING_SIZE - 1u].dw[0] = PHYS(g_ep0_ring);
-    g_ep0_ring[XHCI_XFER_RING_SIZE - 1u].dw[1] = 0;
-    g_ep0_ring[XHCI_XFER_RING_SIZE - 1u].dw[2] = 0;
-    g_ep0_ring[XHCI_XFER_RING_SIZE - 1u].dw[3] =
-        TRB_CTRL_TYPE(TRB_LINK) | TRB_LINK_TC | g_ep0_pcs;
+    g_ep0_enq[si] = 0;
+    g_ep0_pcs[si] = 1;
+    /* Link TRB at end of this slot's EP0 ring */
+    ring[XHCI_XFER_RING_SIZE - 1u].dw[0] = PHYS(ring);
+    ring[XHCI_XFER_RING_SIZE - 1u].dw[1] = 0;
+    ring[XHCI_XFER_RING_SIZE - 1u].dw[2] = 0;
+    ring[XHCI_XFER_RING_SIZE - 1u].dw[3] =
+        TRB_CTRL_TYPE(TRB_LINK) | TRB_LINK_TC | g_ep0_pcs[si];
 
     xhci_ep_ctx_t *ep0 = &g_input_ctx.ep[0];
     ep0->dw[1] = EP_CTX_EP_TYPE(EP_TYPE_CTRL)
                | EP_CTX_CERR(3)
                | EP_CTX_MAX_PKT(ep0_mps);
-    ep0->dw[2] = PHYS(g_ep0_ring) | EP_CTX_DCS;
+    ep0->dw[2] = PHYS(ring) | EP_CTX_DCS;
     ep0->dw[3] = 0;
     ep0->dw[4] = 8u;   /* Average TRB length = 8 for control */
 }
@@ -526,6 +536,50 @@ void xhci_configure_bulk_eps(u8 slot_id, u8 ep_out_num, u8 ep_in_num,
         kinfo("xHCI: bulk EPs configured (out_num=%u in_num=%u mps=%u)\n",
               (unsigned)ep_out_num, (unsigned)ep_in_num, (unsigned)ep_mps);
     (void)ep_out_num; (void)ep_in_num;
+}
+
+/*
+ * xhci_configure_bulk_out_ep — configure a single OUT endpoint on a slot.
+ * Used by the UAC1 audio driver to activate the isochronous OUT endpoint
+ * (treated as bulk by our xHCI shim) after SET_INTERFACE alt=1.
+ */
+void xhci_configure_bulk_out_ep(u8 slot_id, u8 ep_out_num, u16 ep_mps)
+{
+    u8 dbi_out = 2u * ep_out_num;   /* OUT DBI = ep_num * 2 (even = OUT) */
+
+    g_input_ctx.ctrl_dw[0] = 0;
+    g_input_ctx.ctrl_dw[1] = ICTX_A0 | ICTX_ADD(dbi_out); /* no A1: don't overwrite EP0 with stale context */
+
+    g_input_ctx.slot.dw[0] = (g_input_ctx.slot.dw[0] & ~(0x1Fu << 27))
+                            | SLOT_CTX_ENTRIES(dbi_out);
+
+    /* Init / reset the shared bulk OUT ring for this new owner */
+    g_ep_out_enq = 0;
+    g_ep_out_pcs = 1;
+    g_ep_out_ring[XHCI_XFER_RING_SIZE - 1u].dw[0] = PHYS(g_ep_out_ring);
+    g_ep_out_ring[XHCI_XFER_RING_SIZE - 1u].dw[1] = 0;
+    g_ep_out_ring[XHCI_XFER_RING_SIZE - 1u].dw[2] = 0;
+    g_ep_out_ring[XHCI_XFER_RING_SIZE - 1u].dw[3] =
+        TRB_CTRL_TYPE(TRB_LINK) | TRB_LINK_TC | g_ep_out_pcs;
+
+    xhci_ep_ctx_t *ep_out = &g_input_ctx.ep[dbi_out - 1u];
+    xm_zero(ep_out, sizeof(*ep_out));
+    ep_out->dw[1] = EP_CTX_EP_TYPE(EP_TYPE_BULK_OUT)
+                  | EP_CTX_CERR(3)
+                  | EP_CTX_MAX_PKT(ep_mps ? ep_mps : 192u);
+    ep_out->dw[2] = PHYS(g_ep_out_ring) | EP_CTX_DCS;
+    ep_out->dw[4] = ep_mps ? (u32)ep_mps : 192u;
+
+    xhci_trb_t ev = cmd_issue(
+        PHYS(&g_input_ctx), 0, 0,
+        TRB_CTRL_TYPE(TRB_CONFIG_EP) | TRB_CTRL_SLOT(slot_id));
+    u32 cc = TRB_CC(ev.dw[2]);
+    if (cc != TRB_CC_SUCCESS)
+        kwarn("xHCI: Configure OUT EP CC=%u slot=%u\n",
+              (unsigned)cc, (unsigned)slot_id);
+    else
+        kinfo("xHCI: OUT endpoint configured ep=%u mps=%u slot=%u\n",
+              (unsigned)ep_out_num, (unsigned)ep_mps, (unsigned)slot_id);
 }
 
 /* ── Config descriptor parser ────────────────────────────────────────────── */
@@ -628,12 +682,14 @@ static int enumerate_port(u8 port0)
     u8 slot_id = (u8)TRB_EV_SLOT(ev.dw[3]);
     kinfo("xHCI: slot %u assigned\n", (unsigned)slot_id);
 
-    /* Point DCBAA[slot_id] at output device context */
-    g_dcbaa[slot_id] = (u64)(u32)(uintptr_t)&g_dev_ctx;
+    /* Point DCBAA[slot_id] at this slot's output device context */
+    u8 ctx_idx = (slot_id > 0u && slot_id <= XHCI_MAX_DEV_SLOTS)
+                 ? slot_id - 1u : 0u;
+    g_dcbaa[slot_id] = (u64)(u32)(uintptr_t)&g_dev_ctx[ctx_idx];
     DSB();
 
     /* ── Address Device (BSR=1: init slot+EP0 without assigning USB addr) ── */
-    setup_ep0_context((u8)(port0 + 1u), speed, 8u);   /* assume MPS=8 initially */
+    setup_ep0_context(slot_id, (u8)(port0 + 1u), speed, 8u);   /* assume MPS=8 initially */
     ev = cmd_issue(
         PHYS(&g_input_ctx), 0, 0,
         TRB_CTRL_TYPE(TRB_ADDRESS_DEVICE) | TRB_ADDR_BSR | TRB_CTRL_SLOT(slot_id));
@@ -664,7 +720,7 @@ static int enumerate_port(u8 port0)
         g_input_ctx.ep[0].dw[1] = EP_CTX_EP_TYPE(EP_TYPE_CTRL)
                                  | EP_CTX_CERR(3)
                                  | EP_CTX_MAX_PKT(ep0_mps);
-        g_input_ctx.ep[0].dw[2] = PHYS(g_ep0_ring) | EP_CTX_DCS;
+        g_input_ctx.ep[0].dw[2] = PHYS(g_ep0_ring[ctx_idx]) | EP_CTX_DCS;
         g_input_ctx.ep[0].dw[4] = 8u;
         ev = cmd_issue(
             PHYS(&g_input_ctx), 0, 0,
@@ -674,7 +730,7 @@ static int enumerate_port(u8 port0)
     }
 
     /* ── Address Device (BSR=0: actually assign USB address) ── */
-    setup_ep0_context((u8)(port0 + 1u), speed, ep0_mps);
+    setup_ep0_context(slot_id, (u8)(port0 + 1u), speed, ep0_mps);
     ev = cmd_issue(
         PHYS(&g_input_ctx), 0, 0,
         TRB_CTRL_TYPE(TRB_ADDRESS_DEVICE) | TRB_CTRL_SLOT(slot_id));
@@ -683,7 +739,7 @@ static int enumerate_port(u8 port0)
               (unsigned)TRB_CC(ev.dw[2]));
         return -1;
     }
-    u8 usb_addr = (u8)(g_dev_ctx.slot.dw[3] & 0xFFu);
+    u8 usb_addr = (u8)(g_dev_ctx[ctx_idx].slot.dw[3] & 0xFFu);
     kinfo("xHCI: USB address = %u\n", (unsigned)usb_addr);
 
     /* ── GET_DESCRIPTOR(Config, 9) ── */
@@ -706,6 +762,15 @@ static int enumerate_port(u8 port0)
     cfg_info_t cfg;
     parse_config(g_ctrl_buf + 8, total_len, &cfg);
     if (!cfg.found) {
+        /* No bulk EPs in default alt-setting (e.g. USB Audio class 1 with
+         * isochronous endpoints in alt=1 only).  Issue SET_CONFIGURATION so
+         * the device enters Configured state before class drivers send
+         * SET_INTERFACE requests later.  cfg_value is at byte 5 of the
+         * configuration descriptor. */
+        u8 cfg_val = (g_ctrl_buf + 8)[5];
+        if (!cfg_val) cfg_val = 1u;
+        s = make_set_cfg(cfg_val);
+        xhci_ctrl_xfer(slot_id, &s, NULL);   /* non-fatal if it fails */
         kinfo("xHCI: device has no bulk endpoints — not mass storage\n");
         return 0;  /* device enumerated but no MSC */
     }
@@ -865,8 +930,9 @@ void xhci_init(void)
     kinfo("xHCI: controller running (USBSTS=0x%x)\n",
           (unsigned)op_rd(XHCI_OP_USBSTS));
 
-    /* 11. Scan ports */
+    /* 11. Scan all ports — enumerate every connected device (up to XHCI_MAX_DEV_SLOTS) */
     u8 n = g_max_ports < XHCI_MAX_PORTS ? g_max_ports : XHCI_MAX_PORTS;
+    u8 slots_used = 0;
     for (u8 i = 0; i < n; i++) {
         u32 ps = port_rd(i);
         if (!(ps & XHCI_PORT_CCS)) continue;
@@ -874,11 +940,13 @@ void xhci_init(void)
               (unsigned)i, (unsigned)ps);
         if (enumerate_port(i) == 0) {
             g_ready = 1;
-            return;   /* one device is enough */
+            if (++slots_used >= XHCI_MAX_DEV_SLOTS)
+                break;   /* device context array full */
         }
     }
 
-    kinfo("xHCI: no device enumerated\n");
+    if (!g_ready)
+        kinfo("xHCI: no device enumerated\n");
 }
 
 int xhci_ready(void) { return g_ready; }

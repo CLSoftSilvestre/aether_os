@@ -28,8 +28,20 @@ extern void awgt_line(int x0, int y0, int x1, int y1, unsigned color);
 #define AMP_KNOB_R    22   /* well radius in image */
 #define AMP_KNOB_Y   140   /* 100 * AMP_BLIT_H / AMP_IMG_H — knob Y in rendered space */
 
-/* Interactive knob image-X positions (5 of the 7 wells) */
-static const int AMP_KNOB_IX[5] = { 260, 340, 420, 520, 760 };
+/* Per-tonestack amp image paths (indices match ts_names: 0=FENDER,1=MARSHALL,2=VOX) */
+static const char *g_amp_bmp_paths[3] = {
+    "/initrd/aeguitar/fender_amp.bmp",
+    "/initrd/aeguitar/marshall_amp.bmp",
+    "/initrd/aeguitar/vox_amp.bmp",
+};
+
+/* Per-tonestack knob X positions (image-relative, 5 interactive knobs each).
+ * These match the well positions baked into the corresponding BMP. */
+static const int AMP_KNOB_IX[3][5] = {
+    { 260, 350, 440, 530, 650 },  /* FENDER   : VOL  TREBLE MID   BASS   MASTER */
+    { 260, 345, 430, 515, 670 },  /* MARSHALL : PRE  BASS   MID   TREBLE MASTER */
+    { 270, 365, 460, 555, 655 },  /* VOX      : VOL  TREBLE BASS  CUT    MASTER */
+};
 
 #define KNOB_START_DEG  135.0f
 #define KNOB_SWEEP_DEG  270.0f
@@ -46,6 +58,7 @@ static unsigned g_px_knob[KNOB_PX];
 static unsigned g_amp_w, g_amp_h;
 static unsigned g_knob_w, g_knob_h;
 static int      g_imgs_ok;
+static int      g_amp_loaded_ts = -1;  /* which tonestack's image is loaded */
 
 /* 5 interactive knob values (normalized 0..1) */
 static float g_knob_val[5] = { 0.5f, 0.5f, 0.5f, 0.5f, 0.7f };
@@ -66,10 +79,12 @@ static float g_drag_val0 = 0.0f;
 
 void view_amp_init(void)
 {
-    int ok = gfx_bmp_load_icon("/initrd/aeguitar/amp_head_bg.bmp",
+    /* Load the initial amp image (tonestack 0 = Fender) */
+    int ok = gfx_bmp_load_icon(g_amp_bmp_paths[0],
                                 g_px_amp, AMP_PX,
                                 &g_amp_w, &g_amp_h);
-    g_imgs_ok = (ok == 0);
+    g_imgs_ok     = (ok == 0);
+    g_amp_loaded_ts = 0;
 
     gfx_bmp_load_icon("/initrd/aeguitar/knob_base.bmp",
                       g_px_knob, KNOB_PX,
@@ -112,6 +127,15 @@ void view_amp_draw(int cx, int cy)
 
     int bx = cont_x(), by = cont_y();
 
+    /* Lazy-reload amp image when tonestack changes */
+    if (g_tonestack != g_amp_loaded_ts) {
+        int ok = gfx_bmp_load_icon(g_amp_bmp_paths[g_tonestack],
+                                    g_px_amp, AMP_PX,
+                                    &g_amp_w, &g_amp_h);
+        g_imgs_ok      = (ok == 0);
+        g_amp_loaded_ts = g_tonestack;
+    }
+
     /* ── Amp head image (top portion of view) ── */
     if (g_imgs_ok && g_amp_w > 0) {
         gfx_icon_blit(g_px_amp, g_amp_w, g_amp_h,
@@ -120,12 +144,12 @@ void view_amp_draw(int cx, int cy)
         gfx_fill((unsigned)bx, (unsigned)by,
                  (unsigned)CONT_W, (unsigned)AMP_IMG_H, GFX_RGB(12, 12, 16));
         gfx_text_transparent((unsigned)(bx + 8), (unsigned)(by + 8),
-                             "AetherAmp MODEL 50", GFX_RGB(160, 160, 180));
+                             ts_names[g_tonestack], GFX_RGB(160, 160, 180));
     }
 
     /* ── Overlay interactive knobs on the amp face ── */
     for (int k = 0; k < 5; k++) {
-        int scx = bx + AMP_KNOB_IX[k];
+        int scx = bx + AMP_KNOB_IX[g_tonestack][k];
         int scy = by + AMP_KNOB_Y;
         draw_amp_knob(scx, scy, g_knob_val[k]);
 
@@ -215,7 +239,7 @@ void view_amp_mouse(int mx, int my, unsigned btn, unsigned prev_btn)
 
     /* Knob hit-test (amp face area) */
     for (int k = 0; k < 5; k++) {
-        int scx = bx + AMP_KNOB_IX[k];
+        int scx = bx + AMP_KNOB_IX[g_tonestack][k];
         int scy = by + AMP_KNOB_Y;
         int dx = mx - scx, dy = my - scy;
         if (dx * dx + dy * dy <= AMP_KNOB_R * AMP_KNOB_R) {

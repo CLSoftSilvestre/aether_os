@@ -104,11 +104,8 @@ int audio_dev_set_callback(audio_dev_t *dev, audio_callback_t cb,
 int audio_dev_start(audio_dev_t *dev)
 {
     if (!dev || !dev->ops || !dev->ops->start) return -1;
-    if (!dev->callback) {
-        kwarn("audio: start called with no callback on '%s'\n",
-              dev->info.name);
-        return -1;
-    }
+    /* No kernel callback is fine in the userspace-polling model: the app
+     * calls sys_audio_read/write each period instead of receiving a push. */
     return dev->ops->start(dev);
 }
 
@@ -130,7 +127,9 @@ int audio_dev_enumerate(audio_dev_info_t *out, int max)
 
 /* Forward declarations from backend drivers */
 void uac2_init(void);
+void uac1_init(void);
 void pwm_audio_init(void);
+void pwm_audio_fill(u32 frames);   /* direct fill for SYS_AUDIO_READ */
 void i2s_bcm2712_init(void);
 
 void audio_core_init(void)
@@ -140,6 +139,7 @@ void audio_core_init(void)
 
     /* Register backends in priority order */
     uac2_init();         /* Phase 8.1: USB UAC2 (may register 0 or 1 device) */
+    uac1_init();         /* Phase 8.3: USB UAC1 output tap (QEMU virtual audio) */
     i2s_bcm2712_init();  /* Phase 8.2: I2S onboard (Pi 5 only)               */
     pwm_audio_init();    /* Phase 8.2: PWM fallback (always available)        */
 
