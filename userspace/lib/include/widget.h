@@ -138,7 +138,8 @@ typedef int  (*widget_event_fn)(widget_t *w, const widget_event_t *ev);
 /* ── Type-specific data structs ─────────────────────────────────────────── */
 
 typedef struct {
-    char  text[128];
+    char          text[128];
+    unsigned char icon_id;  /* 0 = text mode; ICON_BTN_* = icon mode */
     void (*on_click)(widget_t *w);
 } wdata_button_t;
 
@@ -265,6 +266,11 @@ void widget_init_panel(widget_t *w, int x, int y, int width, int height,
 void widget_init_button(widget_t *w, int x, int y, int width, int height,
                         const char *text,
                         void (*on_click)(widget_t *w));
+
+/* Icon-only button — icon_id is one of the ICON_BTN_* constants from gfx.h */
+void widget_init_icon_button(widget_t *w, int x, int y, int width, int height,
+                             unsigned char icon_id,
+                             void (*on_click)(widget_t *w));
 
 void widget_init_label(widget_t *w, int x, int y, int width, int height,
                        const char *text, int align);
@@ -435,5 +441,36 @@ void treeview_set_callbacks(widget_t *w,
 
 /* Rebuild visible[] from the current expand/collapse state */
 void treeview_rebuild_visible(widget_t *w);
+
+/* ── File Dialog (filedlg.c) ───────────────────────────────────────────── */
+
+/*
+ * Maximum path length returned by filedlg_open / filedlg_save.
+ * Callers must supply a buffer of at least this size.
+ */
+#define FILEDLG_PATH_MAX  128
+
+/*
+ * filedlg_open — show a modal "Open File" dialog.
+ *   start_dir : initial directory (e.g. "/" or "/scripts"); NULL → "/"
+ *   filter    : extension filter string (e.g. "*.txt", "*.*"); NULL → all files
+ *   out_path  : caller-supplied buffer (FILEDLG_PATH_MAX bytes) for the result
+ *
+ * Returns 1 if the user confirmed a selection (out_path filled in),
+ *         0 if the user cancelled.
+ */
+int filedlg_open(const char *start_dir, const char *filter, char *out_path);
+
+/*
+ * filedlg_save — show a modal "Save File" dialog.
+ *   start_dir : initial directory; NULL → "/"
+ *   filter    : extension filter; NULL → all files
+ *   init_name : pre-filled filename (may be NULL)
+ *   out_path  : caller-supplied buffer (FILEDLG_PATH_MAX bytes) for the result
+ *
+ * Returns 1 if the user confirmed, 0 if cancelled.
+ */
+int filedlg_save(const char *start_dir, const char *filter,
+                 const char *init_name, char *out_path);
 
 #endif /* AETHER_WIDGET_H */

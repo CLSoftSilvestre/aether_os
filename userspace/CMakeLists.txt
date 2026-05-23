@@ -26,6 +26,7 @@ add_library(libaether STATIC
     lib/libaether/stdlib.c
     lib/libaether/math.c
     lib/libaether/gfx.c
+    lib/libaether/gfx_toolbar_icons.c
     lib/libaether/gpu.c
     lib/libaether/manifest.c
     lib/libaether/vfs_mounts.c
@@ -73,6 +74,7 @@ add_library(libwidget STATIC
     lib/libwidget/treeview.c
     lib/libwidget/progress.c
     lib/libwidget/anim.c
+    lib/libwidget/filedlg.c
 )
 
 target_include_directories(libwidget PUBLIC

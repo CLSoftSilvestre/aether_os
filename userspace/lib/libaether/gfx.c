@@ -247,6 +247,7 @@ void gfx_end_frame(void)
 
 void gfx_set_damage_target(int win_id) { g_bo_win_id = win_id; }
 void gfx_clear_damage_target(void)     { g_bo_win_id = -1; }
+int  gfx_current_damage_win(void)      { return g_bo_win_id; }
 
 /* ── Render-target fill helper (inline for speed) ───────────────────────── */
 static void rt_fill(int rx0, int ry0, int rx1, int ry1, unsigned c32)

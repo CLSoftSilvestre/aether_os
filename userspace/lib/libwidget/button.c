@@ -42,10 +42,17 @@ static void button_draw(widget_t *w, int ax, int ay)
                      (unsigned)w->bounds.w, (unsigned)w->bounds.h,
                      GFX_WIDGET_R, GFX_RGB(160, 145, 230));
 
-    /* Centred label — uses the fill bg so char backgrounds match */
-    gfx_text_center((unsigned)ax, (unsigned)w->bounds.w,
-                    (unsigned)(ay + (w->bounds.h - WGT_FONT_H) / 2),
-                    w->data.button.text, C_BTN_TEXT, bg);
+    if (w->data.button.icon_id != ICON_BTN_NONE) {
+        /* Icon mode — draw 14×14 icon centred in the button */
+        int cx = ax + ((int)w->bounds.w - 14) / 2;
+        int cy = ay + ((int)w->bounds.h - 14) / 2;
+        gfx_toolbar_icon(cx, cy, w->data.button.icon_id);
+    } else {
+        /* Text mode — centred label using fill bg so char backgrounds match */
+        gfx_text_center((unsigned)ax, (unsigned)w->bounds.w,
+                        (unsigned)(ay + (w->bounds.h - WGT_FONT_H) / 2),
+                        w->data.button.text, C_BTN_TEXT, bg);
+    }
 }
 
 static int button_event(widget_t *w, const widget_event_t *ev)
@@ -97,6 +104,21 @@ void widget_init_button(widget_t *w, int x, int y, int width, int height,
         w->data.button.text[i] = text[i];
         i++;
     }
-    w->data.button.text[i]   = '\0';
-    w->data.button.on_click  = on_click;
+    w->data.button.text[i]  = '\0';
+    w->data.button.icon_id  = ICON_BTN_NONE;
+    w->data.button.on_click = on_click;
+}
+
+void widget_init_icon_button(widget_t *w, int x, int y, int width, int height,
+                             unsigned char icon_id,
+                             void (*on_click)(widget_t *w))
+{
+    widget_init(w, WIDGET_BUTTON, x, y, width, height);
+    w->draw_fn   = button_draw;
+    w->event_fn  = button_event;
+    w->focusable = 1;
+
+    w->data.button.text[0]  = '\0';
+    w->data.button.icon_id  = icon_id;
+    w->data.button.on_click = on_click;
 }

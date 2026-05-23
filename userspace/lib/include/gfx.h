@@ -64,6 +64,7 @@ void gfx_end_frame(void);
  */
 void gfx_set_damage_target(int win_id);
 void gfx_clear_damage_target(void);
+int  gfx_current_damage_win(void);   /* returns current damage win_id, -1 if none */
 
 /* ── Drawing primitives ─────────────────────────────────────────────── */
 void gfx_fill(unsigned x, unsigned y, unsigned w, unsigned h, unsigned color);
@@ -188,6 +189,30 @@ void gfx_icon_file_txt(int x, int y, int sz);
 void gfx_icon_file_as(int x, int y, int sz);
 void gfx_icon_file_exec(int x, int y, int sz);
 void gfx_icon_file_generic(int x, int y, int sz);
+
+/* ── Toolbar icon IDs (ICON_BTN_*) ─────────────────────────────────────── */
+/*
+ * Used with widget_init_icon_button() and gfx_toolbar_icon().
+ * 0 is reserved as "no icon" (text mode for plain buttons).
+ */
+#define ICON_BTN_NONE    0   /* text mode — do not pass to gfx_toolbar_icon */
+#define ICON_BTN_NEW     1   /* blank document with dog-ear */
+#define ICON_BTN_OPEN    2   /* open folder */
+#define ICON_BTN_SAVE    3   /* floppy disk */
+#define ICON_BTN_RUN     4   /* right-pointing play triangle */
+#define ICON_BTN_STOP    5   /* filled square (stop/halt) */
+#define ICON_BTN_CLEAR   6   /* trash can */
+#define ICON_BTN_UNDO    7   /* counter-clockwise arc arrow */
+#define ICON_BTN_REDO    8   /* clockwise arc arrow */
+#define ICON_BTN_CUT     9   /* scissors */
+#define ICON_BTN_COPY   10   /* two overlapping pages */
+#define ICON_BTN_PASTE  11   /* clipboard */
+
+/*
+ * Draw a 14×14 toolbar icon centred at pixel (x, y) = top-left of the 14×14 cell.
+ * icon_id must be one of the ICON_BTN_* constants above (not ICON_BTN_NONE).
+ */
+void gfx_toolbar_icon(int x, int y, unsigned char icon_id);
 
 /* ── BMP wallpaper support ──────────────────────────────────────────────── */
 
