@@ -1204,4 +1204,34 @@ static inline long sys_midi_write(const midi_event_t *buf, int count)
     return _sys2(SYS_MIDI_WRITE, (long)(const void *)buf, (long)count);
 }
 
+/* ── Audio configuration (System Preferences Sound pane) ─────────── */
+
+#define SYS_AUDIO_CONF_GET  974
+#define SYS_AUDIO_CONF_SET  975
+
+#define AUDIO_CONF_NAME_MAX 32
+
+typedef struct {
+    char           output_dev[AUDIO_CONF_NAME_MAX]; /* "" = default priority */
+    char           input_dev[AUDIO_CONF_NAME_MAX];
+    unsigned int   sample_rate;     /* 44100 / 48000 / 96000 Hz */
+    unsigned short period_frames;   /* 64 / 128 / 256 / 512 */
+    unsigned char  output_mute;     /* 0 = on, 1 = muted */
+    unsigned char  output_volume;   /* 0-100 */
+    signed char    output_balance;  /* -100 (L) .. 0 (center) .. +100 (R) */
+    unsigned char  input_gain;      /* 0-100 */
+    unsigned char  alert_volume;    /* 0-100 */
+    unsigned char  bit_depth;       /* 16 / 24 / 32 */
+} audio_conf_t;
+
+static inline long sys_audio_conf_get(audio_conf_t *out)
+{
+    return _sys1(SYS_AUDIO_CONF_GET, (long)(void *)out);
+}
+
+static inline long sys_audio_conf_set(const audio_conf_t *cfg)
+{
+    return _sys1(SYS_AUDIO_CONF_SET, (long)(const void *)cfg);
+}
+
 #endif /* AETHER_USERSPACE_SYS_H */

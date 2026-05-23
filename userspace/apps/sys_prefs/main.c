@@ -73,9 +73,10 @@
 #define PANE_DISPLAY  0
 #define PANE_NETWORK  1
 #define PANE_USERS    2
-#define PANE_COUNT    3
+#define PANE_SOUND    3
+#define PANE_COUNT    4
 
-static const char *k_pane_names[PANE_COUNT] = { "Display", "Network", "Users" };
+static const char *k_pane_names[PANE_COUNT] = { "Display", "Network", "Users", "Sound" };
 
 /* ── Global state ────────────────────────────────────────────────────────── */
 
@@ -123,6 +124,19 @@ static widget_t g_u_admin_cb;
 static widget_t g_u_create_btn;
 static widget_t g_u_result;
 
+/* Sound pane */
+static widget_t g_s_out_list;   /* output device selector */
+static widget_t g_s_vol_sb;     /* master output volume 0-100 */
+static widget_t g_s_bal_sb;     /* balance 0-200 (center=100) */
+static widget_t g_s_mute_cb;    /* mute checkbox */
+static widget_t g_s_in_list;    /* input device selector */
+static widget_t g_s_gain_sb;    /* input gain 0-100 */
+static widget_t g_s_sr_list;    /* sample rate preset */
+static widget_t g_s_buf_list;   /* buffer size / period frames */
+static widget_t g_s_alert_sb;   /* alert / UI sounds volume 0-100 */
+static widget_t g_s_apply;      /* Apply + restart button */
+static widget_t g_s_status;     /* result label */
+
 /* ── IP address helpers ──────────────────────────────────────────────────── */
 
 static void ip_to_str(unsigned int ip, char *buf)
@@ -152,6 +166,29 @@ static unsigned int str_to_ip(const char *s)
     if (dots != 3) return 0;
     return (a << 24) | (b << 16) | (c << 8) | d;
 }
+
+/* ── Sound pane layout constants ─────────────────────────────────────────── */
+/* All Y values are relative to the root panel origin (content area top-left).
+ * Labels are drawn directly in root_draw; only interactive widgets go in tree. */
+#define SP_Y_OUT_HDR   INY                        /* "Output" section header   */
+#define SP_Y_OUT_LIST  (SP_Y_OUT_HDR  + 14)       /* output device listview h=65 */
+#define SP_Y_VOL       (SP_Y_OUT_LIST + 65 + 4)   /* volume row                */
+#define SP_Y_BAL       (SP_Y_VOL      + ROW_H + 4)/* balance row               */
+#define SP_Y_MUTE      (SP_Y_BAL      + ROW_H + 4)/* mute checkbox             */
+#define SP_Y_IN_HDR    (SP_Y_MUTE     + ROW_H + ROW_GAP) /* "Input" header    */
+#define SP_Y_IN_LIST   (SP_Y_IN_HDR   + 14)       /* input device listview h=65*/
+#define SP_Y_GAIN      (SP_Y_IN_LIST  + 65 + 4)   /* gain row                  */
+#define SP_Y_PQ_HDR    (SP_Y_GAIN     + ROW_H + ROW_GAP) /* "Playback Quality"*/
+#define SP_Y_PQ_COL    (SP_Y_PQ_HDR   + 14)       /* sr / buf column labels    */
+#define SP_Y_PQ_LIST   (SP_Y_PQ_COL   + 12)       /* sr + buf listviews h=55   */
+#define SP_Y_ALT_HDR   (SP_Y_PQ_LIST  + 55 + ROW_GAP)  /* "Alert Sounds"      */
+#define SP_Y_ALT_VOL   (SP_Y_ALT_HDR  + 14)       /* alert volume row          */
+#define SP_Y_APPLY     (SP_Y_ALT_VOL  + ROW_H + ROW_GAP) /* apply + status    */
+
+#define SP_LBL    90                               /* label column width        */
+#define SP_SBX    (INX + SP_LBL)                  /* scrollbar x origin        */
+#define SP_SBW    300                              /* scrollbar width           */
+#define SP_HALF   270                              /* half-pane column width    */
 
 /* ── Sidebar drawing ─────────────────────────────────────────────────────── */
 
@@ -190,6 +227,22 @@ static void root_draw(widget_t *w, int ax, int ay)
     gfx_fill(ax + SIDE_W, ay, CONT_W, CONT_H, C_WIN_BG);
     /* Sidebar */
     draw_sidebar(ax, ay);
+
+    if (g_pane == PANE_SOUND) {
+        /* Section headers */
+        gfx_text(ax + INX, ay + SP_Y_OUT_HDR, "Output",           C_ACCENT,   0);
+        gfx_text(ax + INX, ay + SP_Y_IN_HDR,  "Input",            C_ACCENT,   0);
+        gfx_text(ax + INX, ay + SP_Y_PQ_HDR,  "Playback Quality", C_ACCENT,   0);
+        gfx_text(ax + INX, ay + SP_Y_ALT_HDR, "Alert Sounds",     C_ACCENT,   0);
+        /* Row labels */
+        gfx_text(ax + INX, ay + SP_Y_VOL  + 6, "Volume:",      C_TEXT, 0);
+        gfx_text(ax + INX, ay + SP_Y_BAL  + 6, "Balance:",     C_TEXT, 0);
+        gfx_text(ax + INX, ay + SP_Y_GAIN + 6, "Input Gain:",  C_TEXT, 0);
+        gfx_text(ax + INX, ay + SP_Y_ALT_VOL + 6, "Alert Vol:",C_TEXT, 0);
+        /* Playback quality sub-column labels */
+        gfx_text(ax + INX,           ay + SP_Y_PQ_COL, "Sample Rate",  C_TEXT_DIM, 0);
+        gfx_text(ax + INX + SP_HALF, ay + SP_Y_PQ_COL, "Buffer Size",  C_TEXT_DIM, 0);
+    }
 }
 
 /* ── Root panel event_fn: intercept sidebar clicks ──────────────────────── */
@@ -682,6 +735,206 @@ static void build_pane_users(void)
     reload_user_list();
 }
 
+/* ── Sound pane ──────────────────────────────────────────────────────────── */
+
+static audio_dev_info_t g_s_devs[8];
+static int              g_s_ndevs = 0;
+
+static const unsigned int  k_sample_rates[]  = { 44100, 48000, 96000 };
+static const char *k_sr_labels[] = {
+    " 44 100 Hz",
+    " 48 000 Hz  (default)",
+    " 96 000 Hz"
+};
+#define N_SR 3
+
+static const unsigned short k_periods[]      = { 64, 128, 256, 512 };
+static const char *k_period_labels[] = {
+    " 64  frames  (~1.3 ms)",
+    "128  frames  (~2.7 ms)",
+    "256  frames  (~5.3 ms)",
+    "512  frames (~10.7 ms)"
+};
+#define N_PERIOD 4
+
+static int find_sr_idx(unsigned int sr)
+{
+    for (int i = 0; i < N_SR; i++)
+        if (k_sample_rates[i] == sr) return i;
+    return 1; /* default: 48000 */
+}
+
+static int find_period_idx(unsigned short p)
+{
+    for (int i = 0; i < N_PERIOD; i++)
+        if (k_periods[i] == p) return i;
+    return 0; /* default: 64 */
+}
+
+static int dev_name_eq(const char *a, const char *b)
+{
+    int i = 0;
+    while (a[i] && b[i] && a[i] == b[i]) i++;
+    return !a[i] && !b[i];
+}
+
+static void on_sound_apply(widget_t *w)
+{
+    (void)w;
+
+    audio_conf_t cfg;
+    memset(&cfg, 0, sizeof(cfg));
+
+    cfg.output_volume  = (unsigned char)g_s_vol_sb.data.scrollbar.value;
+    cfg.output_balance = (signed char)(g_s_bal_sb.data.scrollbar.value - 100);
+    cfg.output_mute    = (unsigned char)g_s_mute_cb.data.checkbox.checked;
+    cfg.input_gain     = (unsigned char)g_s_gain_sb.data.scrollbar.value;
+    cfg.alert_volume   = (unsigned char)g_s_alert_sb.data.scrollbar.value;
+
+    int sr_sel  = listview_get_selected(&g_s_sr_list);
+    cfg.sample_rate   = (sr_sel  >= 0 && sr_sel  < N_SR)     ? k_sample_rates[sr_sel]  : 48000;
+    int buf_sel = listview_get_selected(&g_s_buf_list);
+    cfg.period_frames = (unsigned short)((buf_sel >= 0 && buf_sel < N_PERIOD) ?
+                         k_periods[buf_sel] : 64);
+    cfg.bit_depth = 16;
+
+    /* Device names from selected list rows */
+    int out_sel = listview_get_selected(&g_s_out_list);
+    if (out_sel >= 0 && out_sel < g_s_ndevs) {
+        const char *dn = g_s_devs[out_sel].name;
+        int j = 0;
+        while (dn[j] && j < AUDIO_CONF_NAME_MAX - 1) { cfg.output_dev[j] = dn[j]; j++; }
+        cfg.output_dev[j] = '\0';
+    }
+    int in_sel  = listview_get_selected(&g_s_in_list);
+    if (in_sel  >= 0 && in_sel  < g_s_ndevs) {
+        const char *dn = g_s_devs[in_sel].name;
+        int j = 0;
+        while (dn[j] && j < AUDIO_CONF_NAME_MAX - 1) { cfg.input_dev[j] = dn[j]; j++; }
+        cfg.input_dev[j] = '\0';
+    }
+
+    long r = sys_audio_conf_set(&cfg);
+    if (r == 0) {
+        /* Find aether_sound and restart it so new settings take effect */
+        ps_entry_t procs[32];
+        int n = (int)sys_ps(procs, 32);
+        int snd_pid = -1;
+        for (int i = 0; i < n; i++) {
+            if (dev_name_eq(procs[i].name, "aether_sound")) {
+                snd_pid = (int)procs[i].pid;
+                break;
+            }
+        }
+        if (snd_pid > 0) {
+            sys_kill((unsigned)snd_pid);
+            sys_sleep(20);                /* wait ~200 ms (20 × 10 ms ticks) */
+            sys_spawn("/aether_sound");
+            label_set_text(&g_s_status, "Applied — audio server restarted.");
+        } else {
+            label_set_text(&g_s_status, "Saved. Audio server not running.");
+        }
+    } else {
+        label_set_text(&g_s_status, "Failed: invalid audio configuration.");
+    }
+    widget_invalidate(&g_s_status);
+}
+
+static void build_pane_sound(void)
+{
+    widget_init_panel(&g_root, 0, 0, WIN_W, CONT_H, C_WIN_BG);
+    g_root.draw_fn  = root_draw;
+    g_root.event_fn = root_event;
+
+    /* Enumerate audio devices once */
+    g_s_ndevs = (int)sys_audio_enum(g_s_devs, 8);
+
+    /* Read current config */
+    audio_conf_t cur;
+    memset(&cur, 0, sizeof(cur));
+    sys_audio_conf_get(&cur);
+
+    /* ── Output device listview ──────────────────────────────────── */
+    widget_init_listview(&g_s_out_list, INX, SP_Y_OUT_LIST, INW, 65,
+                         8, NULL);
+    for (int i = 0; i < g_s_ndevs; i++) {
+        listview_add_item(&g_s_out_list, g_s_devs[i].name, NULL);
+        if (cur.output_dev[0] && dev_name_eq(cur.output_dev, g_s_devs[i].name))
+            g_s_out_list.data.listview.selected = i;
+    }
+    if (g_s_ndevs == 0)
+        listview_add_item(&g_s_out_list, "(no devices found)", NULL);
+
+    /* ── Volume scrollbar ────────────────────────────────────────── */
+    widget_init_scrollbar_h(&g_s_vol_sb, SP_SBX, SP_Y_VOL, SP_SBW, ROW_H,
+                            100, 5);
+    g_s_vol_sb.data.scrollbar.value = (int)cur.output_volume;
+
+    /* ── Balance scrollbar (0=full-left, 100=center, 200=full-right) */
+    widget_init_scrollbar_h(&g_s_bal_sb, SP_SBX, SP_Y_BAL, SP_SBW, ROW_H,
+                            200, 10);
+    g_s_bal_sb.data.scrollbar.value = (int)(cur.output_balance) + 100;
+
+    /* ── Mute checkbox ───────────────────────────────────────────── */
+    widget_init_checkbox(&g_s_mute_cb, INX, SP_Y_MUTE, INW / 2, ROW_H,
+                         "Mute output", NULL);
+    checkbox_set_checked(&g_s_mute_cb, cur.output_mute);
+
+    /* ── Input device listview ───────────────────────────────────── */
+    widget_init_listview(&g_s_in_list, INX, SP_Y_IN_LIST, INW, 65,
+                         8, NULL);
+    for (int i = 0; i < g_s_ndevs; i++) {
+        listview_add_item(&g_s_in_list, g_s_devs[i].name, NULL);
+        if (cur.input_dev[0] && dev_name_eq(cur.input_dev, g_s_devs[i].name))
+            g_s_in_list.data.listview.selected = i;
+    }
+    if (g_s_ndevs == 0)
+        listview_add_item(&g_s_in_list, "(no devices found)", NULL);
+
+    /* ── Input gain scrollbar ────────────────────────────────────── */
+    widget_init_scrollbar_h(&g_s_gain_sb, SP_SBX, SP_Y_GAIN, SP_SBW, ROW_H,
+                            100, 5);
+    g_s_gain_sb.data.scrollbar.value = (int)cur.input_gain;
+
+    /* ── Sample rate listview ────────────────────────────────────── */
+    widget_init_listview(&g_s_sr_list, INX, SP_Y_PQ_LIST, SP_HALF - 4, 55,
+                         N_SR, NULL);
+    for (int i = 0; i < N_SR; i++)
+        listview_add_item(&g_s_sr_list, k_sr_labels[i], NULL);
+    g_s_sr_list.data.listview.selected = find_sr_idx(cur.sample_rate);
+
+    /* ── Buffer size listview ────────────────────────────────────── */
+    widget_init_listview(&g_s_buf_list, INX + SP_HALF, SP_Y_PQ_LIST,
+                         INW - SP_HALF, 55, N_PERIOD, NULL);
+    for (int i = 0; i < N_PERIOD; i++)
+        listview_add_item(&g_s_buf_list, k_period_labels[i], NULL);
+    g_s_buf_list.data.listview.selected = find_period_idx(cur.period_frames);
+
+    /* ── Alert volume scrollbar ──────────────────────────────────── */
+    widget_init_scrollbar_h(&g_s_alert_sb, SP_SBX, SP_Y_ALT_VOL, SP_SBW, ROW_H,
+                            100, 5);
+    g_s_alert_sb.data.scrollbar.value = (int)cur.alert_volume;
+
+    /* ── Apply button + status label ─────────────────────────────── */
+    widget_init_button(&g_s_apply, INX, SP_Y_APPLY, 120, ROW_H,
+                       "Apply", on_sound_apply);
+    widget_init_label(&g_s_status, INX + 128, SP_Y_APPLY, INW - 128, ROW_H,
+                      "", WGT_ALIGN_LEFT);
+
+    /* Build widget tree (all 11 children ≤ WIDGET_MAX_CHILDREN=16) */
+    widget_add_child(&g_root, &g_s_out_list);
+    widget_add_child(&g_root, &g_s_vol_sb);
+    widget_add_child(&g_root, &g_s_bal_sb);
+    widget_add_child(&g_root, &g_s_mute_cb);
+    widget_add_child(&g_root, &g_s_in_list);
+    widget_add_child(&g_root, &g_s_gain_sb);
+    widget_add_child(&g_root, &g_s_sr_list);
+    widget_add_child(&g_root, &g_s_buf_list);
+    widget_add_child(&g_root, &g_s_alert_sb);
+    widget_add_child(&g_root, &g_s_apply);
+    widget_add_child(&g_root, &g_s_status);
+}
+
 /* ── Pane builder dispatch ───────────────────────────────────────────────── */
 
 static void build_current_pane(void)
@@ -690,6 +943,7 @@ static void build_current_pane(void)
     case PANE_DISPLAY: build_pane_display(); break;
     case PANE_NETWORK: build_pane_network(); break;
     case PANE_USERS:   build_pane_users();   break;
+    case PANE_SOUND:   build_pane_sound();   break;
     }
 }
 

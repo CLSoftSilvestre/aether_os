@@ -52,6 +52,7 @@
 #include "drivers/rtc/pl031.h"
 #include "aether/config.h"
 #include "aether/users.h"
+#include "aether/audio_conf.h"
 #include "aether/sched.h"
 #include "aether/audio_dev.h"
 #include "drivers/usb/midi/usb_midi.h"
@@ -1514,10 +1515,15 @@ long syscall_dispatch(trap_frame_t *frame)
                         % AUDIO_PCM_RING_FRAMES;
         u32 to_read   = available < frames ? available : frames;
 
+        u32 gain = g_audio_conf.input_gain;
         for (u32 f = 0; f < to_read; f++) {
             for (u32 c = 0; c < ch; c++) {
                 u32 ri = (cap->read_idx * ch + c) % (AUDIO_PCM_RING_FRAMES * ch);
-                buf[f * ch + c] = cap->pcm[ri];
+                s32 s  = (s32)cap->pcm[ri];
+                s = s * (s32)gain / 100;
+                if (s >  32767) s =  32767;
+                if (s < -32768) s = -32768;
+                buf[f * ch + c] = (s16)s;
             }
             cap->read_idx = (cap->read_idx + 1) % AUDIO_PCM_RING_FRAMES;
         }
@@ -1542,10 +1548,22 @@ long syscall_dispatch(trap_frame_t *frame)
                       % AUDIO_PCM_RING_FRAMES);
         u32 to_write = space < frames ? space : frames;
 
+        u32 vol   = g_audio_conf.output_mute ? 0u : (u32)g_audio_conf.output_volume;
+        s32 bal   = (s32)(s8)g_audio_conf.output_balance;  /* -100..+100 */
         for (u32 f = 0; f < to_write; f++) {
             for (u32 c = 0; c < ch; c++) {
+                s32 s = (s32)buf[f * ch + c];
+                /* Master volume */
+                s = s * (s32)vol / 100;
+                /* Balance (stereo only): attenuate left when bal>0, right when bal<0 */
+                if (ch == 2) {
+                    if (c == 0 && bal > 0) s = s * (100 - bal) / 100;
+                    if (c == 1 && bal < 0) s = s * (100 + bal) / 100;
+                }
+                if (s >  32767) s =  32767;
+                if (s < -32768) s = -32768;
                 u32 wi = (play->write_idx * ch + c) % (AUDIO_PCM_RING_FRAMES * ch);
-                play->pcm[wi] = buf[f * ch + c];
+                play->pcm[wi] = (s16)s;
             }
             play->write_idx = (play->write_idx + 1) % AUDIO_PCM_RING_FRAMES;
         }
@@ -1571,6 +1589,21 @@ long syscall_dispatch(trap_frame_t *frame)
         int count = (int)arg1;
         if (!buf || count <= 0) return -1;
         return usb_midi_write(buf, count);
+    }
+
+    /* ── Audio configuration (System Preferences Sound pane) ──────── */
+
+    case SYS_AUDIO_CONF_GET: {
+        audio_conf_t *out = (audio_conf_t *)(void *)arg0;
+        if (!out) return -1;
+        audio_conf_get(out);
+        return 0;
+    }
+
+    case SYS_AUDIO_CONF_SET: {
+        const audio_conf_t *cfg = (const audio_conf_t *)(const void *)arg0;
+        if (!cfg) return -1;
+        return audio_conf_set(cfg);
     }
 
     default:

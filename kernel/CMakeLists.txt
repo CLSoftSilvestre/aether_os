@@ -23,6 +23,7 @@ set(KERNEL_SOURCES
     core/wm.c
     core/config.c
     core/users.c
+    core/audio_conf.c
 
     # Memory management
     mm/pmm.c

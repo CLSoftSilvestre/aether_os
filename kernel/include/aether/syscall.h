@@ -236,6 +236,10 @@
 #define SYS_MIDI_READ            970
 #define SYS_MIDI_WRITE           971
 
+/* Audio configuration — System Preferences Sound pane */
+#define SYS_AUDIO_CONF_GET       974  /* (audio_conf_t *out) → 0 or -1          */
+#define SYS_AUDIO_CONF_SET       975  /* (const audio_conf_t *cfg) → 0 or -1    */
+
 /* File descriptor numbers */
 #define FD_STDIN   0
 #define FD_STDOUT  1

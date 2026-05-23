@@ -32,6 +32,7 @@
 #include "drivers/usb/xhci.h"
 #include "aether/usb_fat32.h"
 #include "aether/audio_dev.h"
+#include "aether/audio_conf.h"
 #include "drivers/usb/midi/usb_midi.h"
 #include "aether/net.h"
 #include "aether/vfs.h"
@@ -147,6 +148,7 @@ void kernel_main(void)
     /* ── Phase 8: Audio subsystem ───────────────────────────────────── */
     audio_core_init();  /* registers UAC2 / I2S / PWM devices           */
     usb_midi_init();    /* USB MIDI class driver (UMC202HD etc.)         */
+    audio_conf_init();  /* reads /config/audio.conf — fat32 already up  */
     boot_prof_stamp("audio");
 
     /* ── 6c.5 System config — display resolution ────────────────────── */
