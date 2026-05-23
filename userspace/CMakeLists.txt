@@ -371,6 +371,47 @@ set_target_properties(user_telnet PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
 )
 
+# ── aether_mail — IMAP4rev1 + SMTP email client ──────────────────────────────
+#
+# Protocols : IMAP4rev1 (RFC 3501, port 993 IMAPS) + SMTP (RFC 5321, port 465)
+# TLS       : wrapped via tls_aether / mbedTLS when vendor/mbedtls/ is present
+# Storage   : account config at /email/config on FAT32; message cache planned
+# Icons     : ICON_BTN_COMPOSE(12) … ICON_BTN_REFRESH(15) added to gfx.h
+
+add_executable(user_aether_mail
+    apps/aether_mail/main.c
+    apps/aether_mail/imap.c
+    apps/aether_mail/smtp.c
+    apps/aether_mail/mail_store.c
+    lib/crt0.S
+)
+target_include_directories(user_aether_mail PRIVATE
+    lib/include
+    apps/aether_mail
+)
+target_compile_options(user_aether_mail PRIVATE ${USER_COMPILE_FLAGS})
+target_link_libraries(user_aether_mail PRIVATE libwidget libaether)
+target_link_options(user_aether_mail PRIVATE
+    -T ${USER_LINKER_SCRIPT} -nostdlib -static -Wl,--build-id=none
+)
+set_target_properties(user_aether_mail PROPERTIES
+    OUTPUT_NAME "aether_mail" SUFFIX ""
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
+)
+
+# TLS support: link vendor_mbedtls and expose tls_aether.h when mbedTLS present
+if(MBEDTLS_TARGET)
+    target_link_libraries(user_aether_mail PRIVATE ${MBEDTLS_TARGET} libaether_posix)
+    target_compile_definitions(user_aether_mail PRIVATE HAVE_MBEDTLS=1)
+    target_include_directories(user_aether_mail PRIVATE
+        ${MBEDTLS_SRC_DIR}/include   # <mbedtls/ssl.h>
+        ${MBEDTLS_BRIDGE}            # tls_aether.h, mbedtls_aether_config.h
+    )
+    message(STATUS "[AetherMail] TLS enabled via mbedTLS ${MBEDTLS_SRC_DIR}")
+else()
+    message(STATUS "[AetherMail] TLS disabled (vendor/mbedtls/ not found) — plain IMAP/SMTP only")
+endif()
+
 # ── liblua54 + aether_interp — Phase 5.5 Lua 5.4 interpreter ─────────────────
 #
 # Prerequisites: run  scripts/fetch_lua.sh  once to populate vendor/lua54/.
@@ -2172,6 +2213,7 @@ add_custom_command(
             ${INITRD_FILES_SRC}/apps/compositor.app
             ${INITRD_FILES_SRC}/apps/ns_test.app
             ${INITRD_FILES_SRC}/apps/fetch_test.app
+            ${INITRD_FILES_SRC}/apps/aether_mail.app
     COMMENT "Copying initrd static files"
 )
 
@@ -2183,7 +2225,7 @@ add_custom_command(
                 ${INITRD_CPIO}
     DEPENDS user_init user_dock user_topbar user_desktop user_compositor user_aether_term user_statusbar user_files
             user_textviewer user_calculator user_tictactoe user_widget_demo
-            user_aether_editor user_aether_http user_telnet user_aether_top
+            user_aether_editor user_aether_http user_telnet user_aether_top user_aether_mail
             user_sys_prefs user_aether_sound user_aether_guitar aeguitar_assets
             user_posix_test
             ${INTERP_TARGET}

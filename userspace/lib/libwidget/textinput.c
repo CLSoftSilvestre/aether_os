@@ -29,6 +29,15 @@ static char keycode_to_char(keycode_t kc, unsigned int mods)
 {
     int shift = (mods & MOD_SHIFT) || (mods & MOD_CAPS);
 
+    /* AltGr (RightAlt = MOD_ALT) — PT-PT layout characters */
+    if (mods & MOD_ALT) {
+        switch (kc) {
+        case KEY_2: return '@';
+        case KEY_3: return '#';
+        default:    return 0;
+        }
+    }
+
     /* Letters */
     if (kc >= KEY_A && kc <= KEY_Z) {
         char base = 'a' + (kc - KEY_A);

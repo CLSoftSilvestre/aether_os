@@ -207,6 +207,11 @@ void gfx_icon_file_generic(int x, int y, int sz);
 #define ICON_BTN_CUT     9   /* scissors */
 #define ICON_BTN_COPY   10   /* two overlapping pages */
 #define ICON_BTN_PASTE  11   /* clipboard */
+#define ICON_BTN_COMPOSE 12  /* envelope with pen — new message */
+#define ICON_BTN_REPLY   13  /* envelope with left arrow — reply */
+#define ICON_BTN_FORWARD 14  /* envelope with right arrow — forward */
+#define ICON_BTN_REFRESH  15  /* circular arrow — refresh/reload */
+#define ICON_BTN_SETTINGS 16  /* gear — account settings */
 
 /*
  * Draw a 14×14 toolbar icon centred at pixel (x, y) = top-left of the 14×14 cell.
