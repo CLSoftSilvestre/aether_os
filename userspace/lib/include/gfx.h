@@ -14,19 +14,30 @@
 #define GFX_RGB(r,g,b)   (((unsigned)(r) << 16) | ((unsigned)(g) << 8) | (unsigned)(b))
 
 /* ── Lumina color palette ──────────────────────────────────────────── */
-#define C_DESKTOP    GFX_RGB( 18,  18,  24)   /* near-black background    */
-#define C_PANEL      GFX_RGB( 26,  26,  40)   /* panel / bar backgrounds  */
-#define C_WIN_BG     GFX_RGB( 20,  20,  32)   /* window background        */
-#define C_TITLEBAR   GFX_RGB( 30,  30,  50)   /* title bar                */
-#define C_TERM_BG    GFX_RGB( 12,  12,  20)   /* terminal background      */
-#define C_ACCENT     GFX_RGB(124, 106, 247)   /* purple accent            */
-#define C_ACCENT2    GFX_RGB(  0, 200, 220)   /* cyan secondary           */
-#define C_TEXT       GFX_RGB(216, 216, 232)   /* primary text             */
-#define C_TEXT_DIM   GFX_RGB(100, 100, 140)   /* dimmed text              */
-#define C_SEP        GFX_RGB( 50,  50,  80)   /* separator lines          */
+#define C_DESKTOP    GFX_RGB( 13,  11,  22)   /* deep near-black desktop  */
+#define C_PANEL      GFX_RGB( 22,  20,  36)   /* panel / toolbar bg       */
+#define C_WIN_BG     GFX_RGB( 16,  14,  28)   /* window content bg        */
+#define C_TITLEBAR   GFX_RGB( 55,  50,  96)   /* titlebar glass base      */
+#define C_TERM_BG    GFX_RGB( 10,   8,  18)   /* terminal background      */
+#define C_ACCENT     GFX_RGB(134, 120, 230)   /* soft purple accent       */
+#define C_ACCENT2    GFX_RGB(  0, 190, 210)   /* cyan secondary           */
+#define C_TEXT       GFX_RGB(220, 218, 238)   /* primary text             */
+#define C_TEXT_DIM   GFX_RGB( 90,  86, 128)   /* dimmed text              */
+#define C_SEP        GFX_RGB( 40,  36,  68)   /* separator / base border  */
 #define C_RED        GFX_RGB(235,  87,  87)   /* traffic light close      */
 #define C_YELLOW     GFX_RGB(247, 201,  72)   /* traffic light minimize   */
 #define C_GREEN      GFX_RGB( 80, 200,  75)   /* traffic light maximize   */
+
+/* ── Aero / Liquid Glass chrome palette ────────────────────────────── */
+/* Multi-stop gradient + layered borders that give windows and widgets  */
+/* a frosted glass appearance similar to Windows Aero / macOS glass.   */
+#define C_GLASS_SPEC GFX_RGB(238, 234, 255)   /* specular — near-white    */
+#define C_GLASS_TOP  GFX_RGB(115, 105, 200)   /* titlebar gradient top    */
+#define C_GLASS_MID  GFX_RGB( 65,  59, 114)   /* titlebar gradient mid    */
+#define C_GLASS_BOT  GFX_RGB( 42,  38,  76)   /* titlebar gradient bottom */
+#define C_GLASS_RIM  GFX_RGB(194, 186, 246)   /* outer pearl rim border   */
+#define C_GLASS_EDGE GFX_RGB( 84,  77, 148)   /* inner subtle edge        */
+#define C_GLASS_SEP  GFX_RGB( 52,  47,  88)   /* glass separator line     */
 
 /* ── Framebuffer info ───────────────────────────────────────────────── */
 typedef struct { unsigned width, height; } gfx_info_t;
@@ -87,6 +98,15 @@ void gfx_fill_rounded(unsigned x, unsigned y, unsigned w, unsigned h,
 /* Draw a 1-pixel rounded rectangle outline. */
 void gfx_rect_rounded(unsigned x, unsigned y, unsigned w, unsigned h,
                        unsigned r, unsigned color);
+
+/* Fill a rectangle with a vertical linear gradient from top_color to bot_color. */
+void gfx_gradient_v(unsigned x, unsigned y, unsigned w, unsigned h,
+                    unsigned top_color, unsigned bot_color);
+
+/* Like gfx_gradient_v but clips scanlines to a rounded-corner arc (radius r). */
+void gfx_gradient_v_rounded(unsigned x, unsigned y, unsigned w, unsigned h,
+                             unsigned r,
+                             unsigned top_color, unsigned bot_color);
 
 /* Draw one character (8×16 Lumina Mono) at pixel (x, y) */
 void gfx_char(unsigned x, unsigned y, char ch, unsigned fg, unsigned bg);

@@ -19,10 +19,17 @@
 
 #define INPUT_PAD_X  4
 #define INPUT_PAD_Y  3
-#define C_INPUT_BG   C_WIN_BG
-#define C_INPUT_BDR  C_SEP
-#define C_INPUT_BDF  C_ACCENT   /* focused border */
-#define C_INPUT_CUR  C_ACCENT
+
+/* Glass inset well — slightly darker than window body to simulate recession */
+#define C_INPUT_BG    GFX_RGB( 12,  10,  22)
+/* Idle border: subtle, matches glass separator tone */
+#define C_INPUT_BDR   C_GLASS_SEP
+/* Focused: bright pearl glow matching the window rim */
+#define C_INPUT_BDF   C_GLASS_RIM
+/* Focused inner depth line */
+#define C_INPUT_GLOW  C_GLASS_EDGE
+/* Caret: accent color */
+#define C_INPUT_CUR   C_ACCENT
 
 /* Convert a keycode+modifiers to an ASCII character, or 0 if not printable */
 static char keycode_to_char(keycode_t kc, unsigned int mods)
@@ -93,14 +100,22 @@ static void textinput_draw(widget_t *w, int ax, int ay)
     wdata_textinput_t *d = &w->data.textinput;
     int focused = (w->state == WS_FOCUSED || w->state == WS_PRESSED);
 
-    /* Background (flat — same color as window body, corners blend in) */
-    gfx_fill((unsigned)ax, (unsigned)ay,
-             (unsigned)w->bounds.w, (unsigned)w->bounds.h, C_INPUT_BG);
+    /* Glass inset well — rounded dark fill (recessed look) */
+    gfx_fill_rounded((unsigned)ax, (unsigned)ay,
+                     (unsigned)w->bounds.w, (unsigned)w->bounds.h,
+                     GFX_INPUT_R, C_INPUT_BG);
 
-    /* Rounded glass border — accent when focused, dim when idle */
+    /* Outer border: pearl glow when focused, subtle glass separator when idle */
     gfx_rect_rounded((unsigned)ax, (unsigned)ay,
                      (unsigned)w->bounds.w, (unsigned)w->bounds.h,
                      GFX_INPUT_R, focused ? C_INPUT_BDF : C_INPUT_BDR);
+
+    /* Focused: extra inner glow line (depth) */
+    if (focused && GFX_INPUT_R > 1u) {
+        gfx_rect_rounded((unsigned)(ax + 1), (unsigned)(ay + 1),
+                         (unsigned)(w->bounds.w - 2), (unsigned)(w->bounds.h - 2),
+                         GFX_INPUT_R - 1u, C_INPUT_GLOW);
+    }
 
     int tx   = ax + INPUT_PAD_X;
     int ty   = ay + INPUT_PAD_Y;

@@ -2,7 +2,7 @@
  * AetherOS libwidget — WIDGET_BUTTON (Phase 5.3)
  * File: userspace/lib/libwidget/button.c
  *
- * Three visual states: normal (C_ACCENT fill), hovered (lighter), pressed (darker).
+ * Glass gradient pill with pearl rim border — Aero/Liquid Glass style.
  * on_click fires on MOUSE_UP inside bounds or KEY_DOWN(ENTER) when focused.
  */
 
@@ -10,48 +10,75 @@
 #include <gfx.h>
 #include <string.h>
 
-/* Button colour scheme */
-#define C_BTN_NORMAL  C_ACCENT                     /* purple  */
-#define C_BTN_HOVER   GFX_RGB(144, 126, 255)       /* lighter */
-#define C_BTN_PRESS   GFX_RGB(100,  85, 200)       /* darker  */
-#define C_BTN_TEXT    GFX_RGB(255, 255, 255)       /* white   */
-#define C_BTN_DIS     GFX_RGB( 60,  60,  90)       /* disabled */
+/* Glass button gradient stops per state */
+#define C_BTN_N_TOP  GFX_RGB(108,  98, 210)   /* normal top    */
+#define C_BTN_N_BOT  GFX_RGB( 78,  70, 162)   /* normal bottom */
+#define C_BTN_H_TOP  GFX_RGB(140, 128, 252)   /* hover top     */
+#define C_BTN_H_BOT  GFX_RGB(106,  96, 215)   /* hover bottom  */
+#define C_BTN_P_TOP  GFX_RGB( 70,  62, 145)   /* pressed top   */
+#define C_BTN_P_BOT  GFX_RGB( 55,  49, 112)   /* pressed bot   */
+#define C_BTN_D_TOP  GFX_RGB( 44,  42,  72)   /* disabled top  */
+#define C_BTN_D_BOT  GFX_RGB( 36,  34,  58)   /* disabled bot  */
+#define C_BTN_TEXT   GFX_RGB(255, 255, 255)
 
 static void button_draw(widget_t *w, int ax, int ay)
 {
-    unsigned bg;
+    unsigned gtop, gbot, rim, spec;
     switch (w->state) {
-    case WS_HOVERED:  bg = C_BTN_HOVER; break;
-    case WS_PRESSED:  bg = C_BTN_PRESS; break;
-    case WS_DISABLED: bg = C_BTN_DIS;   break;
-    default:          bg = C_BTN_NORMAL; break;
+    case WS_HOVERED:
+        gtop = C_BTN_H_TOP; gbot = C_BTN_H_BOT;
+        rim  = GFX_RGB(185, 175, 255);
+        spec = GFX_RGB(215, 208, 255);
+        break;
+    case WS_PRESSED:
+        gtop = C_BTN_P_TOP; gbot = C_BTN_P_BOT;
+        rim  = GFX_RGB(130, 122, 210);
+        spec = GFX_RGB(175, 165, 240);
+        break;
+    case WS_DISABLED:
+        gtop = C_BTN_D_TOP; gbot = C_BTN_D_BOT;
+        rim  = GFX_RGB( 55,  52,  82);
+        spec = GFX_RGB( 60,  57,  90);
+        break;
+    default: /* WS_NORMAL / WS_FOCUSED */
+        gtop = C_BTN_N_TOP; gbot = C_BTN_N_BOT;
+        rim  = C_GLASS_RIM;
+        spec = GFX_RGB(200, 192, 255);
+        break;
     }
 
-    /* Rounded glass fill */
-    gfx_fill_rounded((unsigned)ax, (unsigned)ay,
-                     (unsigned)w->bounds.w, (unsigned)w->bounds.h,
-                     GFX_WIDGET_R, bg);
+    /* Glass gradient fill clipped to rounded corners */
+    gfx_gradient_v_rounded((unsigned)ax, (unsigned)ay,
+                            (unsigned)w->bounds.w, (unsigned)w->bounds.h,
+                            GFX_WIDGET_R, gtop, gbot);
 
-    /* Glass specular — 1-px bright line on top edge of button */
+    /* Specular sheen — 1-px near-white line on the very top edge */
     gfx_hline((unsigned)(ax + GFX_WIDGET_R), (unsigned)ay,
-              (unsigned)(w->bounds.w - 2 * GFX_WIDGET_R),
-              GFX_RGB(200, 185, 255));
+              (unsigned)(w->bounds.w - 2 * GFX_WIDGET_R), spec);
 
-    /* Rounded glass border rim */
+    /* Pearl rim border */
     gfx_rect_rounded((unsigned)ax, (unsigned)ay,
                      (unsigned)w->bounds.w, (unsigned)w->bounds.h,
-                     GFX_WIDGET_R, GFX_RGB(160, 145, 230));
+                     GFX_WIDGET_R, rim);
 
+    /* Inner depth line — slightly darker, adds frosted depth */
+    if (GFX_WIDGET_R > 1u) {
+        gfx_rect_rounded((unsigned)(ax + 1), (unsigned)(ay + 1),
+                         (unsigned)(w->bounds.w - 2), (unsigned)(w->bounds.h - 2),
+                         GFX_WIDGET_R - 1u, C_GLASS_EDGE);
+    }
+
+    /* Content: icon or text */
     if (w->data.button.icon_id != ICON_BTN_NONE) {
-        /* Icon mode — draw 14×14 icon centred in the button */
         int cx = ax + ((int)w->bounds.w - 14) / 2;
         int cy = ay + ((int)w->bounds.h - 14) / 2;
         gfx_toolbar_icon(cx, cy, w->data.button.icon_id);
     } else {
-        /* Text mode — centred label using fill bg so char backgrounds match */
+        /* Text bg = per-channel average of top/bot colors for FT AA accuracy */
+        unsigned mid_bg = ((gtop & 0xFEFEFEu) + (gbot & 0xFEFEFEu)) >> 1u;
         gfx_text_center((unsigned)ax, (unsigned)w->bounds.w,
                         (unsigned)(ay + (w->bounds.h - WGT_FONT_H) / 2),
-                        w->data.button.text, C_BTN_TEXT, bg);
+                        w->data.button.text, C_BTN_TEXT, mid_bg);
     }
 }
 

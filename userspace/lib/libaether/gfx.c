@@ -503,22 +503,27 @@ void gfx_printf(unsigned x, unsigned y, unsigned fg, unsigned bg,
 
 void gfx_draw_close_button(unsigned x, unsigned y, int hovered)
 {
-    unsigned color = hovered ? GFX_RGB(255, 110, 110) : C_RED;
-    gfx_fill(x, y, 12, 12, color);
-    gfx_fill(x,      y,      2, 2, C_TITLEBAR);
-    gfx_fill(x + 10, y,      2, 2, C_TITLEBAR);
-    gfx_fill(x,      y + 10, 2, 2, C_TITLEBAR);
-    gfx_fill(x + 10, y + 10, 2, 2, C_TITLEBAR);
+    /* Circular pill — 12×12 with r=6 gives a clean circle */
+    unsigned fill = hovered ? GFX_RGB(255, 115, 115) : C_RED;
+    gfx_fill_rounded(x, y, 12u, 12u, 6u, fill);
+    /* Specular highlight on top-left arc */
+    gfx_fill(x + 3u, y + 2u, 5u, 1u, GFX_RGB(255, 190, 190));
+    /* × symbol on hover for clarity */
+    if (hovered) {
+        unsigned xc = GFX_RGB(160, 40, 40);
+        gfx_fill(x + 3u, y + 5u, 6u, 2u, xc);
+        gfx_fill(x + 5u, y + 3u, 2u, 6u, xc);
+    }
 }
 
 void gfx_draw_minimize_button(unsigned x, unsigned y, int hovered)
 {
-    unsigned color = hovered ? GFX_RGB(255, 220, 100) : C_YELLOW;
-    gfx_fill(x, y, 12, 12, color);
-    gfx_fill(x,      y,      2, 2, C_TITLEBAR);
-    gfx_fill(x + 10, y,      2, 2, C_TITLEBAR);
-    gfx_fill(x,      y + 10, 2, 2, C_TITLEBAR);
-    gfx_fill(x + 10, y + 10, 2, 2, C_TITLEBAR);
+    unsigned fill = hovered ? GFX_RGB(255, 224, 110) : C_YELLOW;
+    gfx_fill_rounded(x, y, 12u, 12u, 6u, fill);
+    gfx_fill(x + 3u, y + 2u, 5u, 1u, GFX_RGB(255, 240, 190));
+    /* — symbol on hover */
+    if (hovered)
+        gfx_fill(x + 3u, y + 5u, 6u, 2u, GFX_RGB(160, 120, 20));
 }
 
 void gfx_icon_term(int x, int y)
@@ -973,6 +978,59 @@ void gfx_rect_rounded(unsigned x, unsigned y, unsigned w, unsigned h,
     }
 }
 
+/* ── Color interpolation helper ─────────────────────────────────────────────── */
+
+/* Linearly interpolate two XRGB colors.  t=0 → a, t=256 → b. */
+static unsigned gfx_lerp_color(unsigned a, unsigned b, int t)
+{
+    if (t <= 0)   return a;
+    if (t >= 256) return b;
+    int ra = (int)((a >> 16) & 0xFFu), rb = (int)((b >> 16) & 0xFFu);
+    int ga = (int)((a >>  8) & 0xFFu), gb = (int)((b >>  8) & 0xFFu);
+    int ba = (int)( a        & 0xFFu), bb = (int)( b        & 0xFFu);
+    return GFX_RGB((unsigned)(ra + (rb - ra) * t / 256),
+                   (unsigned)(ga + (gb - ga) * t / 256),
+                   (unsigned)(ba + (bb - ba) * t / 256));
+}
+
+/* ── Gradient fill primitives ────────────────────────────────────────────────── */
+
+void gfx_gradient_v(unsigned x, unsigned y, unsigned w, unsigned h,
+                    unsigned top_color, unsigned bot_color)
+{
+    for (unsigned row = 0; row < h; row++) {
+        int t = (h > 1u) ? (int)(row * 256u / (h - 1u)) : 0;
+        gfx_fill(x, y + row, w, 1u, gfx_lerp_color(top_color, bot_color, t));
+    }
+}
+
+void gfx_gradient_v_rounded(unsigned x, unsigned y, unsigned w, unsigned h,
+                             unsigned r,
+                             unsigned top_color, unsigned bot_color)
+{
+    if (!r || r * 2u > w || r * 2u > h) {
+        gfx_gradient_v(x, y, w, h, top_color, bot_color);
+        return;
+    }
+    unsigned r2 = r * r;
+    for (unsigned row = 0; row < h; row++) {
+        int t = (h > 1u) ? (int)(row * 256u / (h - 1u)) : 0;
+        unsigned c  = gfx_lerp_color(top_color, bot_color, t);
+        unsigned x0 = 0, len = w;
+        if (row < r) {
+            unsigned dy = r - row;
+            unsigned dx = gfx_isqrt_u(r2 - dy * dy);
+            x0 = r - dx; len = w - 2u * x0;
+        } else if (row >= h - r) {
+            unsigned dr = h - 1u - row;
+            unsigned dy = r - dr;
+            unsigned dx = gfx_isqrt_u(r2 - dy * dy);
+            x0 = r - dx; len = w - 2u * x0;
+        }
+        gfx_fill(x + x0, y + row, len, 1u, c);
+    }
+}
+
 /* ── Glass window chrome ─────────────────────────────────────────────────────── */
 
 void gfx_glass_window_frame(int wx, int wy, int ww, int wh,
@@ -982,63 +1040,65 @@ void gfx_glass_window_frame(int wx, int wy, int ww, int wh,
     unsigned r  = GFX_WINDOW_R;
     unsigned r2 = r * r;
 
-    /* 1. Drop shadow — offset (4 right, 6 down), near-black, rounded */
-    gfx_fill_rounded((unsigned)(wx + 4), (unsigned)(wy + 6),
-                     (unsigned)ww, (unsigned)wh, r, GFX_RGB(4, 4, 8));
+    /* 1. Layered drop shadow — two stacked fills create a softer penumbra */
+    gfx_fill_rounded((unsigned)(wx + 6), (unsigned)(wy + 9),
+                     (unsigned)(ww + 2), (unsigned)(wh + 2), r, GFX_RGB(0, 0, 3));
+    gfx_fill_rounded((unsigned)(wx + 3), (unsigned)(wy + 5),
+                     (unsigned)(ww + 1), (unsigned)(wh + 1), r, GFX_RGB(5, 4, 12));
 
-    /* 2. Window body — C_WIN_BG, rounded corners */
+    /* 2. Window body — dark content area */
     gfx_fill_rounded((unsigned)wx, (unsigned)wy,
                      (unsigned)ww, (unsigned)wh, r, C_WIN_BG);
 
-    /* 3. Titlebar glass — C_TITLEBAR, rounded top corners, straight bottom.
-     *    Drawn in two passes to avoid re-squaring the top corners:
-     *      Pass A: arc-clipped scanlines (rows 0..r-1)
-     *      Pass B: straight rows (rows r..title_h-1) */
-    for (unsigned dr = 0; dr < r; dr++) {
+    /* 3. Titlebar glass gradient.
+     *
+     *    Row 0      : C_GLASS_SPEC  (pure specular — near-white flash)
+     *    Rows 1..r-1: arc-clipped; lerp SPEC → GLASS_TOP
+     *    Rows r..end: full-width gradient GLASS_TOP → GLASS_BOT
+     *
+     * Arc clipping matches the top-corner geometry of the window body. */
+    for (unsigned dr = 0; dr < r && (int)dr < title_h; dr++) {
         unsigned dy  = r - dr;
         unsigned dx  = gfx_isqrt_u(r2 - dy * dy);
         unsigned x0  = r - dx;
         unsigned len = (unsigned)ww - 2u * x0;
-        gfx_fill((unsigned)wx + x0, (unsigned)wy + dr, len, 1u, C_TITLEBAR);
+        unsigned c   = (dr == 0u)
+                       ? C_GLASS_SPEC
+                       : gfx_lerp_color(C_GLASS_SPEC, C_GLASS_TOP,
+                                        (int)(dr * 256u / (unsigned)(r - 1u > 0 ? r - 1u : 1u)));
+        gfx_fill((unsigned)wx + x0, (unsigned)(wy + (int)dr), len, 1u, c);
     }
-    gfx_fill((unsigned)wx, (unsigned)(wy + (int)r),
-             (unsigned)ww, (unsigned)(title_h - (int)r), C_TITLEBAR);
+    if (title_h > (int)r) {
+        gfx_gradient_v((unsigned)wx, (unsigned)(wy + (int)r),
+                       (unsigned)ww, (unsigned)(title_h - (int)r),
+                       C_GLASS_TOP, C_GLASS_BOT);
+    }
 
-    /* 4. Glass specular — 1-px bright line on top edge (simulates light on glass rim) */
-    gfx_hline((unsigned)(wx + (int)r), (unsigned)wy,
-              (unsigned)(ww - 2 * (int)r), GFX_RGB(90, 84, 148));
-
-    /* 5. Soft highlight band — 2-px slightly lighter strip just below specular */
-    gfx_fill((unsigned)wx, (unsigned)(wy + 1), (unsigned)ww, 2u,
-             GFX_RGB(60, 56, 100));
-
-    /* 6. Outer glass rim border — 1-px rounded, C_ACCENT (the purple edge glow) */
+    /* 4. Outer pearl rim — thin, bright (the characteristic Aero crystal edge) */
     gfx_rect_rounded((unsigned)wx, (unsigned)wy,
-                     (unsigned)ww, (unsigned)wh, r, C_ACCENT);
+                     (unsigned)ww, (unsigned)wh, r, C_GLASS_RIM);
 
-    /* 7. Inner border depth line — 1-px rounded, darker purple (adds depth) */
+    /* 5. Inner depth edge — 1-px inset, slightly dimmer, adds frosted depth */
     unsigned ri = (r > 1u) ? r - 1u : 0u;
     gfx_rect_rounded((unsigned)(wx + 1), (unsigned)(wy + 1),
-                     (unsigned)(ww - 2), (unsigned)(wh - 2), ri,
-                     GFX_RGB(55, 50, 88));
+                     (unsigned)(ww - 2), (unsigned)(wh - 2), ri, C_GLASS_EDGE);
 
-    /* 8. Accent separator under titlebar */
-    gfx_hline((unsigned)wx, (unsigned)(wy + title_h), (unsigned)ww, C_ACCENT);
+    /* 6. Titlebar separator — subtle glass tone (not a neon stripe) */
+    gfx_hline((unsigned)wx, (unsigned)(wy + title_h), (unsigned)ww, C_GLASS_SEP);
 
-    /* 9. Traffic-light close button (red, at wx+10) */
+    /* 7. Traffic-light buttons */
     gfx_draw_close_button((unsigned)(wx + 10),
                           (unsigned)(wy + (title_h - 12) / 2),
                           hovered_close);
-
-    /* 10. Traffic-light minimize button (yellow, at wx+26) */
     gfx_draw_minimize_button((unsigned)(wx + 26),
                              (unsigned)(wy + (title_h - 12) / 2),
                              0);
 
-    /* 11. Window title — opaque over C_TITLEBAR for correct FreeType anti-aliasing */
-    gfx_text_center((unsigned)wx, (unsigned)ww,
-                    (unsigned)(wy + (title_h - gfx_font_height()) / 2),
-                    title, C_TEXT, C_TITLEBAR);
+    /* 8. Window title — transparent so glass gradient shows through */
+    int title_row = (title_h - gfx_font_height()) / 2;
+    gfx_text_center_transparent((unsigned)wx, (unsigned)ww,
+                                (unsigned)(wy + title_row),
+                                title, C_TEXT);
 }
 
 /* ── BMP loader ──────────────────────────────────────────────────────────── */
