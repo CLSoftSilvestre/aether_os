@@ -93,6 +93,7 @@ set(KERNEL_SOURCES
     drivers/power/thermal.c
     drivers/power/dpms.c
     drivers/power/boot_prof.c
+    drivers/power/psci.c
 
     # Drivers — VirtIO net (Phase 5.1)
     drivers/net/virtio_net.c

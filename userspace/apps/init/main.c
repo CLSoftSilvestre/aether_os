@@ -42,6 +42,7 @@ static int DOCK_Y;     /* SCR_H - DOCK_H */
 static long g_dock_pid       = 0;  /* dock process; init forwards mouse events to it */
 static long g_desktop_pid    = 0;  /* desktop process; owns wallpaper + icons */
 static long g_prev_focus_pid = 0;  /* last known focused pid; detect external changes */
+static long g_login_pid      = 0;  /* login app PID; 0 once desktop is up */
 
 /* ── Helpers ─────────────────────────────────────────────────────────────── */
 
@@ -285,19 +286,33 @@ int main(void)
     SCR_H  = (int)gfx_height();
     DOCK_Y = SCR_H - DOCK_H;
 
-    /* Spawn compositor then system processes.  Compositor registers as the WM
-     * compositor so the kernel routes WM_EV_CLOSE_REQUEST events to it.
-     * Desktop owns wallpaper + icons as a GPU BO window (below all apps). */
     sys_spawn("/compositor");
-    sys_spawn("/topbar");
-    g_desktop_pid = sys_spawn("/desktop");
-    g_dock_pid    = sys_spawn("/dock");
-
     sys_cursor_show(1);
+
+    g_login_pid = sys_spawn("/login");
+    if (g_login_pid <= 0) {
+        /* Login failed to spawn — go straight to desktop */
+        sys_spawn("/topbar");
+        g_desktop_pid = sys_spawn("/desktop");
+        g_dock_pid    = sys_spawn("/dock");
+        g_login_pid   = 0;
+    }
 
     int  prev_buttons = 0;
 
     for (;;) {
+        /* ── Spawn desktop once login exits ──────────────────────────────── */
+        if (g_login_pid > 0 && g_desktop_pid == 0) {
+            int lstat = 0;
+            if (sys_waitpid_nb(g_login_pid, &lstat) != 0) {
+                g_login_pid = 0;
+                sys_spawn("/topbar");
+                g_desktop_pid = sys_spawn("/desktop");
+                g_dock_pid    = sys_spawn("/dock");
+            }
+        }
+
+
         /* ── Detect focus changes from dock or other external processes ── */
         {
             long cur_focus = sys_wm_focus_get();
@@ -377,7 +392,8 @@ int main(void)
                         if (!is_chrome && my >= wy && my < wy + APP_TITLE_H) {
                             if (hit_close_button(wx, wy, mx, my)) {
                                 sys_wm_close(win_id);
-                            } else if (hit_minimize_button(wx, wy, mx, my)) {
+                            } else if (hit_minimize_button(wx, wy, mx, my) &&
+                                       g_login_pid == 0) {   /* no minimize during login */
                                 sys_wm_minimize(win_id);
                                 /* Notify dock so it refreshes the minimized thumbnail list */
                                 if (g_dock_pid > 0) {

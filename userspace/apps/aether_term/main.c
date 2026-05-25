@@ -327,9 +327,10 @@ static void hist_add(const char *line)
 
 static const char *const g_cmds[] = {
     "cat", "cd", "clear", "disk", "echo", "exit", "files",
-    "help", "kill", "ls", "mem", "mkdir", "mount",
-    "net", "nslookup", "pid", "ping", "ps", "pwd", "rm",
-    "spawn", "time", "touch", "uname", "view", "wget",
+    "help", "kill", "ls", "mem", "mkdir", "mount", "mv",
+    "net", "nslookup", "pid", "ping", "ps", "pwd", "reboot", "rm",
+    "shutdown", "spawn", "su", "sudo", "time", "touch", "uname",
+    "view", "wget", "whoami",
     NULL
 };
 
@@ -553,9 +554,83 @@ static int term_readline(char *buf, int max)
 #define CWD_MAX  256
 static char g_cwd[CWD_MAX] = "/";
 
-/* Print the prompt including the CWD. */
+/* ── Session privilege state ─────────────────────────────────────────────── */
+
+static char g_cur_user[32]  = "?";   /* current username; refreshed on login */
+static int  g_elevated      = 0;     /* 1 after successful sudo authentication */
+
+/* Refresh g_cur_user from the kernel */
+static void refresh_user(void)
+{
+    user_info_t ui;
+    if (sys_user_get_cur(&ui) >= 0) {
+        int i;
+        for (i = 0; i < 31 && ui.name[i]; i++) g_cur_user[i] = ui.name[i];
+        g_cur_user[i] = '\0';
+    }
+}
+
+/*
+ * term_readline_masked — like term_readline but echoes '*' for each character.
+ * Used for password prompts.
+ */
+static int term_readline_masked(char *buf, int max)
+{
+    int n = 0;
+    term_draw_cursor();
+    while (n < max - 1) {
+        unsigned long long raw = sys_wm_key_recv();
+        if (wm_event_is_redraw(raw)) {
+            g_win_x = wm_event_redraw_x(raw);
+            g_win_y = wm_event_redraw_y(raw);
+            term_frame_begin();
+            draw_window();
+            term_redraw_all();
+            term_draw_cursor();
+            term_frame_end();
+            continue;
+        }
+        key_event_t ev = key_event_unpack(raw);
+        if (!ev.is_press) continue;
+        if (ev.keycode == KEY_ENTER) {
+            term_erase_cursor();
+            term_putc('\n');
+            break;
+        }
+        if (ev.keycode == KEY_BACKSPACE && n > 0) {
+            n--;
+            term_erase_cursor();
+            t_col--;
+            t_buf[t_row][t_col] = ' ';
+            term_frame_begin();
+            blit_term_bg_cell(t_row, t_col);
+            term_frame_end();
+            term_draw_cursor();
+            continue;
+        }
+        char c = term_key_to_char(ev);
+        if (!c) continue;
+        buf[n++] = c;
+        buf[n]   = '\0';
+        /* Echo a '*' instead of the actual character */
+        t_buf[t_row][t_col] = '*';
+        term_frame_begin();
+        blit_term_bg_cell(t_row, t_col);
+        gfx_char_transparent(TX + t_col * FONT_W, TY + t_row * FONT_H,
+                             '*', C_TEXT);
+        t_col++;
+        term_frame_end();
+        term_draw_cursor();
+    }
+    buf[n] = '\0';
+    return n;
+}
+
+/* Print the prompt including the username and CWD. */
 static void print_prompt(void)
 {
+    term_puts(g_cur_user);
+    if (g_elevated) term_putc('#'); else term_putc('@');
     term_puts("aesh[");
     term_puts(g_cwd);
     term_puts("]> ");
@@ -643,44 +718,193 @@ static int parse_args(char *line, char **argv, int maxargs)
     return argc;
 }
 
+/* Lines printed one per row; empty string = blank separator line */
+static const char *const g_help_lines[] = {
+    "Built-in commands:",
+    "  echo [args]           print arguments",
+    "  pwd                   print working directory",
+    "  cd [path]             change directory (.. up, / root)",
+    "  ls [path]             list directory (default: CWD)",
+    "  mkdir <path>          create a directory (FAT32 only)",
+    "  touch <path>          create an empty file (FAT32 only)",
+    "  rm <path>             remove a file (FAT32 only)",
+    "  mv <src> <dst>        move / rename a file",
+    "  cat <path>            print a file (disk or initrd)",
+    "  mount                 show mounted filesystems",
+    "  disk                  show disk usage",
+    "  mem                   show memory statistics",
+    "  time                  show formatted uptime",
+    "  clear                 clear terminal",
+    "  uname                 print OS information",
+    "  pid                   print current process ID",
+    "  ps                    list all running processes",
+    "  kill <pid>            terminate a process by PID",
+    "  spawn <path>          launch an ELF from initrd (wait)",
+    "  spawn <path> &        launch in background (no wait)",
+    "  exit [code]           exit the terminal",
+    "  shutdown              power off the system (admin only)",
+    "  reboot                reboot the system (admin only)",
+    "  whoami                show current user and role",
+    "  sudo [command]        elevate session (admin only, re-auth once per session)",
+    "  su [username]         switch to another user account",
+    "",
+    "Networking:",
+    "  net                   show IP/MAC/gateway/DNS",
+    "  ping <ip>             ICMP echo to IP address",
+    "  nslookup <host>       DNS A-record lookup",
+    "  wget <ip>:<port><path>  HTTP GET (first 512 bytes)",
+    "  http <url>            HTTP/1.1 (Content-Length + chunked)",
+    "    e.g. http http://10.0.2.2:8080/",
+    NULL
+};
+
+#define HELP_PAGE_LINES  (TERM_ROWS - 4)
+
+/* Wait for one key press; returns 1 if user pressed 'q' (quit), 0 otherwise.
+ * Handles WM_EV_REDRAW inline so the window stays responsive during the wait. */
+static int term_wait_any_key(void)
+{
+    for (;;) {
+        unsigned long long raw = sys_wm_key_recv();
+        if (wm_event_is_redraw(raw)) {
+            g_win_x = wm_event_redraw_x(raw);
+            g_win_y = wm_event_redraw_y(raw);
+            term_frame_begin();
+            draw_window();
+            term_redraw_all();
+            term_frame_end();
+            continue;
+        }
+        key_event_t ev = key_event_unpack(raw);
+        if (!ev.is_press) continue;
+        char c = term_key_to_char(ev);
+        return (c == 'q' || c == 'Q') ? 1 : 0;
+    }
+}
+
 static void cmd_help(void)
 {
-    term_puts("Built-in commands:\n");
-    /* term_puts("  help              show this message\n");*/
-    term_puts("  echo [args]       print arguments\n");
-    term_puts("  pwd               print working directory\n");
-    term_puts("  cd [path]         change directory (.. goes up, / is root)\n");
-    term_puts("  ls [path]         list directory (default: CWD)\n");
-    term_puts("  mkdir <path>      create a directory (FAT32 only)\n");
-    term_puts("  touch <path>      create an empty file (FAT32 only)\n");
-    term_puts("  rm <path>         remove a file (FAT32 only)\n");
-    term_puts("  cat <path>        print a file (disk or initrd)\n");
-    term_puts("  mount             show mounted filesystems\n");
-    term_puts("  disk              show disk usage\n");
-    term_puts("  mem               show memory statistics\n");
-    term_puts("  time              show formatted uptime\n");
-    term_puts("  clear             clear terminal\n");
-    term_puts("  uname             print OS information\n");
-    term_puts("  pid               print current process ID\n");
-    term_puts("  ps                list all running processes\n");
-    term_puts("  kill <pid>        terminate a process by PID\n");
-    /* term_puts("  files             launch graphical file browser\n"); */
-    /* term_puts("  view              launch text viewer\n"); */
-    term_puts("  spawn <path>      launch an ELF from initrd (wait)\n");
-    term_puts("  spawn <path> &    launch in background (no wait)\n");
-    term_puts("  exit [code]       exit the terminal\n");
-    /* term_puts("Filesystem paths:\n");
-    term_puts("  /           FAT32 disk root (when disk.img attached)\n");
-    term_puts("  /initrd/    embedded CPIO initrd (always available)\n");
-    term_puts("  /afs/       AetherOS Filesystem (virtio-blk hd1)\n");
-    term_puts("  Relative paths are resolved against the current CWD.\n"); */
-    term_puts("\nNetworking:\n");
-    term_puts("  net               show IP/MAC/gateway/DNS\n");
-    term_puts("  ping <ip>         ICMP echo to IP address\n");
-    term_puts("  nslookup <host>   DNS A-record lookup\n");
-    term_puts("  wget <ip>:<port><path>  HTTP GET (first 512 bytes)\n");
-    term_puts("  http <url>          HTTP/1.1 client (Content-Length + chunked)\n");
-    term_puts("    e.g. http http://10.0.2.2:8080/\n");
+    int total = 0;
+    while (g_help_lines[total]) total++;
+
+    int i = 0, page = 1;
+    while (i < total) {
+        int end = i + HELP_PAGE_LINES;
+        if (end > total) end = total;
+        for (int j = i; j < end; j++) {
+            term_puts(g_help_lines[j]);
+            term_putc('\n');
+        }
+        i = end;
+        if (i < total) {
+            term_printf("-- page %d -- [any key: next, q: quit] --\n", page++);
+            if (term_wait_any_key()) return;
+        }
+    }
+}
+
+static void cmd_shutdown(void);          /* forward — defined below */
+static void cmd_reboot(void);            /* forward — defined below */
+static void cmd_ps(void);               /* forward — defined below */
+static void cmd_kill(const char *pid);  /* forward — defined below */
+
+static void cmd_whoami(void)
+{
+    user_info_t ui;
+    if (sys_user_get_cur(&ui) < 0) {
+        term_puts("whoami: not logged in\n");
+        return;
+    }
+    term_printf("%s (uid=%u, role=%s)%s\n",
+                ui.name, ui.uid,
+                ui.role ? "admin" : "user",
+                g_elevated ? " [elevated]" : "");
+}
+
+/*
+ * cmd_sudo — re-authenticate the current admin user and set the session
+ * elevation flag.  Once elevated, the '#' prompt indicator is shown and
+ * the flag is checked before sensitive operations (shutdown, reboot, kill).
+ *
+ * Usage: sudo <command>   — elevate then run command
+ *        sudo             — elevate only (persistent for the session)
+ */
+static void cmd_sudo(int argc, char **argv)
+{
+    user_info_t ui;
+    if (sys_user_get_cur(&ui) < 0 || ui.role != 1 /* ROLE_ADMIN */) {
+        term_puts("sudo: permission denied — admin account required\n");
+        return;
+    }
+
+    if (!g_elevated) {
+        term_printf("[sudo] password for %s: ", ui.name);
+        char pw[256];
+        term_readline_masked(pw, sizeof(pw));
+        if (sys_user_login(ui.name, pw) < 0) {
+            term_puts("sudo: authentication failed\n");
+            return;
+        }
+        g_elevated = 1;
+        term_puts("[sudo] session elevated — prompt shows '#'\n");
+    }
+
+    if (argc < 2) return;   /* sudo with no command: just elevate */
+
+    /* Re-dispatch the sub-command with elevation active */
+    const char *sub = argv[1];
+    if      (strcmp(sub, "shutdown") == 0) cmd_shutdown();
+    else if (strcmp(sub, "reboot")   == 0) cmd_reboot();
+    else if (strcmp(sub, "kill")     == 0) cmd_kill(argc > 2 ? argv[2] : NULL);
+    else if (strcmp(sub, "ps")       == 0) cmd_ps();
+    else if (strcmp(sub, "whoami")   == 0) cmd_whoami();
+    else
+        term_printf("sudo: %s: not a supported sudo command\n", sub);
+}
+
+/*
+ * cmd_su — switch the current kernel user to another account.
+ * Usage: su [username]   — switches to username (defaults to "admin")
+ */
+static void cmd_su(const char *target)
+{
+    if (!target || target[0] == '\0') target = "admin";
+    term_printf("[su] password for %s: ", target);
+    char pw[256];
+    term_readline_masked(pw, sizeof(pw));
+    if (sys_user_login(target, pw) < 0) {
+        term_puts("su: authentication failed\n");
+        return;
+    }
+    refresh_user();
+    g_elevated = 0;   /* elevation is per-user; clear on switch */
+    term_printf("su: now logged in as %s\n", g_cur_user);
+}
+
+static void cmd_shutdown(void)
+{
+    if (!g_elevated) {
+        user_info_t ui;
+        if (sys_user_get_cur(&ui) < 0 || ui.role != 1 /* ROLE_ADMIN */) {
+            term_puts("shutdown: permission denied (admin only)\n");
+            return;
+        }
+    }
+    term_puts("System is shutting down...\n");
+    sys_power_shutdown();
+}
+
+static void cmd_reboot(void)
+{
+    if (!g_elevated) {
+        user_info_t ui;
+        if (sys_user_get_cur(&ui) < 0 || ui.role != 1 /* ROLE_ADMIN */) {
+            term_puts("reboot: permission denied (admin only)\n");
+            return;
+        }
+    }
+    term_puts("System is rebooting...\n");
+    sys_power_reboot();
 }
 
 static void cmd_echo(int argc, char **argv)
@@ -815,6 +1039,48 @@ static void cmd_rm(const char *path)
         term_printf("rm: %s deleted with success\n", resolved);
     }
 
+}
+
+static void cmd_mv(const char *src, const char *dst)
+{
+    if (!src || src[0] == '\0' || !dst || dst[0] == '\0') {
+        term_puts("usage: mv <source> <dest>\n");
+        return;
+    }
+
+    char rsrc[CWD_MAX], rdst[CWD_MAX];
+    path_resolve(rsrc, sizeof(rsrc), src);
+    path_resolve(rdst, sizeof(rdst), dst);
+
+    long sfd = sys_fs_open(rsrc);
+    if (sfd < 0) { term_printf("mv: %s: no such file\n", rsrc); return; }
+
+    long dfd = sys_fs_create(rdst);
+    if (dfd < 0) {
+        sys_fs_close(sfd);
+        term_printf("mv: %s: cannot create destination\n", rdst);
+        return;
+    }
+
+    char buf[512];
+    long n;
+    int err = 0;
+    while ((n = sys_fs_read(sfd, buf, (long)sizeof(buf))) > 0) {
+        if (sys_fs_write(dfd, buf, n) < 0) { err = 1; break; }
+    }
+    sys_fs_close(sfd);
+    sys_fs_close(dfd);
+
+    if (err) {
+        sys_fs_rm(rdst);
+        term_printf("mv: write to %s failed\n", rdst);
+        return;
+    }
+
+    if (sys_fs_rm(rsrc) < 0)
+        term_printf("mv: copied to %s but could not remove %s\n", rdst, rsrc);
+    else
+        term_printf("mv: %s -> %s\n", rsrc, rdst);
 }
 
 static void cmd_mount(void)
@@ -1159,6 +1425,7 @@ int main(void)
 {
     gfx_init();
     term_init();
+    refresh_user();   /* populate g_cur_user from the kernel session */
 
     /* Register with the WM; take focus immediately */
     g_win_id = sys_wm_register(WX, WY, WIN_W, WIN_H, "AetherTerm");
@@ -1231,6 +1498,7 @@ int main(void)
         else if (strcmp(cmd, "mkdir")    == 0) cmd_mkdir(argc > 1 ? argv[1] : NULL);
         else if (strcmp(cmd, "touch")    == 0) cmd_touch(argc > 1 ? argv[1] : NULL);
         else if (strcmp(cmd, "rm")       == 0) cmd_rm(argc > 1 ? argv[1] : NULL);
+        else if (strcmp(cmd, "mv")       == 0) cmd_mv(argc > 1 ? argv[1] : NULL, argc > 2 ? argv[2] : NULL);
         else if (strcmp(cmd, "cat")      == 0) cmd_cat(argc > 1 ? argv[1] : NULL);
         else if (strcmp(cmd, "mount")    == 0) cmd_mount();
         else if (strcmp(cmd, "disk")     == 0) cmd_disk();
@@ -1248,6 +1516,11 @@ int main(void)
         else if (strcmp(cmd, "ping")     == 0) cmd_ping(argc > 1 ? argv[1] : NULL);
         else if (strcmp(cmd, "nslookup") == 0) cmd_nslookup(argc > 1 ? argv[1] : NULL);
         else if (strcmp(cmd, "wget")     == 0) cmd_wget(argc > 1 ? argv[1] : NULL);
+        else if (strcmp(cmd, "shutdown") == 0) cmd_shutdown();
+        else if (strcmp(cmd, "reboot")   == 0) cmd_reboot();
+        else if (strcmp(cmd, "whoami")   == 0) cmd_whoami();
+        else if (strcmp(cmd, "su")       == 0) cmd_su(argc > 1 ? argv[1] : NULL);
+        else if (strcmp(cmd, "sudo")     == 0) cmd_sudo(argc, argv);
         else if (strcmp(cmd, "exit")  == 0) {
             int code = (argc > 1) ? atoi(argv[1]) : 0;
             term_puts("Goodbye!\n");

@@ -177,22 +177,106 @@ static void icon_paste(int x, int y)
     gfx_fill(x+3, y+12, 6, 1, IC_RULE);
 }
 
+/* Envelope body outline (shared shape for mail icons, 14×14 cell) */
+static void draw_envelope_body(int x, int y)
+{
+    /* Envelope body: off-white rectangle */
+    gfx_fill(x+1, y+4, 12, 9, IC_WHITE);
+    /* Border */
+    gfx_hline(x+1, y+4,  12, IC_RULE);   /* top edge */
+    gfx_hline(x+1, y+12, 12, IC_RULE);   /* bottom edge */
+    gfx_vline(x+1, y+4,   9, IC_RULE);   /* left edge */
+    gfx_vline(x+12, y+4,  9, IC_RULE);   /* right edge */
+    /* V-flap lines from corners to centre */
+    gfx_fill(x+2,  y+5, 4, 1, IC_RULE);
+    gfx_fill(x+3,  y+6, 2, 1, IC_RULE);
+    gfx_fill(x+4,  y+7, 2, 1, IC_RULE);  /* left diagonal */
+    gfx_fill(x+8,  y+7, 2, 1, IC_RULE);
+    gfx_fill(x+9,  y+6, 2, 1, IC_RULE);
+    gfx_fill(x+10, y+5, 2, 1, IC_RULE);  /* right diagonal */
+    gfx_fill(x+6,  y+8, 2, 1, IC_RULE);  /* centre V tip */
+}
+
+/* Envelope + pen nib (compose) */
+static void icon_compose(int x, int y)
+{
+    draw_envelope_body(x, y);
+    /* Pen nib at top-right: diagonal stroke */
+    gfx_fill(x+11, y+1, 2, 2, IC_GREEN);   /* pen tip */
+    gfx_fill(x+10, y+2, 1, 1, IC_GREEN);
+    gfx_fill(x+9,  y+3, 1, 1, IC_GREEN);
+}
+
+/* Envelope + left-pointing arrow (reply) */
+static void icon_reply(int x, int y)
+{
+    draw_envelope_body(x, y);
+    /* Left arrow above envelope */
+    gfx_fill(x+1, y+2, 5, 1, IC_ARROW);    /* shaft */
+    gfx_fill(x+1, y+1, 1, 1, IC_ARROW);    /* arrowhead top */
+    gfx_fill(x+1, y+3, 1, 1, IC_ARROW);    /* arrowhead bottom */
+    gfx_fill(x+2, y+2, 1, 1, IC_ARROW);    /* tip highlight */
+}
+
+/* Envelope + right-pointing arrow (forward) */
+static void icon_forward_mail(int x, int y)
+{
+    draw_envelope_body(x, y);
+    /* Right arrow above envelope */
+    gfx_fill(x+7, y+2, 5, 1, IC_ARROW);    /* shaft */
+    gfx_fill(x+11, y+1, 1, 1, IC_ARROW);   /* arrowhead top */
+    gfx_fill(x+11, y+3, 1, 1, IC_ARROW);   /* arrowhead bottom */
+    gfx_fill(x+11, y+2, 1, 1, IC_ARROW);   /* tip */
+}
+
+/* Circular refresh arrow (clockwise loop) */
+static void icon_refresh(int x, int y)
+{
+    /* Arc top: horizontal bar */
+    gfx_fill(x+3, y+1,  7, 2, IC_ARROW);
+    /* Arc right: vertical bar */
+    gfx_fill(x+9, y+3,  2, 5, IC_ARROW);
+    /* Arc bottom: horizontal bar */
+    gfx_fill(x+3, y+10, 7, 2, IC_ARROW);
+    /* Arc left: vertical bar */
+    gfx_fill(x+2, y+3,  2, 5, IC_ARROW);
+    /* Arrowhead at top-right (clockwise) */
+    gfx_fill(x+10, y+1, 2, 2, IC_ARROW);   /* tip block */
+    gfx_fill(x+10, y+1, 1, 3, IC_ARROW);
+}
+
+/* 4-tooth gear (account settings) */
+static void icon_settings(int x, int y)
+{
+    unsigned c = IC_WHITE;
+    gfx_fill((unsigned)(x+3),  (unsigned)(y+3),  8u, 8u, c); /* body */
+    gfx_fill((unsigned)(x+5),  (unsigned)(y+0),  4u, 3u, c); /* top tooth */
+    gfx_fill((unsigned)(x+5),  (unsigned)(y+11), 4u, 3u, c); /* bottom tooth */
+    gfx_fill((unsigned)(x+0),  (unsigned)(y+5),  4u, 4u, c); /* left tooth */
+    gfx_fill((unsigned)(x+10), (unsigned)(y+5),  4u, 4u, c); /* right tooth */
+}
+
 /* ── Dispatch ─────────────────────────────────────────────────────────────── */
 
 void gfx_toolbar_icon(int x, int y, unsigned char icon_id)
 {
     switch (icon_id) {
-    case ICON_BTN_NEW:   icon_new(x, y);   break;
-    case ICON_BTN_OPEN:  icon_open(x, y);  break;
-    case ICON_BTN_SAVE:  icon_save(x, y);  break;
-    case ICON_BTN_RUN:   icon_run(x, y);   break;
-    case ICON_BTN_STOP:  icon_stop(x, y);  break;
-    case ICON_BTN_CLEAR: icon_clear(x, y); break;
-    case ICON_BTN_UNDO:  icon_undo(x, y);  break;
-    case ICON_BTN_REDO:  icon_redo(x, y);  break;
-    case ICON_BTN_CUT:   icon_cut(x, y);   break;
-    case ICON_BTN_COPY:  icon_copy(x, y);  break;
-    case ICON_BTN_PASTE: icon_paste(x, y); break;
+    case ICON_BTN_NEW:     icon_new(x, y);          break;
+    case ICON_BTN_OPEN:    icon_open(x, y);         break;
+    case ICON_BTN_SAVE:    icon_save(x, y);         break;
+    case ICON_BTN_RUN:     icon_run(x, y);          break;
+    case ICON_BTN_STOP:    icon_stop(x, y);         break;
+    case ICON_BTN_CLEAR:   icon_clear(x, y);        break;
+    case ICON_BTN_UNDO:    icon_undo(x, y);         break;
+    case ICON_BTN_REDO:    icon_redo(x, y);         break;
+    case ICON_BTN_CUT:     icon_cut(x, y);          break;
+    case ICON_BTN_COPY:    icon_copy(x, y);         break;
+    case ICON_BTN_PASTE:   icon_paste(x, y);        break;
+    case ICON_BTN_COMPOSE: icon_compose(x, y);      break;
+    case ICON_BTN_REPLY:   icon_reply(x, y);        break;
+    case ICON_BTN_FORWARD: icon_forward_mail(x, y); break;
+    case ICON_BTN_REFRESH:   icon_refresh(x, y);   break;
+    case ICON_BTN_SETTINGS:  icon_settings(x, y);  break;
     default: break;
     }
 }

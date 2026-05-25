@@ -53,39 +53,39 @@ void audio_conf_init(void)
 
     char buf[16];
 
-    if (kconfig_read("/config/audio.conf", "output_volume", buf, 16) == 0) {
+    if (kconfig_read("/config/audio.cfg", "output_volume", buf, 16) == 0) {
         int v = katoi(buf);
         if (v >= 0 && v <= 100) g_audio_conf.output_volume = (u8)v;
     }
-    if (kconfig_read("/config/audio.conf", "input_gain", buf, 16) == 0) {
+    if (kconfig_read("/config/audio.cfg", "input_gain", buf, 16) == 0) {
         int v = katoi(buf);
         if (v >= 0 && v <= 100) g_audio_conf.input_gain = (u8)v;
     }
-    if (kconfig_read("/config/audio.conf", "alert_volume", buf, 16) == 0) {
+    if (kconfig_read("/config/audio.cfg", "alert_volume", buf, 16) == 0) {
         int v = katoi(buf);
         if (v >= 0 && v <= 100) g_audio_conf.alert_volume = (u8)v;
     }
-    if (kconfig_read("/config/audio.conf", "output_mute", buf, 16) == 0)
+    if (kconfig_read("/config/audio.cfg", "output_mute", buf, 16) == 0)
         g_audio_conf.output_mute = (u8)(katoi(buf) != 0);
-    if (kconfig_read("/config/audio.conf", "output_balance", buf, 16) == 0) {
+    if (kconfig_read("/config/audio.cfg", "output_balance", buf, 16) == 0) {
         int v = katoi(buf);
         if (v >= -100 && v <= 100) g_audio_conf.output_balance = (s8)v;
     }
-    if (kconfig_read("/config/audio.conf", "sample_rate", buf, 16) == 0) {
+    if (kconfig_read("/config/audio.cfg", "sample_rate", buf, 16) == 0) {
         u32 sr = (u32)katoi(buf);
         if (valid_sample_rate(sr)) g_audio_conf.sample_rate = sr;
     }
-    if (kconfig_read("/config/audio.conf", "period_frames", buf, 16) == 0) {
+    if (kconfig_read("/config/audio.cfg", "period_frames", buf, 16) == 0) {
         u16 p = (u16)katoi(buf);
         if (valid_period(p)) g_audio_conf.period_frames = p;
     }
-    if (kconfig_read("/config/audio.conf", "bit_depth", buf, 16) == 0) {
+    if (kconfig_read("/config/audio.cfg", "bit_depth", buf, 16) == 0) {
         u8 d = (u8)katoi(buf);
         if (valid_depth(d)) g_audio_conf.bit_depth = d;
     }
-    kconfig_read("/config/audio.conf", "output_dev",
+    kconfig_read("/config/audio.cfg", "output_dev",
                  g_audio_conf.output_dev, AUDIO_CONF_NAME_MAX);
-    kconfig_read("/config/audio.conf", "input_dev",
+    kconfig_read("/config/audio.cfg", "input_dev",
                  g_audio_conf.input_dev,  AUDIO_CONF_NAME_MAX);
 
     kinfo("audio_conf: vol=%u mute=%u bal=%d gain=%u sr=%u period=%u\n",
@@ -118,19 +118,19 @@ int audio_conf_set(const audio_conf_t *cfg)
 
     char buf[12];
 
-    kitoa((int)cfg->output_volume,  buf, 12); kconfig_write("/config/audio.conf", "output_volume",  buf);
-    kitoa((int)cfg->input_gain,     buf, 12); kconfig_write("/config/audio.conf", "input_gain",     buf);
-    kitoa((int)cfg->alert_volume,   buf, 12); kconfig_write("/config/audio.conf", "alert_volume",   buf);
-    kitoa((int)cfg->output_mute,    buf, 12); kconfig_write("/config/audio.conf", "output_mute",    buf);
-    kitoa((int)cfg->output_balance, buf, 12); kconfig_write("/config/audio.conf", "output_balance", buf);
-    kitoa((int)cfg->sample_rate,    buf, 12); kconfig_write("/config/audio.conf", "sample_rate",    buf);
-    kitoa((int)cfg->period_frames,  buf, 12); kconfig_write("/config/audio.conf", "period_frames",  buf);
-    kitoa((int)cfg->bit_depth,      buf, 12); kconfig_write("/config/audio.conf", "bit_depth",      buf);
+    kitoa((int)cfg->output_volume,  buf, 12); kconfig_write("/config/audio.cfg", "output_volume",  buf);
+    kitoa((int)cfg->input_gain,     buf, 12); kconfig_write("/config/audio.cfg", "input_gain",     buf);
+    kitoa((int)cfg->alert_volume,   buf, 12); kconfig_write("/config/audio.cfg", "alert_volume",   buf);
+    kitoa((int)cfg->output_mute,    buf, 12); kconfig_write("/config/audio.cfg", "output_mute",    buf);
+    kitoa((int)cfg->output_balance, buf, 12); kconfig_write("/config/audio.cfg", "output_balance", buf);
+    kitoa((int)cfg->sample_rate,    buf, 12); kconfig_write("/config/audio.cfg", "sample_rate",    buf);
+    kitoa((int)cfg->period_frames,  buf, 12); kconfig_write("/config/audio.cfg", "period_frames",  buf);
+    kitoa((int)cfg->bit_depth,      buf, 12); kconfig_write("/config/audio.cfg", "bit_depth",      buf);
 
     if (cfg->output_dev[0])
-        kconfig_write("/config/audio.conf", "output_dev", cfg->output_dev);
+        kconfig_write("/config/audio.cfg", "output_dev", cfg->output_dev);
     if (cfg->input_dev[0])
-        kconfig_write("/config/audio.conf", "input_dev",  cfg->input_dev);
+        kconfig_write("/config/audio.cfg", "input_dev",  cfg->input_dev);
 
     return 0;
 }

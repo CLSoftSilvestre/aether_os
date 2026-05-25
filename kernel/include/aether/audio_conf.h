@@ -2,7 +2,7 @@
  * AetherOS — Audio Configuration Subsystem
  * File: kernel/include/aether/audio_conf.h
  *
- * Persistent audio settings stored in /config/audio.conf on FAT32.
+ * Persistent audio settings stored in /config/audio.cfg on FAT32.
  * audio_conf_init() is called at boot (after fat32_mount).
  * audio_conf_set() validates, updates the live state, and persists.
  *
@@ -40,7 +40,7 @@ void audio_conf_init(void);
 void audio_conf_get(audio_conf_t *out);
 
 /*
- * Validate, apply, and persist cfg to /config/audio.conf.
+ * Validate, apply, and persist cfg to /config/audio.cfg.
  * Returns 0 on success, -1 if cfg is NULL or contains invalid values.
  */
 int  audio_conf_set(const audio_conf_t *cfg);

@@ -154,6 +154,7 @@ typedef struct {
     int   cursor;      /* byte offset 0..len */
     long  blink_tick;  /* tick when blink last toggled */
     int   blink_on;
+    int   password;    /* 1 = render '*' instead of actual characters */
     void (*on_change)(widget_t *w);
     void (*on_submit)(widget_t *w);
 } wdata_textinput_t;
@@ -180,6 +181,8 @@ typedef struct {
     int value;       /* current position (0..max) */
     int max;
     int page;        /* thumb size in value units */
+    int draw_ax;     /* absolute x from last draw — used by event handler */
+    int draw_ay;     /* absolute y from last draw — used by event handler */
 } wdata_scrollbar_t;
 
 typedef struct {

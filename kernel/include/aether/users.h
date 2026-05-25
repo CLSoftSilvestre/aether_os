@@ -2,7 +2,7 @@
  * AetherOS — User account management
  * File: kernel/include/aether/users.h
  *
- * Simple user database stored in /config/users.conf on FAT32.
+ * Simple user database stored in /config/users.cfg on FAT32.
  * Passwords are stored as djb2 hashes (adequate for a hobby OS).
  *
  * Config file format (one user per line):
@@ -34,10 +34,10 @@ extern user_t g_users[AETHER_MAX_USERS];
 extern u32    g_user_count;
 extern int    g_current_uid;   /* index into g_users, or -1 if not logged in */
 
-/* Initialise: load from /config/users.conf (or create default admin). */
+/* Initialise: load from /config/users.cfg (or create default admin). */
 void users_init(void);
 
-/* Persist the current user table to /config/users.conf. */
+/* Persist the current user table to /config/users.cfg. */
 int  users_save(void);
 
 /* djb2 hash of s (bare-metal, no libc). */

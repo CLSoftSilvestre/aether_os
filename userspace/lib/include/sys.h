@@ -982,6 +982,24 @@ static inline long sys_puts(const char *s)
     return sys_write(STDOUT_FILENO, s, len);
 }
 
+/* ── Power control syscalls ──────────────────────────────────────── */
+#define SYS_POWER_SHUTDOWN  924  /* () → does not return; powers off the machine */
+#define SYS_POWER_REBOOT    925  /* () → does not return; resets the machine     */
+
+__attribute__((noreturn))
+static inline void sys_power_shutdown(void)
+{
+    _sys0(SYS_POWER_SHUTDOWN);
+    __builtin_unreachable();
+}
+
+__attribute__((noreturn))
+static inline void sys_power_reboot(void)
+{
+    _sys0(SYS_POWER_REBOOT);
+    __builtin_unreachable();
+}
+
 /* ── System Preferences syscall numbers ──────────────────────────── */
 #define SYS_DISPLAY_GET_RES  930
 #define SYS_DISPLAY_SET_RES  931

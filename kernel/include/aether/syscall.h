@@ -121,6 +121,8 @@
                                      *   → 0 on set, or current governor on get         */
 #define SYS_POWER_THERMAL      922  /* () → SoC temperature in millidegrees C, or -1   */
 #define SYS_POWER_DPMS         923  /* (0=blank,1=wake,2=status) → 0 or blanked flag   */
+#define SYS_POWER_SHUTDOWN     924  /* () → does not return; powers off the machine     */
+#define SYS_POWER_REBOOT       925  /* () → does not return; resets the machine         */
 
 /* Graphics syscalls (Phase 4.1) — arg packing documented in syscall.c */
 #define SYS_FB_FILL     601   /* fill rect:  (x<<32|y, w<<32|h, color)       */
@@ -201,7 +203,7 @@
 
 /* ── System Preferences — Display ────────────────────────────────────────── */
 #define SYS_DISPLAY_GET_RES  930  /* () → (fb_width << 32) | fb_height             */
-#define SYS_DISPLAY_SET_RES  931  /* (w, h) → 0 or -1; writes /config/display.conf */
+#define SYS_DISPLAY_SET_RES  931  /* (w, h) → 0 or -1; writes /config/display.cfg */
                                   /*   Does NOT apply immediately; reboot required. */
 
 /* ── System Preferences — Network config ─────────────────────────────────── */
