@@ -132,8 +132,8 @@ void kernel_main(void)
     /* ── 6c. Block storage + VFS (Phase 5.2) ───────────────────────── */
     /*
      * Moved before net_init so the network config can be read from FAT32
-     * (/config/network.conf) before deciding DHCP vs. static IP, and so
-     * the display config (/config/display.conf) can be applied before
+     * (/config/network.cfg) before deciding DHCP vs. static IP, and so
+     * the display config (/config/display.cfg) can be applied before
      * spawning init.
      */
     pci_list_devices();
@@ -148,7 +148,7 @@ void kernel_main(void)
     /* ── Phase 8: Audio subsystem ───────────────────────────────────── */
     audio_core_init();  /* registers UAC2 / I2S / PWM devices           */
     usb_midi_init();    /* USB MIDI class driver (UMC202HD etc.)         */
-    audio_conf_init();  /* reads /config/audio.conf — fat32 already up  */
+    audio_conf_init();  /* reads /config/audio.cfg — fat32 already up  */
     boot_prof_stamp("audio");
 
     /* ── 6c.5 System config — display resolution ────────────────────── */
@@ -158,8 +158,8 @@ void kernel_main(void)
      */
     {
         char wbuf[8], hbuf[8];
-        if (kconfig_read("/config/display.conf", "width",  wbuf, 8) == 0 &&
-            kconfig_read("/config/display.conf", "height", hbuf, 8) == 0) {
+        if (kconfig_read("/config/display.cfg", "width",  wbuf, 8) == 0 &&
+            kconfig_read("/config/display.cfg", "height", hbuf, 8) == 0) {
             u32 cw = (u32)katoi(wbuf);
             u32 ch = (u32)katoi(hbuf);
             ramfb_reconfigure(cw, ch);
@@ -170,9 +170,9 @@ void kernel_main(void)
     users_init();
     boot_prof_stamp("users");
 
-    /* ── 6d. Network (after storage so it can read /config/network.conf) */
+    /* ── 6d. Network (after storage so it can read /config/network.cfg) */
     /*
-     * net_init() runs VirtIO net setup, reads /config/network.conf to
+     * net_init() runs VirtIO net setup, reads /config/network.cfg to
      * decide DHCP vs. static IP, then busy-polls DHCP if needed.
      * DHCP completes before IRQs are enabled so g_our_ip is valid when
      * userspace starts.  The timer IRQ calls net_rx_poll() at 100 Hz.

@@ -203,7 +203,7 @@
 
 /* ── System Preferences — Display ────────────────────────────────────────── */
 #define SYS_DISPLAY_GET_RES  930  /* () → (fb_width << 32) | fb_height             */
-#define SYS_DISPLAY_SET_RES  931  /* (w, h) → 0 or -1; writes /config/display.conf */
+#define SYS_DISPLAY_SET_RES  931  /* (w, h) → 0 or -1; writes /config/display.cfg */
                                   /*   Does NOT apply immediately; reboot required. */
 
 /* ── System Preferences — Network config ─────────────────────────────────── */

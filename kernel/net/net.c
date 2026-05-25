@@ -6,7 +6,7 @@
  * to the Ethernet receive path.
  *
  * boot sequence (after SP storage reorder):
- *   fat32_mount → vfs_init → net_init → reads /config/network.conf
+ *   fat32_mount → vfs_init → net_init → reads /config/network.cfg
  *   → static (applies immediately) or DHCP fallback
  */
 
@@ -85,7 +85,7 @@ void net_conf_get(net_conf_t *out)
     /* Determine mode by checking the saved config */
     char mode[8];
     out->mode = 0;   /* default: DHCP */
-    if (kconfig_read("/config/network.conf", "mode", mode, 8) == 0) {
+    if (kconfig_read("/config/network.cfg", "mode", mode, 8) == 0) {
         if (mode[0] == 's') out->mode = 1;   /* "static" */
     }
 }
@@ -120,14 +120,14 @@ int net_conf_set(const net_conf_t *cfg)
         g_net_ready   = 1;
         kinfo("NET: static IP set via System Preferences\n");
 
-        kconfig_write("/config/network.conf", "mode", "static");
-        net_ip_to_str(cfg->ip,      ipbuf); kconfig_write("/config/network.conf", "ip",      ipbuf);
-        net_ip_to_str(cfg->mask,    ipbuf); kconfig_write("/config/network.conf", "mask",    ipbuf);
-        net_ip_to_str(cfg->gateway, ipbuf); kconfig_write("/config/network.conf", "gateway", ipbuf);
-        net_ip_to_str(cfg->dns,     ipbuf); kconfig_write("/config/network.conf", "dns",     ipbuf);
+        kconfig_write("/config/network.cfg", "mode", "static");
+        net_ip_to_str(cfg->ip,      ipbuf); kconfig_write("/config/network.cfg", "ip",      ipbuf);
+        net_ip_to_str(cfg->mask,    ipbuf); kconfig_write("/config/network.cfg", "mask",    ipbuf);
+        net_ip_to_str(cfg->gateway, ipbuf); kconfig_write("/config/network.cfg", "gateway", ipbuf);
+        net_ip_to_str(cfg->dns,     ipbuf); kconfig_write("/config/network.cfg", "dns",     ipbuf);
     } else {
         /* DHCP: persist only; requires reboot to re-run DHCP discovery */
-        kconfig_write("/config/network.conf", "mode", "dhcp");
+        kconfig_write("/config/network.cfg", "mode", "dhcp");
         kinfo("NET: DHCP mode saved — reboot to apply\n");
     }
     return 0;
@@ -144,17 +144,17 @@ void net_init(void)
         return;
     }
 
-    /* Read /config/network.conf (FAT32 is mounted before net_init now) */
+    /* Read /config/network.cfg (FAT32 is mounted before net_init now) */
     char mode[8];
-    if (kconfig_read("/config/network.conf", "mode", mode, 8) == 0 &&
+    if (kconfig_read("/config/network.cfg", "mode", mode, 8) == 0 &&
         mode[0] == 's') {
         /* Static configuration */
         char ibuf[16];
         u32 ip = 0, mask = 0, gw = 0, dns = 0;
-        if (kconfig_read("/config/network.conf", "ip",      ibuf, 16) == 0) ip   = net_ip_parse(ibuf);
-        if (kconfig_read("/config/network.conf", "mask",    ibuf, 16) == 0) mask = net_ip_parse(ibuf);
-        if (kconfig_read("/config/network.conf", "gateway", ibuf, 16) == 0) gw   = net_ip_parse(ibuf);
-        if (kconfig_read("/config/network.conf", "dns",     ibuf, 16) == 0) dns  = net_ip_parse(ibuf);
+        if (kconfig_read("/config/network.cfg", "ip",      ibuf, 16) == 0) ip   = net_ip_parse(ibuf);
+        if (kconfig_read("/config/network.cfg", "mask",    ibuf, 16) == 0) mask = net_ip_parse(ibuf);
+        if (kconfig_read("/config/network.cfg", "gateway", ibuf, 16) == 0) gw   = net_ip_parse(ibuf);
+        if (kconfig_read("/config/network.cfg", "dns",     ibuf, 16) == 0) dns  = net_ip_parse(ibuf);
 
         if (ip != 0) {
             g_our_ip      = ip;
@@ -162,7 +162,7 @@ void net_init(void)
             g_gateway_ip  = gw;
             g_dns_ip      = dns ? dns : 0x08080808u;
             g_net_ready   = 1;
-            kinfo("NET: static config from /config/network.conf\n");
+            kinfo("NET: static config from /config/network.cfg\n");
             return;
         }
         kwarn("NET: static mode but IP is 0.0.0.0 — falling back to DHCP\n");

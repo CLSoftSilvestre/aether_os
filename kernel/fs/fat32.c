@@ -601,6 +601,13 @@ static int find_dirent_loc(u32 dir_cluster, const char *target,
 {
     u32 spc = g_bpb.sectors_per_cluster;
 
+    /* Pre-compute the 8.3 form of target for short-name comparison.
+     * name_to_83 silently truncates extensions > 3 chars, so comparing
+     * the normalised bytes avoids mismatches when the stored name was
+     * written with a truncated extension (e.g. "users.conf" → "USERS.CON"). */
+    u8 t_base[8], t_ext[3];
+    name_to_83(target, t_base, t_ext);
+
     g_lfn_valid = 0;
     for (int i = 0; i < 261; i++) g_lfn_buf[i] = '\0';
 
@@ -627,17 +634,30 @@ static int find_dirent_loc(u32 dir_cluster, const char *target,
                     continue;
                 }
                 if (de->attr & ATTR_VOLUME_ID) { g_lfn_valid = 0; continue; }
-                char ename[261];
+
+                int matched = 0;
                 if (g_lfn_valid && g_lfn_buf[0]) {
+                    /* LFN entry: compare against the full long name */
+                    char ename[261];
                     int k = 0;
                     while (k < 260 && g_lfn_buf[k]) { ename[k] = g_lfn_buf[k]; k++; }
                     ename[k] = '\0';
+                    matched = fat_streq_ci(ename, target);
                 } else {
-                    short_name_to_str(de, ename, 261);
+                    /* Short-name entry: compare 8.3 byte arrays directly so
+                     * that a 3-char normalised target matches the stored bytes
+                     * even when the original filename had a longer extension. */
+                    matched = 1;
+                    for (int i = 0; i < 8 && matched; i++)
+                        if (de->name[i] != t_base[i]) matched = 0;
+                    for (int i = 0; i < 3 && matched; i++)
+                        if (de->ext[i] != t_ext[i]) matched = 0;
                 }
+
                 g_lfn_valid = 0;
                 for (int i = 0; i < 261; i++) g_lfn_buf[i] = '\0';
-                if (fat_streq_ci(ename, target)) {
+
+                if (matched) {
                     if (out_lba)  *out_lba  = sec_lba;
                     if (out_off)  *out_off  = off;
                     if (out_first_cluster)

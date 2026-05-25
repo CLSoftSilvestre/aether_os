@@ -63,7 +63,7 @@ typedef struct {
     u8  ready;       /* 1 if network is up */
 } net_conf_t;
 
-/* Apply a static net_conf_t (updates globals + saves to /config/network.conf) */
+/* Apply a static net_conf_t (updates globals + saves to /config/network.cfg) */
 int net_conf_set(const net_conf_t *cfg);
 
 /* Fill a net_conf_t from current globals */

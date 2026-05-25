@@ -2,7 +2,7 @@
  * AetherOS — Kernel configuration file reader/writer
  * File: kernel/include/aether/config.h
  *
- * Reads and writes simple key=value config files on FAT32 at /config/*.conf.
+ * Reads and writes simple key=value config files on FAT32 at /config/*.cfg.
  * Lines starting with '#' are treated as comments and preserved on write.
  * Max file size: 2048 bytes.  Max key length: 32 chars.  Max value: 128 chars.
  *

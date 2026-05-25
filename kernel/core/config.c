@@ -2,7 +2,7 @@
  * AetherOS — Kernel configuration file reader/writer
  * File: kernel/core/config.c
  *
- * Persistent key=value config on FAT32 at /config/*.conf.
+ * Persistent key=value config on FAT32 at /config/*.cfg.
  * Operates directly on FAT32 (not VFS), so it can be called early in boot
  * (after fat32_mount) and from syscall handlers.
  */

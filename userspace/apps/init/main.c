@@ -285,19 +285,16 @@ int main(void)
     SCR_H  = (int)gfx_height();
     DOCK_Y = SCR_H - DOCK_H;
 
-    /* Spawn compositor then system processes.  Compositor registers as the WM
-     * compositor so the kernel routes WM_EV_CLOSE_REQUEST events to it.
-     * Desktop owns wallpaper + icons as a GPU BO window (below all apps). */
     sys_spawn("/compositor");
+    sys_cursor_show(1);
     sys_spawn("/topbar");
     g_desktop_pid = sys_spawn("/desktop");
     g_dock_pid    = sys_spawn("/dock");
 
-    sys_cursor_show(1);
-
     int  prev_buttons = 0;
 
     for (;;) {
+
         /* ── Detect focus changes from dock or other external processes ── */
         {
             long cur_focus = sys_wm_focus_get();

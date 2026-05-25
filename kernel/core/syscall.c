@@ -1232,9 +1232,13 @@ long syscall_dispatch(trap_frame_t *frame)
     }
 
     case SYS_POWER_SHUTDOWN:
+        if (g_current_uid < 0 ||
+            g_users[g_current_uid].role != AETHER_ROLE_ADMIN) return -1;
         psci_system_off();   /* does not return */
 
     case SYS_POWER_REBOOT:
+        if (g_current_uid < 0 ||
+            g_users[g_current_uid].role != AETHER_ROLE_ADMIN) return -1;
         psci_system_reset(); /* does not return */
 
     /* ── Display (System Preferences) ────────────────────────────────── */
@@ -1243,6 +1247,8 @@ long syscall_dispatch(trap_frame_t *frame)
         return (long)(((u64)fb_width << 32) | (u64)fb_height);
 
     case SYS_DISPLAY_SET_RES: {
+        if (g_current_uid < 0 ||
+            g_users[g_current_uid].role != AETHER_ROLE_ADMIN) return -1;
         u32 w = (u32)((u64)arg0 >> 32);
         u32 h = (u32)((u64)arg0 & 0xFFFFFFFFu);
         /* Validate preset list (same as ramfb.c) */
@@ -1255,8 +1261,8 @@ long syscall_dispatch(trap_frame_t *frame)
         char wbuf[8], hbuf[8];
         kitoa((int)w, wbuf, 8);
         kitoa((int)h, hbuf, 8);
-        kconfig_write("/config/display.conf", "width",  wbuf);
-        kconfig_write("/config/display.conf", "height", hbuf);
+        kconfig_write("/config/display.cfg", "width",  wbuf);
+        kconfig_write("/config/display.cfg", "height", hbuf);
         return 0;
     }
 
@@ -1270,6 +1276,8 @@ long syscall_dispatch(trap_frame_t *frame)
     }
 
     case SYS_NET_CONF_SET: {
+        if (g_current_uid < 0 ||
+            g_users[g_current_uid].role != AETHER_ROLE_ADMIN) return -1;
         const net_conf_t *cfg = (const net_conf_t *)arg0;
         if (!cfg) return -1;
         return (long)net_conf_set(cfg);
@@ -1608,6 +1616,8 @@ long syscall_dispatch(trap_frame_t *frame)
     }
 
     case SYS_AUDIO_CONF_SET: {
+        if (g_current_uid < 0 ||
+            g_users[g_current_uid].role != AETHER_ROLE_ADMIN) return -1;
         const audio_conf_t *cfg = (const audio_conf_t *)(const void *)arg0;
         if (!cfg) return -1;
         return audio_conf_set(cfg);

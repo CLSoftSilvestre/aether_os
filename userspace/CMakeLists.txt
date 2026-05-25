@@ -242,6 +242,22 @@ set_target_properties(user_textviewer PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
 )
 
+# ── login — Boot-time login screen ───────────────────────────────────────────
+add_executable(user_login
+    apps/login/main.c
+    lib/crt0.S
+)
+target_include_directories(user_login PRIVATE lib/include)
+target_compile_options(user_login PRIVATE ${USER_COMPILE_FLAGS})
+target_link_libraries(user_login PRIVATE libwidget libaether)
+target_link_options(user_login PRIVATE
+    -T ${USER_LINKER_SCRIPT} -nostdlib -static -Wl,--build-id=none
+)
+set_target_properties(user_login PROPERTIES
+    OUTPUT_NAME "login" SUFFIX ""
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
+)
+
 # ── sys_prefs — System Preferences application ───────────────────────────────
 add_executable(user_sys_prefs
     apps/sys_prefs/main.c
@@ -2223,7 +2239,7 @@ add_custom_command(
     COMMAND ${CMAKE_SOURCE_DIR}/scripts/make_initrd.sh
                 ${INITRD_STAGING}
                 ${INITRD_CPIO}
-    DEPENDS user_init user_dock user_topbar user_desktop user_compositor user_aether_term user_statusbar user_files
+    DEPENDS user_init user_login user_dock user_topbar user_desktop user_compositor user_aether_term user_statusbar user_files
             user_textviewer user_calculator user_tictactoe user_widget_demo
             user_aether_editor user_aether_http user_telnet user_aether_top user_aether_mail
             user_sys_prefs user_aether_sound user_aether_guitar aeguitar_assets

@@ -329,7 +329,8 @@ static const char *const g_cmds[] = {
     "cat", "cd", "clear", "disk", "echo", "exit", "files",
     "help", "kill", "ls", "mem", "mkdir", "mount", "mv",
     "net", "nslookup", "pid", "ping", "ps", "pwd", "reboot", "rm",
-    "shutdown", "spawn", "time", "touch", "uname", "view", "wget",
+    "shutdown", "spawn", "su", "sudo", "time", "touch", "uname",
+    "view", "wget", "whoami",
     NULL
 };
 
@@ -553,9 +554,83 @@ static int term_readline(char *buf, int max)
 #define CWD_MAX  256
 static char g_cwd[CWD_MAX] = "/";
 
-/* Print the prompt including the CWD. */
+/* ── Session privilege state ─────────────────────────────────────────────── */
+
+static char g_cur_user[32]  = "?";   /* current username; refreshed on login */
+static int  g_elevated      = 0;     /* 1 after successful sudo authentication */
+
+/* Refresh g_cur_user from the kernel */
+static void refresh_user(void)
+{
+    user_info_t ui;
+    if (sys_user_get_cur(&ui) >= 0) {
+        int i;
+        for (i = 0; i < 31 && ui.name[i]; i++) g_cur_user[i] = ui.name[i];
+        g_cur_user[i] = '\0';
+    }
+}
+
+/*
+ * term_readline_masked — like term_readline but echoes '*' for each character.
+ * Used for password prompts.
+ */
+static int term_readline_masked(char *buf, int max)
+{
+    int n = 0;
+    term_draw_cursor();
+    while (n < max - 1) {
+        unsigned long long raw = sys_wm_key_recv();
+        if (wm_event_is_redraw(raw)) {
+            g_win_x = wm_event_redraw_x(raw);
+            g_win_y = wm_event_redraw_y(raw);
+            term_frame_begin();
+            draw_window();
+            term_redraw_all();
+            term_draw_cursor();
+            term_frame_end();
+            continue;
+        }
+        key_event_t ev = key_event_unpack(raw);
+        if (!ev.is_press) continue;
+        if (ev.keycode == KEY_ENTER) {
+            term_erase_cursor();
+            term_putc('\n');
+            break;
+        }
+        if (ev.keycode == KEY_BACKSPACE && n > 0) {
+            n--;
+            term_erase_cursor();
+            t_col--;
+            t_buf[t_row][t_col] = ' ';
+            term_frame_begin();
+            blit_term_bg_cell(t_row, t_col);
+            term_frame_end();
+            term_draw_cursor();
+            continue;
+        }
+        char c = term_key_to_char(ev);
+        if (!c) continue;
+        buf[n++] = c;
+        buf[n]   = '\0';
+        /* Echo a '*' instead of the actual character */
+        t_buf[t_row][t_col] = '*';
+        term_frame_begin();
+        blit_term_bg_cell(t_row, t_col);
+        gfx_char_transparent(TX + t_col * FONT_W, TY + t_row * FONT_H,
+                             '*', C_TEXT);
+        t_col++;
+        term_frame_end();
+        term_draw_cursor();
+    }
+    buf[n] = '\0';
+    return n;
+}
+
+/* Print the prompt including the username and CWD. */
 static void print_prompt(void)
 {
+    term_puts(g_cur_user);
+    if (g_elevated) term_putc('#'); else term_putc('@');
     term_puts("aesh[");
     term_puts(g_cwd);
     term_puts("]> ");
@@ -667,8 +742,11 @@ static const char *const g_help_lines[] = {
     "  spawn <path>          launch an ELF from initrd (wait)",
     "  spawn <path> &        launch in background (no wait)",
     "  exit [code]           exit the terminal",
-    "  shutdown              power off the system",
-    "  reboot                reboot the system",
+    "  shutdown              power off the system (admin only)",
+    "  reboot                reboot the system (admin only)",
+    "  whoami                show current user and role",
+    "  sudo [command]        elevate session (admin only, re-auth once per session)",
+    "  su [username]         switch to another user account",
     "",
     "Networking:",
     "  net                   show IP/MAC/gateway/DNS",
@@ -725,14 +803,106 @@ static void cmd_help(void)
     }
 }
 
+static void cmd_shutdown(void);          /* forward — defined below */
+static void cmd_reboot(void);            /* forward — defined below */
+static void cmd_ps(void);               /* forward — defined below */
+static void cmd_kill(const char *pid);  /* forward — defined below */
+
+static void cmd_whoami(void)
+{
+    user_info_t ui;
+    if (sys_user_get_cur(&ui) < 0) {
+        term_puts("whoami: not logged in\n");
+        return;
+    }
+    term_printf("%s (uid=%u, role=%s)%s\n",
+                ui.name, ui.uid,
+                ui.role ? "admin" : "user",
+                g_elevated ? " [elevated]" : "");
+}
+
+/*
+ * cmd_sudo — re-authenticate the current admin user and set the session
+ * elevation flag.  Once elevated, the '#' prompt indicator is shown and
+ * the flag is checked before sensitive operations (shutdown, reboot, kill).
+ *
+ * Usage: sudo <command>   — elevate then run command
+ *        sudo             — elevate only (persistent for the session)
+ */
+static void cmd_sudo(int argc, char **argv)
+{
+    user_info_t ui;
+    if (sys_user_get_cur(&ui) < 0 || ui.role != 1 /* ROLE_ADMIN */) {
+        term_puts("sudo: permission denied — admin account required\n");
+        return;
+    }
+
+    if (!g_elevated) {
+        term_printf("[sudo] password for %s: ", ui.name);
+        char pw[256];
+        term_readline_masked(pw, sizeof(pw));
+        if (sys_user_login(ui.name, pw) < 0) {
+            term_puts("sudo: authentication failed\n");
+            return;
+        }
+        g_elevated = 1;
+        term_puts("[sudo] session elevated — prompt shows '#'\n");
+    }
+
+    if (argc < 2) return;   /* sudo with no command: just elevate */
+
+    /* Re-dispatch the sub-command with elevation active */
+    const char *sub = argv[1];
+    if      (strcmp(sub, "shutdown") == 0) cmd_shutdown();
+    else if (strcmp(sub, "reboot")   == 0) cmd_reboot();
+    else if (strcmp(sub, "kill")     == 0) cmd_kill(argc > 2 ? argv[2] : NULL);
+    else if (strcmp(sub, "ps")       == 0) cmd_ps();
+    else if (strcmp(sub, "whoami")   == 0) cmd_whoami();
+    else
+        term_printf("sudo: %s: not a supported sudo command\n", sub);
+}
+
+/*
+ * cmd_su — switch the current kernel user to another account.
+ * Usage: su [username]   — switches to username (defaults to "admin")
+ */
+static void cmd_su(const char *target)
+{
+    if (!target || target[0] == '\0') target = "admin";
+    term_printf("[su] password for %s: ", target);
+    char pw[256];
+    term_readline_masked(pw, sizeof(pw));
+    if (sys_user_login(target, pw) < 0) {
+        term_puts("su: authentication failed\n");
+        return;
+    }
+    refresh_user();
+    g_elevated = 0;   /* elevation is per-user; clear on switch */
+    term_printf("su: now logged in as %s\n", g_cur_user);
+}
+
 static void cmd_shutdown(void)
 {
+    if (!g_elevated) {
+        user_info_t ui;
+        if (sys_user_get_cur(&ui) < 0 || ui.role != 1 /* ROLE_ADMIN */) {
+            term_puts("shutdown: permission denied (admin only)\n");
+            return;
+        }
+    }
     term_puts("System is shutting down...\n");
     sys_power_shutdown();
 }
 
 static void cmd_reboot(void)
 {
+    if (!g_elevated) {
+        user_info_t ui;
+        if (sys_user_get_cur(&ui) < 0 || ui.role != 1 /* ROLE_ADMIN */) {
+            term_puts("reboot: permission denied (admin only)\n");
+            return;
+        }
+    }
     term_puts("System is rebooting...\n");
     sys_power_reboot();
 }
@@ -1255,6 +1425,7 @@ int main(void)
 {
     gfx_init();
     term_init();
+    refresh_user();   /* populate g_cur_user from the kernel session */
 
     /* Register with the WM; take focus immediately */
     g_win_id = sys_wm_register(WX, WY, WIN_W, WIN_H, "AetherTerm");
@@ -1347,6 +1518,9 @@ int main(void)
         else if (strcmp(cmd, "wget")     == 0) cmd_wget(argc > 1 ? argv[1] : NULL);
         else if (strcmp(cmd, "shutdown") == 0) cmd_shutdown();
         else if (strcmp(cmd, "reboot")   == 0) cmd_reboot();
+        else if (strcmp(cmd, "whoami")   == 0) cmd_whoami();
+        else if (strcmp(cmd, "su")       == 0) cmd_su(argc > 1 ? argv[1] : NULL);
+        else if (strcmp(cmd, "sudo")     == 0) cmd_sudo(argc, argv);
         else if (strcmp(cmd, "exit")  == 0) {
             int code = (argc > 1) ? atoi(argv[1]) : 0;
             term_puts("Goodbye!\n");

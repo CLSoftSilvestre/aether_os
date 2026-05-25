@@ -91,9 +91,11 @@ int users_save(void)
         buf[pos++] = '\n';
     }
 
-    int fh = fat32_create("/config/users.conf");
+    fat32_mkdir("/config");  /* no-op if directory already exists */
+
+    int fh = fat32_create("/config/users.cfg");
     if (fh < 0) {
-        kwarn("[users] cannot write /config/users.conf\n");
+        kwarn("[users] cannot write /config/users.cfg\n");
         return -1;
     }
     int written = fat32_write(fh, (const u8 *)buf, (u32)pos);
@@ -120,9 +122,9 @@ void users_init(void)
         goto default_admin;
     }
 
-    int fh = fat32_open("/config/users.conf");
+    int fh = fat32_open("/config/users.cfg");
     if (fh < 0) {
-        kinfo("[users] no users.conf — installing default admin\n");
+        kinfo("[users] no users.cfg — installing default admin\n");
         goto default_admin;
     }
 
@@ -174,7 +176,7 @@ void users_init(void)
     }
 
     if (g_user_count > 0) {
-        kinfo("[users] loaded %lu user(s) from users.conf\n",
+        kinfo("[users] loaded %lu user(s) from users.cfg\n",
               (unsigned long)g_user_count);
 
         /* Ensure at least one admin exists */

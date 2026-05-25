@@ -121,18 +121,27 @@ static void textinput_draw(widget_t *w, int ax, int ay)
     int ty   = ay + INPUT_PAD_Y;
     int visible_px = w->bounds.w - 2 * INPUT_PAD_X;
 
+    /* Password mode: work on a '*'-filled shadow buffer instead of the real buf */
+    char mask_buf[WGT_TEXTINPUT_MAX];
+    const char *src = d->buf;
+    if (d->password) {
+        for (int i = 0; i < d->len; i++) mask_buf[i] = '*';
+        mask_buf[d->len] = '\0';
+        src = mask_buf;
+    }
+
     /* Pixel-based scroll: advance start until cursor fits in visible_px */
     int scroll = 0;
     while (scroll < d->cursor &&
-           gfx_text_prefix_width(d->buf + scroll, d->cursor - scroll) > visible_px)
+           gfx_text_prefix_width(src + scroll, d->cursor - scroll) > visible_px)
         scroll++;
 
     /* Build visible string */
     char vis[WGT_TEXTINPUT_MAX];
     int vi = 0;
-    while (d->buf[scroll + vi] &&
-           gfx_text_prefix_width(d->buf + scroll, vi + 1) <= visible_px)
-        vis[vi++] = d->buf[scroll + vi];
+    while (src[scroll + vi] &&
+           gfx_text_prefix_width(src + scroll, vi + 1) <= visible_px)
+        vis[vi] = src[scroll + vi]; vi++;
     vis[vi] = '\0';
     gfx_text((unsigned)tx, (unsigned)ty, vis, C_TEXT, C_INPUT_BG);
 
@@ -182,10 +191,11 @@ static int textinput_event(widget_t *w, const widget_event_t *ev)
             return 1;
         }
         if (kc == KEY_C) {
-            sys_clipboard_write(d->buf, (long)d->len);
+            if (!d->password)
+                sys_clipboard_write(d->buf, (long)d->len);
             return 1;
         }
-        if (kc == KEY_V) {
+        if (kc == KEY_V && !d->password) {
             char tmp[WGT_TEXTINPUT_MAX];
             long n = sys_clipboard_read(tmp, (long)sizeof(tmp));
             if (n > 0) {
