@@ -328,8 +328,8 @@ static void hist_add(const char *line)
 static const char *const g_cmds[] = {
     "cat", "cd", "clear", "disk", "echo", "exit", "files",
     "help", "kill", "ls", "mem", "mkdir", "mount",
-    "net", "nslookup", "pid", "ping", "ps", "pwd", "rm",
-    "spawn", "time", "touch", "uname", "view", "wget",
+    "net", "nslookup", "pid", "ping", "ps", "pwd", "reboot", "rm",
+    "shutdown", "spawn", "time", "touch", "uname", "view", "wget",
     NULL
 };
 
@@ -669,6 +669,8 @@ static void cmd_help(void)
     term_puts("  spawn <path>      launch an ELF from initrd (wait)\n");
     term_puts("  spawn <path> &    launch in background (no wait)\n");
     term_puts("  exit [code]       exit the terminal\n");
+    term_puts("  shutdown          power off the system\n");
+    term_puts("  reboot            reboot the system\n");
     /* term_puts("Filesystem paths:\n");
     term_puts("  /           FAT32 disk root (when disk.img attached)\n");
     term_puts("  /initrd/    embedded CPIO initrd (always available)\n");
@@ -681,6 +683,18 @@ static void cmd_help(void)
     term_puts("  wget <ip>:<port><path>  HTTP GET (first 512 bytes)\n");
     term_puts("  http <url>          HTTP/1.1 client (Content-Length + chunked)\n");
     term_puts("    e.g. http http://10.0.2.2:8080/\n");
+}
+
+static void cmd_shutdown(void)
+{
+    term_puts("System is shutting down...\n");
+    sys_power_shutdown();
+}
+
+static void cmd_reboot(void)
+{
+    term_puts("System is rebooting...\n");
+    sys_power_reboot();
 }
 
 static void cmd_echo(int argc, char **argv)
@@ -1248,6 +1262,8 @@ int main(void)
         else if (strcmp(cmd, "ping")     == 0) cmd_ping(argc > 1 ? argv[1] : NULL);
         else if (strcmp(cmd, "nslookup") == 0) cmd_nslookup(argc > 1 ? argv[1] : NULL);
         else if (strcmp(cmd, "wget")     == 0) cmd_wget(argc > 1 ? argv[1] : NULL);
+        else if (strcmp(cmd, "shutdown") == 0) cmd_shutdown();
+        else if (strcmp(cmd, "reboot")   == 0) cmd_reboot();
         else if (strcmp(cmd, "exit")  == 0) {
             int code = (argc > 1) ? atoi(argv[1]) : 0;
             term_puts("Goodbye!\n");

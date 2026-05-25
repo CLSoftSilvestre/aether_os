@@ -49,6 +49,7 @@
 #include "drivers/power/cpufreq.h"
 #include "drivers/power/thermal.h"
 #include "drivers/power/dpms.h"
+#include "drivers/power/psci.h"
 #include "drivers/rtc/pl031.h"
 #include "aether/config.h"
 #include "aether/users.h"
@@ -1229,6 +1230,12 @@ long syscall_dispatch(trap_frame_t *frame)
         /* cmd == 2: status query */
         return dpms_is_blanked() ? 1L : 0L;
     }
+
+    case SYS_POWER_SHUTDOWN:
+        psci_system_off();   /* does not return */
+
+    case SYS_POWER_REBOOT:
+        psci_system_reset(); /* does not return */
 
     /* ── Display (System Preferences) ────────────────────────────────── */
 
