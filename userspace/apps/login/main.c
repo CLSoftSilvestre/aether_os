@@ -20,6 +20,7 @@
 #include <gfx.h>
 #include <gpu.h>
 #include <sys.h>
+#include <input.h>
 #include <widget.h>
 #include <string.h>
 #include <stdlib.h>
@@ -56,9 +57,7 @@ static long g_win_id = -1;
 static int  g_win_x;
 static int  g_win_y;
 
-static widget_ctx_t g_ctx;
-static widget_t     g_root;
-
+static widget_t g_root;
 static widget_t g_lbl_title;
 static widget_t g_lbl_sub;
 static widget_t g_lbl_un;
@@ -69,6 +68,10 @@ static widget_t g_btn_login;
 static widget_t g_lbl_err;
 
 static int g_fail_count = 0;
+
+/* ── Forward declarations ────────────────────────────────────────────────── */
+
+static void draw_frame(void);
 
 /* ── Helpers ─────────────────────────────────────────────────────────────── */
 
@@ -100,7 +103,7 @@ static void try_login(void)
     if (sys_user_login(name, pw) == 0) {
         /* Success — exit; init will proceed to launch the desktop */
         if (g_win_id >= 0) sys_wm_request_close(g_win_id);
-        g_ctx.running = 0;
+        // ctx.running = 0;
         return;
     }
 
@@ -151,11 +154,16 @@ static void on_pw_change(widget_t *w)
 
 /* ── Window chrome ───────────────────────────────────────────────────────── */
 
-static void draw_chrome(void *ud)
+static void draw_frame(void)
 {
-    (void)ud;
     gfx_glass_window_frame(g_win_x, g_win_y, WIN_W, WIN_H,
                             TITLE_H, "AetherOS — Sign In", 0);
+}
+
+static void on_reposition(void *ud)
+{
+    (void)ud;
+    draw_frame();
 }
 
 /* ── Build widget tree ───────────────────────────────────────────────────── */
@@ -230,21 +238,27 @@ int main(void)
     /* Grab keyboard focus immediately so the user can type without clicking */
     sys_wm_focus_set(sys_getpid());
 
+    /* Draw window chrome */
+    draw_frame();
+
+    /* Build UI */
     build_ui();
 
-    g_ctx.win_x         = &g_win_x;
-    g_ctx.win_y         = &g_win_y;
-    g_ctx.content_dx    = 0;
-    g_ctx.content_dy    = TITLE_H + ACCENT_H;
-    g_ctx.win_id        = (int)g_win_id;
-    g_ctx.win_w         = WIN_W;
-    g_ctx.win_h         = WIN_H;
-    g_ctx.on_reposition = draw_chrome;
-    g_ctx.per_frame_fn  = NULL;
-    g_ctx.userdata      = NULL;
-    g_ctx.running       = 1;
+    widget_ctx_t ctx;
+    ctx.win_x         = &g_win_x;
+    ctx.win_y         = &g_win_y;
+    ctx.content_dx    = 0;
+    ctx.content_dy    = TITLE_H + ACCENT_H;
+    ctx.win_id        = (int)g_win_id;
+    ctx.win_w         = WIN_W;
+    ctx.win_h         = WIN_H;
+    ctx.on_reposition = on_reposition;
+    /* ctx.per_frame_fn  = NULL; */
+    ctx.userdata      = NULL;
+    ctx.running       = 1;
 
-    widget_run(&g_root, &g_ctx);
+    widget_run(&g_root, &ctx);
 
+    sys_wm_request_close(g_win_id);
     return 0;
 }

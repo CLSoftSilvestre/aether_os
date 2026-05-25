@@ -140,8 +140,9 @@ static void textinput_draw(widget_t *w, int ax, int ay)
     char vis[WGT_TEXTINPUT_MAX];
     int vi = 0;
     while (src[scroll + vi] &&
-           gfx_text_prefix_width(src + scroll, vi + 1) <= visible_px)
+           gfx_text_prefix_width(src + scroll, vi + 1) <= visible_px) {
         vis[vi] = src[scroll + vi]; vi++;
+    }
     vis[vi] = '\0';
     gfx_text((unsigned)tx, (unsigned)ty, vis, C_TEXT, C_INPUT_BG);
 
