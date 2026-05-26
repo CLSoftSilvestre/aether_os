@@ -404,17 +404,17 @@ static void tabbar_draw(widget_t *w, int ax, int ay)
         unsigned int tc = active ? C_TEXT : C_TEXT_DIM;
         draw_text_clipped(text_x, text_y, title, tc, text_max_w);
 
-        /* Close button "x" */
-        int cx = tx + tab_w - TAB_CLOSE_W + 2;
-        gfx_text_transparent((unsigned)cx, (unsigned)text_y, "x",
-                             active ? C_TEXT_DIM : C_SEP);
+        /* Close button icon */
+        int cx = tx + tab_w - TAB_CLOSE_W + (TAB_CLOSE_W - 14) / 2;
+        int cy = ay + (TABBAR_H - 14) / 2;
+        gfx_toolbar_icon(cx, cy, ICON_BTN_CLOSE_SMALL);
     }
 
-    /* "+" new-tab button */
+    /* New-tab button icon */
     {
-        int nx = ax + g_tab_count * tab_w;
-        int ny = ay + (TABBAR_H - (int)gfx_font_height()) / 2;
-        gfx_text_transparent((unsigned)(nx + 7), (unsigned)ny, "+", C_TEXT_DIM);
+        int nx = ax + g_tab_count * tab_w + (TAB_NEW_W - 14) / 2;
+        int ny = ay + (TABBAR_H - 14) / 2;
+        gfx_toolbar_icon(nx, ny, ICON_BTN_NEWTAB);
     }
 
     /* Bottom separator — active tab's pill merges visually with toolbar */
@@ -493,10 +493,11 @@ static void toolbar_draw(widget_t *w, int ax, int ay)
 
     /* Bookmark star — right of address bar */
     int star_ax = ax + g_win_w - BTN_STAR_W - 4;
-    int star_ay = ay + BTN_Y + ((BTN_H - (int)gfx_font_height()) / 2);
-    unsigned star_col = current_url_bookmarked() ? C_YELLOW : C_TEXT_DIM;
-    gfx_text_center_transparent((unsigned)star_ax, (unsigned)BTN_STAR_W,
-                                 (unsigned)star_ay, "*", star_col);
+    int star_ix = star_ax + (BTN_STAR_W - 14) / 2;
+    int star_iy = ay + BTN_Y + (BTN_H - 14) / 2;
+    unsigned char star_icon = current_url_bookmarked()
+                              ? ICON_BTN_STAR_FILLED : ICON_BTN_STAR;
+    gfx_toolbar_icon(star_ix, star_iy, star_icon);
 }
 
 static int toolbar_event(widget_t *w, const widget_event_t *ev)
@@ -843,15 +844,13 @@ static void browser_per_frame(void *ud)
         long now = gfx_ticks();
         if (now - s_last_tick >= 10) {
             s_last_tick = now;
-            g_btn_reload.data.button.text[0] = '.';
-            g_btn_reload.data.button.text[1] = '\0';
+            g_btn_reload.data.button.icon_id = ICON_BTN_STOP;
             widget_invalidate(&g_btn_reload);
             widget_invalidate(&g_status);
             sys_sched_yield();
         }
     } else if (s_was_loading) {
-        g_btn_reload.data.button.text[0] = 'R';
-        g_btn_reload.data.button.text[1] = '\0';
+        g_btn_reload.data.button.icon_id = ICON_BTN_REFRESH;
         if (nsaether_bw) {
             g_btn_back.state =
                 browser_window_back_available(nsaether_bw) ? WS_NORMAL : WS_DISABLED;
@@ -907,9 +906,9 @@ static void build_ui(void)
     widget_add_child(&g_root, &g_toolbar);
 
     /* Navigation buttons */
-    widget_init_button(&g_btn_back,   BTN_BACK_X, BTN_Y, BTN_W, BTN_H, "<",  on_back);
-    widget_init_button(&g_btn_fwd,    BTN_FWD_X,  BTN_Y, BTN_W, BTN_H, ">",  on_fwd);
-    widget_init_button(&g_btn_reload, BTN_RLD_X,  BTN_Y, BTN_W, BTN_H, "R",  on_reload);
+    widget_init_icon_button(&g_btn_back,   BTN_BACK_X, BTN_Y, BTN_W, BTN_H, ICON_BTN_NAV_BACK, on_back);
+    widget_init_icon_button(&g_btn_fwd,    BTN_FWD_X,  BTN_Y, BTN_W, BTN_H, ICON_BTN_NAV_FWD,  on_fwd);
+    widget_init_icon_button(&g_btn_reload, BTN_RLD_X,  BTN_Y, BTN_W, BTN_H, ICON_BTN_REFRESH,  on_reload);
     g_btn_back.state   = WS_DISABLED;
     g_btn_fwd.state    = WS_DISABLED;
     widget_add_child(&g_toolbar, &g_btn_back);
