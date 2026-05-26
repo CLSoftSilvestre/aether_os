@@ -158,7 +158,7 @@ static widget_t g_statusbar;
 static void files_navigate_core(const char *path);
 static void files_navigate_to(const char *path);
 static void draw_frame(void);
-static void draw_title_text(void);
+/* static void draw_title_text(void); */
 
 /* ── Path pool allocator ──────────────────────────────────────────────── */
 
@@ -461,7 +461,7 @@ static void files_navigate_core(const char *path)
         }
     }
 
-    draw_title_text();
+    /* draw_title_text(); */
     update_statusbar();
     tree_sync_selection(path);
     widget_invalidate(&g_right);
@@ -810,24 +810,6 @@ static void tree_on_expand(tv_node_t *node, void *ctx)
 }
 
 /* ── Window frame ─────────────────────────────────────────────────────── */
-
-static void draw_title_text(void)
-{
-    int wx = g_win_x, wy = g_win_y;
-    char title[96];
-    snprintf(title, sizeof(title), "Files  \xe2\x80\x94  %s",
-             g_current_path[0] ? g_current_path : "/");
-
-    /* Repaint center strip of glass titlebar then redraw title transparent */
-    int tx = wx + 34;
-    int tw = WIN_W - 44;
-    gfx_fill((unsigned)tx, (unsigned)wy, (unsigned)tw, TITLE_H, C_TITLEBAR);
-    gfx_hline((unsigned)tx, (unsigned)wy, (unsigned)tw, GFX_RGB(90, 84, 148));
-    gfx_fill((unsigned)tx, (unsigned)(wy + 1), (unsigned)tw, 2u, GFX_RGB(60, 56, 100));
-    gfx_text_center_transparent((unsigned)wx, WIN_W,
-                                (unsigned)(wy + (TITLE_H - 16) / 2),
-                                title, C_TEXT);
-}
 
 static void draw_frame(void)
 {
