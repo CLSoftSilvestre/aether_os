@@ -118,11 +118,34 @@ static void draw_line(aether_plot_ctx_t *pc,
 static aether_font_t *g_pfont   = NULL;
 static bool           g_ptried  = false;
 
+static void pa_uart(const char *s)
+{
+    long r; int len = 0;
+    while (s[len]) len++;
+    __asm__ volatile(
+        "mov x8, #34\n mov x0, #1\n mov x1, %1\n mov x2, %2\n"
+        "svc #0\n mov %0, x0\n"
+        : "=r"(r) : "r"(s), "r"((long)len) : "x0","x1","x2","x8","memory");
+}
+
 static aether_font_t *get_pfont(void)
 {
     if (g_ptried) return g_pfont;
     g_ptried = true;
-    aether_font_load("/fonts/NotoSans-Regular.ttf", &g_pfont);
+    /* Ensure FreeType is initialised even if gfx_init() ran without it */
+    aether_font_init();
+    int r = aether_font_load("/fonts/NotoSans-Regular.ttf", &g_pfont);
+    if (r != 0 || !g_pfont) {
+        pa_uart("plot_aether: FONT LOAD FAILED /fonts/NotoSans-Regular.ttf\n");
+        /* Try short-name fallback in case FAT32 LFN is the issue */
+        r = aether_font_load("/fonts/sans.ttf", &g_pfont);
+        if (r != 0 || !g_pfont)
+            pa_uart("plot_aether: FONT LOAD FAILED /fonts/sans.ttf\n");
+        else
+            pa_uart("plot_aether: font loaded via /fonts/sans.ttf\n");
+    } else {
+        pa_uart("plot_aether: font loaded OK\n");
+    }
     return g_pfont;
 }
 
@@ -463,13 +486,17 @@ static nserror aether_plot_text(const struct redraw_context *ctx,
     int px = pts_to_px(fstyle->size);
     uint32_t fg = ns_rgb(fstyle->foreground);
 
+    static int s_text_calls = 0;
+    if (s_text_calls < 3) {
+        s_text_calls++;
+        pa_uart(font ? "plot_text: called, font OK\n"
+                     : "plot_text: called, NO FONT\n");
+    }
+
     if (!font) {
-        /* Fallback: nothing drawn without FreeType */
         return NSERROR_OK;
     }
 
-    /* aether_font_draw writes into a uint32_t buffer using the full
-     * buffer dims for clipping.  Pass pc->pixels so it draws in-place. */
     aether_font_draw(font, buf, px, fg,
                      pc->pixels, pc->stride, pc->width, pc->height,
                      x, y);

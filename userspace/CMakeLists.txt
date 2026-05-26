@@ -1602,6 +1602,8 @@ if(EXISTS ${NSLOG_VENDOR}/include/nslog/nslog.h AND
         ${NS_BRIDGE}/plot_aether.c         # Phase 7.7 plotter_table implementation
         ${NS_BRIDGE}/fetch_file_aether.c   # provides fetch_file_register() (replaces built-in)
         ${NS_BRIDGE}/fetch_http_aether.c   # Phase 7.6 real HTTP/1.1 over POSIX sockets
+        ${NS_BRIDGE}/cookies_aether.c      # Iteration 5.3 cookie store
+        ${NS_BRIDGE}/downloads_aether.c   # Iteration 5.4 download manager
         ${NS_BRIDGE}/js_aether.c
     )
 
@@ -1843,6 +1845,7 @@ if(EXISTS ${NSLOG_VENDOR}/include/nslog/nslog.h AND
 
     add_executable(user_aether_browser
         apps/aether_browser/main.c
+        apps/aether_browser/persistence.c
         lib/crt0.S
     )
 
