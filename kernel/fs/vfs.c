@@ -147,7 +147,10 @@ int vfs_open(const char *path)
     for (int i = 0; i < VFS_MAX_FD; i++) {
         if (!g_fds[i].used) { slot = i; break; }
     }
-    if (slot < 0) return -1;
+    if (slot < 0) {
+        kwarn("vfs_open: no free fd slot (all %d busy) for '%s'\n", VFS_MAX_FD, path);
+        return -1;
+    }
 
     vfs_fd_t *f = &g_fds[slot];
 
@@ -203,7 +206,10 @@ int vfs_open(const char *path)
     if (!fat32_ready()) return -1;
 
     int fh = fat32_open(path);
-    if (fh < 0) return -1;
+    if (fh < 0) {
+        kwarn("vfs_open: fat32_open('%s') failed\n", path);
+        return -1;
+    }
 
     f->used    = 1;
     f->backend = VFS_BACK_FAT32;
@@ -266,6 +272,7 @@ void vfs_close(int vfd)
 int vfs_create(const char *path)
 {
     /* Only FAT32 is writable; initrd, AetherFS, and USB are read-only */
+    kinfo("vfs_create: path='%s'\n", path ? path : "(null)");
     if (!path) return -1;
     if (is_initrd_path(path) || is_afs_path(path) || is_usb_path(path)) return -1;
     if (!fat32_ready()) return -1;

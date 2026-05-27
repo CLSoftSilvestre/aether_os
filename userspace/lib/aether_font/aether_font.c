@@ -21,21 +21,52 @@ struct aether_font {
 
 /* ── File loader (no fseek needed — sequential reads only) ──────────────── */
 
+static void _puts_long(long v)
+{
+    char tmp[24];
+    int  i = sizeof(tmp) - 1;
+    tmp[i] = '\0';
+    int neg = (v < 0);
+    unsigned long u = neg ? (unsigned long)(-v) : (unsigned long)v;
+    if (u == 0) { tmp[--i] = '0'; }
+    else { while (u) { tmp[--i] = '0' + (int)(u % 10); u /= 10; } }
+    if (neg) tmp[--i] = '-';
+    sys_puts(tmp + i);
+}
+
 static unsigned char *_load_file(const char *path, long *out_size)
 {
     long fd = sys_fs_open(path);
-    if (fd < 0) return NULL;
+    if (fd < 0) {
+        sys_puts("[font] ERROR: sys_fs_open failed for '");
+        sys_puts(path);
+        sys_puts("' (returned ");
+        _puts_long(fd);
+        sys_puts(")\n");
+        return NULL;
+    }
 
     size_t capacity = 128 * 1024;   /* 128 KB starting point */
     size_t size     = 0;
     unsigned char *buf = malloc(capacity);
-    if (!buf) { sys_fs_close(fd); return NULL; }
+    if (!buf) {
+        sys_puts("[font] ERROR: malloc failed for '");
+        sys_puts(path);
+        sys_puts("'\n");
+        sys_fs_close(fd);
+        return NULL;
+    }
 
     while (1) {
         if (size == capacity) {
             size_t new_cap = capacity * 2;
             unsigned char *nb = realloc(buf, new_cap);
-            if (!nb) { free(buf); sys_fs_close(fd); return NULL; }
+            if (!nb) {
+                sys_puts("[font] ERROR: realloc failed reading '");
+                sys_puts(path);
+                sys_puts("'\n");
+                free(buf); sys_fs_close(fd); return NULL;
+            }
             buf      = nb;
             capacity = new_cap;
         }
@@ -45,6 +76,17 @@ static unsigned char *_load_file(const char *path, long *out_size)
     }
 
     sys_fs_close(fd);
+    if (size == 0) {
+        sys_puts("[font] ERROR: read 0 bytes from '");
+        sys_puts(path);
+        sys_puts("'\n");
+    } else {
+        sys_puts("[font] loaded '");
+        sys_puts(path);
+        sys_puts("' bytes=");
+        _puts_long((long)size);
+        sys_puts("\n");
+    }
     *out_size = (long)size;
     return buf;
 }
@@ -84,7 +126,12 @@ int aether_font_init(void)
 {
     if (_ft_ready) return 0;
     FT_Error err = FT_Init_FreeType(&_ft_lib);
-    if (err) return -1;
+    if (err) {
+        sys_puts("[font] ERROR: FT_Init_FreeType failed err=");
+        _puts_long((long)err);
+        sys_puts("\n");
+        return -1;
+    }
     _ft_ready = 1;
     return 0;
 }
@@ -105,6 +152,11 @@ int aether_font_load(const char *path, aether_font_t **out)
 
     FT_Error err = FT_New_Memory_Face(_ft_lib, font_data, (FT_Long)file_size, 0, &f->face);
     if (err) {
+        sys_puts("[font] ERROR: FT_New_Memory_Face failed err=");
+        _puts_long((long)err);
+        sys_puts(" size=");
+        _puts_long(file_size);
+        sys_puts("\n");
         free(font_data);
         free(f);
         return -1;

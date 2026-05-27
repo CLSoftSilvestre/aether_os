@@ -41,7 +41,7 @@ if [[ "$(uname)" == "Darwin" ]]; then
 
     mkdir -p "${MNT}/audio" "${MNT}/config"
     echo "AetherOS USB test disk" > "${MNT}/readme.txt"
-    echo "# USB audio config placeholder" > "${MNT}/config/audio.conf"
+    echo "# USB audio config placeholder" > "${MNT}/config/audio.cfg"
 
     hdiutil detach "${MNT}" -quiet
     rmdir "${MNT}"
@@ -64,7 +64,7 @@ else
 
     mkdir -p "${MNT}/audio" "${MNT}/config"
     echo "AetherOS USB test disk" > "${MNT}/readme.txt"
-    echo "# USB audio config placeholder" > "${MNT}/config/audio.conf"
+    echo "# USB audio config placeholder" > "${MNT}/config/audio.cfg"
 
     sudo umount "${MNT}"
     rmdir "${MNT}"

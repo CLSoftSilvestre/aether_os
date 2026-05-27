@@ -1025,7 +1025,7 @@ static inline long sys_display_get_res(unsigned int *w, unsigned int *h)
     return 0;
 }
 
-/* Store new resolution in /config/display.conf (applies on reboot) */
+/* Store new resolution in /config/display.cfg (applies on reboot) */
 static inline long sys_display_set_res(unsigned int w, unsigned int h)
 {
     long packed = (long)(((unsigned long long)w << 32) | (unsigned long long)h);
