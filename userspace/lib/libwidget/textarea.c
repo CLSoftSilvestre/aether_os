@@ -451,6 +451,7 @@ void widget_init_textarea(widget_t *w, int x, int y, int width, int height,
     d->cur_row     = 0;
     d->cur_col     = 0;
     d->scroll_top  = 0;
+    d->word_wrap   = 0;
 
     /* Initialise first line */
     if (d->lines) {
@@ -463,28 +464,74 @@ void textarea_set_text(widget_t *w, const char *text)
     wdata_textarea_t *d = &w->data.textarea;
     if (!d->lines) return;
 
-    d->n_lines = 0;
-    d->cur_row = 0;
-    d->cur_col = 0;
+    d->n_lines    = 1;
+    d->cur_row    = 0;
+    d->cur_col    = 0;
     d->scroll_top = 0;
-
-    int col = 0;
-    d->n_lines = 1;
     d->lines[0][0] = '\0';
 
-    for (int i = 0; text[i] && d->n_lines <= d->n_lines_max; i++) {
-        if (text[i] == '\n') {
-            d->lines[d->n_lines - 1][col] = '\0';
-            if (d->n_lines < d->n_lines_max) {
+    if (!d->word_wrap) {
+        /* Original path: character-by-character, truncate long lines. */
+        int col = 0;
+        for (int i = 0; text[i] && d->n_lines <= d->n_lines_max; i++) {
+            if (text[i] == '\n') {
+                d->lines[d->n_lines - 1][col] = '\0';
+                if (d->n_lines < d->n_lines_max) {
+                    d->n_lines++;
+                    d->lines[d->n_lines - 1][0] = '\0';
+                }
+                col = 0;
+            } else if (col < WGT_TEXTAREA_LINE_LEN - 1) {
+                d->lines[d->n_lines - 1][col++] = text[i];
+                d->lines[d->n_lines - 1][col]   = '\0';
+            }
+        }
+        w->dirty = 1;
+        return;
+    }
+
+    /* Word-wrap path: one logical line at a time, split at column boundary.
+     * Column count derived from actual widget pixel width and font metrics. */
+    int cols = (w->bounds.w - 2 * TA_PAD_X) / WGT_FONT_W;
+    if (cols < 4) cols = 4;
+    if (cols >= WGT_TEXTAREA_LINE_LEN) cols = WGT_TEXTAREA_LINE_LEN - 1;
+
+    const char *p = text;
+    while (*p && d->n_lines <= d->n_lines_max) {
+        /* Find the end of this logical line. */
+        const char *nl = p;
+        while (*nl && *nl != '\n') nl++;
+        int line_len = (int)(nl - p);
+
+        /* Wrap the logical line into one or more stored lines. */
+        int pos = 0;
+        do {
+            int avail = line_len - pos;
+            int take  = (avail <= cols) ? avail : cols;
+
+            /* Prefer breaking at the last space within the column limit. */
+            if (avail > cols) {
+                int brk = cols;
+                while (brk > 0 && p[pos + brk] != ' ') brk--;
+                if (brk > 0) take = brk;
+            }
+
+            memcpy(d->lines[d->n_lines - 1], p + pos, (size_t)take);
+            d->lines[d->n_lines - 1][take] = '\0';
+
+            pos += take;
+            if (pos < line_len && p[pos] == ' ') pos++;  /* skip break-space */
+
+            /* Open the next stored line for remaining text or next newline. */
+            if ((pos < line_len || *nl == '\n') && d->n_lines < d->n_lines_max) {
                 d->n_lines++;
                 d->lines[d->n_lines - 1][0] = '\0';
             }
-            col = 0;
-        } else if (col < WGT_TEXTAREA_LINE_LEN - 1) {
-            d->lines[d->n_lines - 1][col++] = text[i];
-            d->lines[d->n_lines - 1][col] = '\0';
-        }
+        } while (pos < line_len && d->n_lines <= d->n_lines_max);
+
+        p = (*nl == '\n') ? nl + 1 : nl;
     }
+
     w->dirty = 1;
 }
 
@@ -510,4 +557,9 @@ void textarea_scroll_to_bottom(widget_t *w)
     if (d->scroll_top < 0) d->scroll_top = 0;
     d->cur_row = (d->n_lines > 0) ? d->n_lines - 1 : 0;
     w->dirty = 1;
+}
+
+void textarea_set_word_wrap(widget_t *w, int enabled)
+{
+    w->data.textarea.word_wrap = enabled ? 1 : 0;
 }

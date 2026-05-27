@@ -165,6 +165,7 @@ typedef struct {
     int   n_lines;
     int   cur_row, cur_col;
     int   scroll_top;
+    int   word_wrap;  /* 1 = wrap at widget pixel width in textarea_set_text */
 } wdata_textarea_t;
 
 typedef struct {
@@ -316,6 +317,10 @@ void        textinput_clear(widget_t *w);
 void textarea_set_text(widget_t *w, const char *text);
 void textarea_get_text(widget_t *w, char *buf, int max);
 void textarea_scroll_to_bottom(widget_t *w);
+/* Enable/disable automatic word-wrap in textarea_set_text.
+ * When enabled, lines longer than the widget's column width are split at the
+ * last space before the boundary (or hard-wrapped if no space is found). */
+void textarea_set_word_wrap(widget_t *w, int enabled);
 
 /* ListView */
 void listview_add_item(widget_t *w, const char *label, void *userdata);
