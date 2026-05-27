@@ -142,6 +142,22 @@ set_target_properties(user_topbar PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
 )
 
+# ── notif_center — notification panel (spawned by topbar on bell click) ───────
+add_executable(user_notif_center
+    apps/notif_center/main.c
+    lib/crt0.S
+)
+target_include_directories(user_notif_center PRIVATE lib/include)
+target_compile_options(user_notif_center PRIVATE ${USER_COMPILE_FLAGS})
+target_link_libraries(user_notif_center PRIVATE libwidget libaether)
+target_link_options(user_notif_center PRIVATE
+    -T ${USER_LINKER_SCRIPT} -nostdlib -static -Wl,--build-id=none
+)
+set_target_properties(user_notif_center PROPERTIES
+    OUTPUT_NAME "notif_center" SUFFIX ""
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
+)
+
 # ── desktop — Lumina desktop layer: wallpaper + icons (spawned by init) ───────
 add_executable(user_desktop
     apps/desktop/main.c
@@ -2242,7 +2258,7 @@ add_custom_command(
     COMMAND ${CMAKE_SOURCE_DIR}/scripts/make_initrd.sh
                 ${INITRD_STAGING}
                 ${INITRD_CPIO}
-    DEPENDS user_init user_login user_dock user_topbar user_desktop user_compositor user_aether_term user_statusbar user_files
+    DEPENDS user_init user_login user_dock user_topbar user_notif_center user_desktop user_compositor user_aether_term user_statusbar user_files
             user_textviewer user_calculator user_tictactoe user_widget_demo
             user_aether_editor user_aether_http user_telnet user_aether_top user_aether_mail
             user_sys_prefs user_aether_sound user_aether_guitar aeguitar_assets

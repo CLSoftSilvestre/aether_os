@@ -67,11 +67,8 @@ static widget_t g_in_pw;
 static widget_t g_btn_login;
 static widget_t g_lbl_err;
 
-static int g_fail_count = 0;
-
-/* ── Forward declarations ────────────────────────────────────────────────── */
-
-static void draw_frame(void);
+static int g_fail_count    = 0;
+static int g_authenticated = 0;
 
 /* ── Helpers ─────────────────────────────────────────────────────────────── */
 
@@ -101,9 +98,8 @@ static void try_login(void)
     }
 
     if (sys_user_login(name, pw) == 0) {
-        /* Success — exit; init will proceed to launch the desktop */
+        g_authenticated = 1;
         if (g_win_id >= 0) sys_wm_request_close(g_win_id);
-        // ctx.running = 0;
         return;
     }
 
@@ -154,24 +150,15 @@ static void on_pw_change(widget_t *w)
 
 /* ── Window chrome ───────────────────────────────────────────────────────── */
 
-static void draw_frame(void)
-{
-    gfx_glass_window_frame(g_win_x, g_win_y, WIN_W, WIN_H,
-                            TITLE_H, "AetherOS — Sign In", 0);
-}
-
-static void on_reposition(void *ud)
-{
-    (void)ud;
-    draw_frame();
-}
+/* No title bar on the login window — WM_FLAG_NO_CHROME removes it entirely
+ * so there is no close/minimise button the user can click to bypass auth. */
+static void on_reposition(void *ud) { (void)ud; }
 
 /* ── Build widget tree ───────────────────────────────────────────────────── */
 
 static void build_ui(void)
 {
-    widget_init_panel(&g_root, 0, 0, WIN_W,
-                      WIN_H - TITLE_H - ACCENT_H, 0x00000000u);
+    widget_init_panel(&g_root, 0, 0, WIN_W, WIN_H, 0x00000000u);
 
     /* Title */
     widget_init_label(&g_lbl_title, CONT_X, ROW_TITLE_Y, CONT_W, 22,
@@ -235,11 +222,11 @@ int main(void)
     g_win_id = sys_wm_register(g_win_x, g_win_y, WIN_W, WIN_H, "Login");
     if (g_win_id < 0) return 1;
 
+    /* Remove title bar so there is no close button to bypass authentication. */
+    sys_wm_set_flags(g_win_id, WM_FLAG_NO_CHROME);
+
     /* Grab keyboard focus immediately so the user can type without clicking */
     sys_wm_focus_set(sys_getpid());
-
-    /* Draw window chrome */
-    draw_frame();
 
     /* Build UI */
     build_ui();
@@ -248,7 +235,7 @@ int main(void)
     ctx.win_x         = &g_win_x;
     ctx.win_y         = &g_win_y;
     ctx.content_dx    = 0;
-    ctx.content_dy    = TITLE_H + ACCENT_H;
+    ctx.content_dy    = 0;
     ctx.win_id        = (int)g_win_id;
     ctx.win_w         = WIN_W;
     ctx.win_h         = WIN_H;
@@ -257,7 +244,25 @@ int main(void)
     ctx.userdata      = NULL;
     ctx.running       = 1;
 
-    widget_run(&g_root, &ctx);
+    for (;;) {
+        ctx.running = 1;
+        widget_run(&g_root, &ctx);
+
+        if (g_authenticated)
+            break;
+
+        /* Window was dismissed without a successful login — re-open it. */
+        g_win_id = sys_wm_register(g_win_x, g_win_y, WIN_W, WIN_H, "Login");
+        if (g_win_id < 0)
+            continue;
+        sys_wm_set_flags(g_win_id, WM_FLAG_NO_CHROME);
+        ctx.win_id = (int)g_win_id;
+        sys_wm_focus_set(sys_getpid());
+        widget_invalidate_all(&g_root);
+        textinput_clear(&g_in_un);
+        textinput_clear(&g_in_pw);
+        hide_error();
+    }
 
     sys_wm_request_close(g_win_id);
     return 0;
