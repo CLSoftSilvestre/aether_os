@@ -189,11 +189,30 @@ void users_init(void)
             g_users[0].role = AETHER_ROLE_ADMIN;
             users_save();
         }
+        (void)kstrcmp_u;
         return;
     }
 
+    /*
+     * File existed (fat32_open succeeded) but content was unreadable — e.g. the
+     * dirent points at the wrong cluster (a known disk-creation race).  Do NOT
+     * call users_save(): that would run fat32_create → free_cluster_chain on
+     * whatever cluster the bad dirent records, potentially destroying another
+     * file's FAT chain (sans.ttf bug).  Install the default admin in memory only.
+     */
+    kwarn("[users] users.cfg unreadable — default admin in memory only (not saved)\n");
+    kstrcpy_u(g_users[0].name, "admin", AETHER_NAME_MAX);
+    g_users[0].pw_hash = 5381;
+    g_users[0].role    = AETHER_ROLE_ADMIN;
+    g_users[0].active  = 1;
+    g_user_count = 1;
+    g_current_uid = 0;
+    kinfo("[users] default admin created (empty password)\n");
+    (void)kstrcmp_u;
+    return;
+
 default_admin:
-    /* No users loaded — create default admin with empty password */
+    /* File was absent — safe to create it from scratch */
     kstrcpy_u(g_users[0].name, "admin", AETHER_NAME_MAX);
     g_users[0].pw_hash = 5381;   /* djb2("") */
     g_users[0].role    = AETHER_ROLE_ADMIN;

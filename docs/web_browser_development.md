@@ -332,19 +332,31 @@ The MVP milestone is complete when:
 
 ---
 
-## Iteration 2 — JavaScript Engine Integration
+## Iteration 2 — JavaScript Engine Integration ✅ COMPLETE (2026-05-26)
 
 **Duration:** 4–5 weeks  
 **Prerequisites:** MVP complete, QuickJS compiled (Phase 7.4)
 
-| Task | Description |
-|---|---|
-| I2.1 | Wire QuickJS into NetSurf DOM — `script` tag evaluation |
-| I2.2 | Implement minimal Web APIs: `document.getElementById`, `querySelector`, `addEventListener`, `fetch` (HTTP only) |
-| I2.3 | `console.log` → status bar / UART |
-| I2.4 | `XMLHttpRequest` stub over AetherOS HTTP fetch |
-| I2.5 | Timer APIs: `setTimeout`, `setInterval` via AetherOS tick scheduler |
-| I2.6 | Test: HackerNews (minimal JS), simple todo apps, Wikipedia (sidebar JS) |
+| Task | Description | Status |
+|---|---|---|
+| I2.1 | Wire QuickJS into NetSurf DOM — `script` tag evaluation | ✅ |
+| I2.2 | Implement minimal Web APIs: `document.getElementById`, `querySelector`, `addEventListener` | ✅ |
+| I2.3 | `console.log` → UART via NSLOG | ✅ |
+| I2.4 | `XMLHttpRequest` stub over AetherOS HTTP fetch | ⬜ deferred |
+| I2.5 | Timer APIs: `setTimeout`, `setInterval`, `clearTimeout/Interval` via per-frame tick | ✅ |
+| I2.6 | Test: HackerNews (minimal JS), simple todo apps, Wikipedia (sidebar JS) | ⬜ |
+
+**Implementation notes (`lib/netsurf_aether/js_aether.c`):**
+- Full `jsheap`/`jsthread` lifecycle (one JSRuntime/JSContext per page)
+- `js_exec()` — evaluates `<script>` tags; `js_handle_new_element()` — compiles `on*` attribute handlers
+- DOM node wrapper: `g_dom_node_class_id` / `g_dom_doc_class_id` with QJS finalizers calling `dom_node_unref`
+- `document`: `getElementById`, `querySelector` (#id/.class/tag), `querySelectorAll`, `createElement`, `createTextNode`, `body`, `title`, `readyState`, `addEventListener`
+- Element: `getAttribute/setAttribute/hasAttribute`, `textContent` (get+set), `innerHTML` (set strips tags), `tagName`, `id`, `className`, `parentNode`, `firstChild`, `nextSibling`, `appendChild`, `addEventListener/removeEventListener`
+- Box-tree text sync: `update_box_text()` patches `box->text` in-place for div/span/p without a full reload; handles BOX_INLINE siblings
+- Click dispatch: `js_handle_mouse_click()` replicates NetSurf's `box_at_point` hit-test then fires listeners with DOM bubbling via `js_fire_click_event()`
+- Timers: `js_timers_tick()` called from `browser_per_frame()` — fires due `setTimeout`/`setInterval` via `gettimeofday`
+- `window`: `alert`, `setTimeout`, `setInterval`, `clearTimeout`, `clearInterval`, `location.href`, `window===window.window`
+- `XMLHttpRequest` (I2.4) deferred — no AJAX-heavy sites tested; will add if needed for Iteration 5+ sites
 
 ---
 
@@ -408,17 +420,27 @@ Run inside AetherOS: `aether_browser https://example.com/`
 
 ---
 
-## Iteration 4 — Tabs & Browser Chrome
+## Iteration 4 — Tabs & Browser Chrome ✅ COMPLETE (2026-05-26)
 
 **Duration:** 3 weeks
 
-| Task | Description |
-|---|---|
-| I4.1 | Tab bar widget (WIDGET_TABBAR): create/close/switch tabs |
-| I4.2 | Multi-page NetSurf browser_window instances |
-| I4.3 | Ctrl+T new tab, Ctrl+W close tab, Ctrl+1..9 switch |
-| I4.4 | Tab favicons |
-| I4.5 | Memory limit per tab (evict inactive tab renders) |
+| Task | Description | Status |
+|---|---|---|
+| I4.1 | Tab bar: custom-draw WIDGET_PANEL (no new type needed); pills with active highlight | ✅ |
+| I4.2 | Multi-page `browser_window*` + pixel buffers; `nsaether_bw/pixels` swapped on switch | ✅ |
+| I4.3 | Ctrl+T new tab, Ctrl+W close, Ctrl+1..9 switch; click pill = switch, click × = close | ✅ |
+| I4.4 | Tab favicons | ⬜ deferred |
+| I4.5 | Memory limit per tab (evict inactive tab renders) | ⬜ deferred |
+
+**Implementation notes (`apps/aether_browser/main.c`):**
+- `tab_t { bw, pixels, title[64] }` array `g_tabs[MAX_TABS=8]` + `g_tab_count` + `g_active_tab`
+- `tab_new(url)` — calls `browser_window_create`, saves `nsaether_pixels` from `aether_window_create` callback, calls `tab_switch`
+- `tab_switch(idx)` — swaps `nsaether_bw`/`nsaether_pixels`, resets `g_scroll_y`, syncs address bar, invalidates all widgets
+- `tab_close(idx)` — removes from array, switches to adjacent tab, then calls `browser_window_destroy` (safe: globals already swapped)
+- `tabbar_draw` — pills at `C_WIN_BG`/`C_PANEL` for inactive/active; title clipped via `draw_text_clipped`; `+` button at right
+- `tabbar_event` — `WEV_MOUSE_DOWN`: click pill → switch, click × area → close, click + → new tab
+- `TABBAR_H=28` inserted above toolbar; `VP_OFF` updated to `TABBAR_H+TOOLBAR_H+SEPARATOR_H=65`
+- Default start URL: `http://info.cern.ch`; Ctrl+T opens new tab to same default
 
 ---
 
@@ -426,14 +448,44 @@ Run inside AetherOS: `aether_browser https://example.com/`
 
 **Duration:** 2–3 weeks
 
-| Task | Description |
-|---|---|
-| I5.1 | Bookmarks: save/load from AetherFS (`/user/bookmarks.json`) |
-| I5.2 | Browser history: visited URLs + timestamps in AetherFS |
-| I5.3 | Cookies: in-memory store first, then AetherFS persistence |
-| I5.4 | Download manager: save HTTP responses to AetherFS |
-| I5.5 | Zoom: Ctrl+/- scales plot coordinates |
-| I5.6 | Reader mode: strip navigation, ads, render article text only |
+| Task | Description | Status |
+|---|---|---|
+| I5.1 | Bookmarks: `apps/aether_browser/persistence.c`; `bmarks_add/remove/find`; `*` star in toolbar; Ctrl+D toggle; saved to `/config/bookmarks.txt` (url\|title per line) | ✅ |
+| I5.2 | History: `history_append` on page-load-complete; saved to `/config/history.txt` (URL per line, newest last); max 100 in-memory, evicts oldest | ✅ |
+| I5.3 | Cookies: in-memory store + AetherFS persistence (`/config/cookies.txt`); `Cookie:` header sent on requests; `Set-Cookie:` headers parsed from responses; domain + path matching | ✅ |
+| I5.7 | Smart address bar (omnibar): bare domain → `https://` prepend; search query (spaces or no dot) → DuckDuckGo Lite `https://lite.duckduckgo.com/lite/?q=<encoded>` | ✅ |
+| I5.4 | Download manager: save HTTP responses to AetherFS | ✅ |
+| I5.5 | Zoom: Ctrl+/- scales plot coordinates | ⬜ |
+| I5.6 | Reader mode: strip navigation, ads, render article text only | ⬜ |
+
+**Implementation notes (`lib/netsurf_aether/downloads_aether.c` + `downloads_aether.h`):**
+- Storage on FAT32 `/downloads/` (directory pre-created by `make_disk.sh`)
+- `downloads_cache_response(url, body, len, mime)` called from `fetch_http_aether` after each 200 response; copies body into a malloc'd buffer (up to 2 MB — larger pages not saved)
+- `download_save_page(out_path, out_max)` writes cache to file and returns path; called from `main.c` on Ctrl+S
+- Filename derived from last URL path segment, sanitized to `[a-zA-Z0-9._-]`, extension appended from MIME type if none recognized in the segment
+- Collision avoidance: tries `name.ext`, `name_1.ext`, …, `name_99.ext` before overwriting
+- Status bar shows "Saved: /downloads/…" or "Download failed" for ~3 seconds after Ctrl+S (90-tick countdown via `g_dl_msg_ticks` decremented in `browser_per_frame`)
+- Ctrl+S only fires when viewport has focus (default); press Escape from address bar first if needed
+
+**Implementation notes (`lib/netsurf_aether/cookies_aether.c` + `cookies_aether.h`):**
+- Storage on FAT32 `/config/cookies.txt` — `domain|path|name|value\n` per line
+- `cookies_init()` called at startup alongside `persist_init()` — silent no-op if file absent
+- `cookie_set_from_header(val, host, path)` — parses `Set-Cookie:` value; attributes parsed: `domain=`, `path=`; `expires`/`max-age`/`Secure`/`HttpOnly`/`SameSite` ignored for now
+- `cookies_build_header(host, path, out, max)` — returns `name=value; name2=value2` for all matching cookies
+- Domain matching: stored domain stripped of leading dot, then `host == domain` or `host` ends with `.domain`
+- Path matching: request path must start with cookie path (with `/`, `\0`, or `?` boundary)
+- Cookie store updated in `fetch_http_aether.c`: Set-Cookie scanned from all response headers (including redirect hops); Cookie header sent if any cookies match
+- `COOKIE_MAX=256` cookies in-memory; full file rewrite on every change
+
+**Implementation notes (`apps/aether_browser/persistence.c` + `persistence.h`):**
+- Storage on FAT32 `/config/` (directory pre-created by `make_disk.sh`)
+- `persist_init()` called at startup after `gfx_init()` — loads both files silently; no error if files absent (first boot)
+- Both files rewritten in full on every modification (fopen("w") = sys_fs_create truncates)
+- `bmarks_find(url)` does exact-match strcmp; `bmarks_remove(idx)` shifts array left
+- Star indicator: drawn in `toolbar_draw()` at right of address bar (`*` in `C_YELLOW` if bookmarked, `C_TEXT_DIM` if not); `toolbar_event()` handles click on star hit area
+- Shortcuts: Ctrl+D (viewport focus) or click star in toolbar
+- `history_append()` fires when `s_was_loading → !loading` transition in `browser_per_frame`
+- Address bar width reduced by `BTN_STAR_W + 8` px to make room for star button
 
 ---
 

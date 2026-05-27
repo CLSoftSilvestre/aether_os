@@ -92,6 +92,15 @@ if [ -d "${FONTS_ASSET_DIR}" ]; then
         mcopy -i "${DISK}" "${font}" "::fonts/${fname}"
         font_count=$((font_count + 1))
     done
+    # Short-name aliases so 8.3-only FAT32 access still works
+    if [ -f "${FONTS_ASSET_DIR}/NotoSans-Regular.ttf" ]; then
+        mcopy -i "${DISK}" "${FONTS_ASSET_DIR}/NotoSans-Regular.ttf" "::fonts/sans.ttf"
+        echo "[DISK] Added short-name alias: /fonts/sans.ttf"
+    fi
+    if [ -f "${FONTS_ASSET_DIR}/NotoSansMono-Regular.ttf" ]; then
+        mcopy -i "${DISK}" "${FONTS_ASSET_DIR}/NotoSansMono-Regular.ttf" "::fonts/mono.ttf"
+        echo "[DISK] Added short-name alias: /fonts/mono.ttf"
+    fi
     if [ "${font_count}" -gt 0 ]; then
         echo "[DISK] Copied ${font_count} font(s) to /fonts/"
     else
@@ -161,15 +170,18 @@ printf "name=System Preferences\nicon=icon_hardware\nexec=/sys_prefs\ndescriptio
 mmd -i "${DISK}" ::config
 
 printf "# AetherOS display configuration\n# width and height apply on next reboot\nwidth=1280\nheight=720\n" \
-    | mcopy -i "${DISK}" - ::config/display.conf
+    | mcopy -i "${DISK}" - ::config/display.cfg
 
 printf "# AetherOS network configuration\n# mode: dhcp | static\nmode=dhcp\nip=0.0.0.0\nmask=255.255.255.0\ngateway=0.0.0.0\ndns=8.8.8.8\n" \
-    | mcopy -i "${DISK}" - ::config/network.conf
+    | mcopy -i "${DISK}" - ::config/network.cfg
 
 printf "# AetherOS audio configuration\noutput_volume=80\ninput_gain=80\nalert_volume=75\noutput_mute=0\noutput_balance=0\nsample_rate=48000\nperiod_frames=64\nbit_depth=16\noutput_dev=\ninput_dev=\n" \
-    | mcopy -i "${DISK}" - ::config/audio.conf
+    | mcopy -i "${DISK}" - ::config/audio.cfg
 
-# users.conf is intentionally NOT pre-created here.
+# /downloads/ — browser download storage (I5.4)
+mmd -i "${DISK}" ::downloads
+
+# users.cfg is intentionally NOT pre-created here.
 # The kernel creates it on first boot with a default admin account.
 
 echo "[DISK] Contents:"

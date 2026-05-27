@@ -1,7 +1,7 @@
 # AetherOS
 AetherOS is an experimental hobby operating system built from scratch, specifically designed for the Raspberry Pi 5 (AArch64) architecture. It emphasizes a modern development workflow using QEMU for emulation and testing.
 
-![Alttext](./screenshots/Aetheros.png)
+![Alttext](./screenshots/desktop.png)
 
 ## Table of Contents
 [Why AetherOS](#why-aetheros)
@@ -110,11 +110,11 @@ Double clicking one txt file will automayically open it in the Text Editor appli
 
 ### Text Editor
 Default application for viewing and editing text files. It has the basic text editor capabilities.
-![Alttext](./screenshots/text_editor.png)
+![Alttext](./screenshots/texteditor.png)
 
 ### Scripts Editor
 AetherOS supports LUA 5.4 scripting. This is the basic IDE for developing applications and running inside AetherOS.
-![Alttext](./screenshots/script_editor.png)
+![Alttext](./screenshots/codeide.png)
 
 ### Calculator
 Self-explanatory application, however a fundamental piece of every operative system. The calculator allow users to make basic math calculations.
@@ -126,7 +126,7 @@ Telnet client application. Allows the connection to external resources and test 
 
 ### Tic Tac Toe
 Because all OS should have at least one game ;) AetherOS comes with the well know Tic Tac Toe. It can be used in 2 modes. Agains other Humman or Against the CPU. Are you sure that you can beat the CPU?
-![Alttext](./screenshots/tic_tac_toe.png)
+![Alttext](./screenshots/calculator.png)
 
 ### Widget Demo
 Application to demonstrate the several widgets available in the libwidget library. Currently are available the following widgets:
@@ -145,6 +145,23 @@ Application to demonstrate the several widgets available in the libwidget librar
 ### Aether Top
 Resource monitor and realtime process visualization tool.
 ![Alttext](./screenshots/top.png)
+
+### Image viewer
+Image viewer compatible with bmp, jpg and png.
+![Alttext](./screenshots/viewer.png)
+
+### Aether Guitar
+Amp simulator and pedalboard for guitar. The app it's early stage of development.
+![Alttext](./screenshots/guitar.png)
+
+### Preferences
+Amp simulator and pedalboard for guitar. The app it's early stage of development.
+![Alttext](./screenshots/preferences.png)
+
+### Web Browser
+Aether Browser is a port of the netsurf browser.
+It can load basic webpages, with several tabs, save favorites, cookies and downloads features.
+![Alttext](./screenshots/browser.png)
 
 ## Contributing
 As this is a hobby OS project, contributions are welcome! If you have ideas for improvements, bug fixes, or new features, feel free to open an issue or submit a pull request.

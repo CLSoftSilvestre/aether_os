@@ -94,12 +94,8 @@ static fat32_bpb_t  g_bpb;
 static int          g_mounted;
 static fat32_file_t g_files[FAT32_MAX_FILES];
 
-/* Sector-sized read buffer (512 bytes, reused across all reads) */
-static u8 g_sector_buf[512] __attribute__((aligned(4)));
-
-/* LFN accumulation buffer — up to 20 LFN entries × 13 chars + NUL */
-static char g_lfn_buf[261];
-static int  g_lfn_valid;
+/* No global sector buffer — each call site uses a local u8 sec[512] so
+ * concurrent syscalls from different tasks cannot alias each other's I/O. */
 
 /* ── Helpers ─────────────────────────────────────────────────────────────── */
 
@@ -121,41 +117,37 @@ static u32 fat_entry(u32 cluster)
     u32 byte_in_sec = byte_offset % g_bpb.bytes_per_sector;
     u64 lba         = (u64)(g_bpb.fat_lba + sector_idx);
 
-    if (read_sector(lba, g_sector_buf) != 0) return 0;
+    u8 sec[512];
+    if (read_sector(lba, sec) != 0) return FAT32_EOC;
 
-    u32 entry = (u32)g_sector_buf[byte_in_sec]
-              | ((u32)g_sector_buf[byte_in_sec+1] << 8)
-              | ((u32)g_sector_buf[byte_in_sec+2] << 16)
-              | ((u32)g_sector_buf[byte_in_sec+3] << 24);
+    u32 entry = (u32)sec[byte_in_sec]
+              | ((u32)sec[byte_in_sec+1] << 8)
+              | ((u32)sec[byte_in_sec+2] << 16)
+              | ((u32)sec[byte_in_sec+3] << 24);
     return entry & 0x0FFFFFFFu;
 }
 
 /* Extract a single UCS-2 char from an LFN byte pair (low byte only = ASCII). */
 static char lfn_char(const u8 *p) { return (char)p[0]; }
 
-/* Append LFN characters from one LFN entry (order byte already validated). */
-static void lfn_accumulate(const fat32_lfn_t *e)
+/* Append LFN characters from one LFN entry into caller-supplied lfn_buf. */
+static void lfn_accumulate(const fat32_lfn_t *e, char *lfn_buf)
 {
-    /* Order: sequence 1..N in directory; last entry has bit6 set.
-     * Characters go into g_lfn_buf at positions (seq-1)*13 .. seq*13-1. */
-    int seq = (int)(e->order & 0x1Fu);   /* 1-based sequence number */
+    int seq = (int)(e->order & 0x1Fu);
     if (seq < 1 || seq > 20) return;
 
     int base = (seq - 1) * 13;
-    /* name1 = 5 chars at bytes 1..10 */
     for (int i = 0; i < 5; i++) {
         char c = lfn_char(e->name1 + i * 2);
-        if (base + i < 260) g_lfn_buf[base + i] = c;
+        if (base + i < 260) lfn_buf[base + i] = c;
     }
-    /* name2 = 6 chars at bytes 14..25 */
     for (int i = 0; i < 6; i++) {
         char c = lfn_char(e->name2 + i * 2);
-        if (base + 5 + i < 260) g_lfn_buf[base + 5 + i] = c;
+        if (base + 5 + i < 260) lfn_buf[base + 5 + i] = c;
     }
-    /* name3 = 2 chars at bytes 28..31 */
     for (int i = 0; i < 2; i++) {
         char c = lfn_char(e->name3 + i * 2);
-        if (base + 11 + i < 260) g_lfn_buf[base + 11 + i] = c;
+        if (base + 11 + i < 260) lfn_buf[base + 11 + i] = c;
     }
 }
 
@@ -221,8 +213,9 @@ static int iterate_dir(u32 dir_cluster, dir_cb_t cb, void *ctx)
     if (spc > 8) spc = 8;       /* safety cap (should be 1..8 for typical FAT32) */
     u32 bytes_per_cluster = spc * 512u;
 
-    g_lfn_valid = 0;
-    for (int i = 0; i < 261; i++) g_lfn_buf[i] = '\0';
+    char lfn_buf[261];
+    int  lfn_valid = 0;
+    for (int i = 0; i < 261; i++) lfn_buf[i] = '\0';
 
     u32 cluster = dir_cluster;
 
@@ -240,8 +233,8 @@ static int iterate_dir(u32 dir_cluster, dir_cb_t cb, void *ctx)
 
             if (de->name[0] == 0x00u) goto done;   /* end of directory */
             if (de->name[0] == 0xE5u) {            /* deleted entry */
-                g_lfn_valid = 0;
-                for (int i = 0; i < 261; i++) g_lfn_buf[i] = '\0';
+                lfn_valid = 0;
+                for (int i = 0; i < 261; i++) lfn_buf[i] = '\0';
                 continue;
             }
             if (de->attr == ATTR_LFN) {
@@ -249,32 +242,32 @@ static int iterate_dir(u32 dir_cluster, dir_cb_t cb, void *ctx)
                 const fat32_lfn_t *lfn = (const fat32_lfn_t *)(cluster_buf + off);
                 if (lfn->order & 0x40u) {
                     /* This is the first LFN entry (last in file order) — reset */
-                    for (int i = 0; i < 261; i++) g_lfn_buf[i] = '\0';
+                    for (int i = 0; i < 261; i++) lfn_buf[i] = '\0';
                 }
-                lfn_accumulate(lfn);
-                g_lfn_valid = 1;
+                lfn_accumulate(lfn, lfn_buf);
+                lfn_valid = 1;
                 continue;
             }
             /* Skip volume ID entries */
             if (de->attr & ATTR_VOLUME_ID) {
-                g_lfn_valid = 0;
+                lfn_valid = 0;
                 continue;
             }
 
             /* Build display name */
             char name[261];
-            if (g_lfn_valid && g_lfn_buf[0]) {
+            if (lfn_valid && lfn_buf[0]) {
                 /* Use LFN — find NUL terminator */
                 int n = 0;
-                while (n < 260 && g_lfn_buf[n]) { name[n] = g_lfn_buf[n]; n++; }
+                while (n < 260 && lfn_buf[n]) { name[n] = lfn_buf[n]; n++; }
                 name[n] = '\0';
             } else {
                 short_name_to_str(de, name, 261);
             }
 
             /* Reset LFN state for next entry */
-            g_lfn_valid = 0;
-            for (int i = 0; i < 261; i++) g_lfn_buf[i] = '\0';
+            lfn_valid = 0;
+            for (int i = 0; i < 261; i++) lfn_buf[i] = '\0';
 
             /* Skip dot entries */
             if (name[0] == '.' && (name[1] == '\0' || (name[1] == '.' && name[2] == '\0')))
@@ -424,7 +417,10 @@ int fat32_open(const char *path)
 
     u32 cluster = 0, size = 0;
     u8  attr    = 0;
-    if (lookup_path(path, &cluster, &size, &attr) != 0) return -1;
+    if (lookup_path(path, &cluster, &size, &attr) != 0) {
+        kwarn("fat32_open: '%s' not found\n", path);
+        return -1;
+    }
     if (attr & ATTR_DIRECTORY) return -1;   /* directories are not files */
 
     /* Find a free handle */
@@ -436,9 +432,11 @@ int fat32_open(const char *path)
             g_files[i].file_size     = size;
             g_files[i].pos           = 0;
             g_files[i].cluster_pos   = 0;
+            kinfo("fat32_open: '%s' cluster=%u size=%u fh=%d\n", path, cluster, size, i);
             return i;
         }
     }
+    kwarn("fat32_open: no free handle (all %d busy) for '%s'\n", FAT32_MAX_FILES, path);
     return -1;   /* too many open files */
 }
 
@@ -501,12 +499,13 @@ void fat32_close(int fh)
     fat32_file_t *f = &g_files[fh];
     if (f->writable) {
         /* Flush final file size into the directory entry */
-        if (read_sector(f->dirent_lba, g_sector_buf) == 0) {
-            fat32_dirent_t *de = (fat32_dirent_t *)(g_sector_buf + f->dirent_off);
+        u8 sec[512];
+        if (read_sector(f->dirent_lba, sec) == 0) {
+            fat32_dirent_t *de = (fat32_dirent_t *)(sec + f->dirent_off);
             de->cluster_hi = (u16)((f->first_cluster >> 16u) & 0xFFFFu);
             de->cluster_lo = (u16)(f->first_cluster & 0xFFFFu);
             de->file_size  = f->file_size;
-            virtio_blk_write_sectors(f->dirent_lba, 1, g_sector_buf);
+            virtio_blk_write_sectors(f->dirent_lba, 1, sec);
         }
     }
     f->used = 0;
@@ -524,19 +523,22 @@ static int write_sector(u64 lba, const u8 *buf)
  * Preserves the top 4 reserved bits of the existing FAT entry. */
 static int set_fat_entry(u32 c, u32 v)
 {
+    if (c == 2133u)
+        kerror("fat32: *** FAT[2133] <- 0x%x (font cluster!) ***\n", (unsigned)v);
     u32 byte_off    = c * 4u;
     u32 sector_idx  = byte_off / 512u;
     u32 byte_in_sec = byte_off % 512u;
 
+    u8 sec[512];
     for (u32 fat = 0u; fat < (u32)g_bpb.num_fats; fat++) {
         u64 lba = (u64)(g_bpb.fat_lba + fat * g_bpb.fat_size + sector_idx);
-        if (read_sector(lba, g_sector_buf) != 0) return -1;
-        u8 top4 = g_sector_buf[byte_in_sec + 3u] & 0xF0u;
-        g_sector_buf[byte_in_sec + 0u] = (u8)(v & 0xFFu);
-        g_sector_buf[byte_in_sec + 1u] = (u8)((v >> 8u)  & 0xFFu);
-        g_sector_buf[byte_in_sec + 2u] = (u8)((v >> 16u) & 0xFFu);
-        g_sector_buf[byte_in_sec + 3u] = top4 | (u8)((v >> 24u) & 0x0Fu);
-        if (write_sector(lba, g_sector_buf) != 0) return -1;
+        if (read_sector(lba, sec) != 0) return -1;
+        u8 top4 = sec[byte_in_sec + 3u] & 0xF0u;
+        sec[byte_in_sec + 0u] = (u8)(v & 0xFFu);
+        sec[byte_in_sec + 1u] = (u8)((v >> 8u)  & 0xFFu);
+        sec[byte_in_sec + 2u] = (u8)((v >> 16u) & 0xFFu);
+        sec[byte_in_sec + 3u] = top4 | (u8)((v >> 24u) & 0x0Fu);
+        if (write_sector(lba, sec) != 0) return -1;
     }
     return 0;
 }
@@ -551,6 +553,7 @@ static u32 alloc_cluster(void)
     for (u32 c = 2u; c < total_clusters; c++) {
         if (fat_entry(c) == 0u) {
             if (set_fat_entry(c, 0x0FFFFFFFu) != 0) return 0u;
+            kinfo("fat32: alloc_cluster → %u\n", (unsigned)c);
             return c;
         }
     }
@@ -560,6 +563,7 @@ static u32 alloc_cluster(void)
 /* Walk a cluster chain starting at first, setting each entry to 0 (free). */
 static void free_cluster_chain(u32 first)
 {
+    kerror("fat32: free_cluster_chain(start=%u) called\n", (unsigned)first);
     u32 c = first;
     while (c >= 2u && c < FAT32_EOC) {
         u32 next = fat_entry(c);
@@ -608,39 +612,41 @@ static int find_dirent_loc(u32 dir_cluster, const char *target,
     u8 t_base[8], t_ext[3];
     name_to_83(target, t_base, t_ext);
 
-    g_lfn_valid = 0;
-    for (int i = 0; i < 261; i++) g_lfn_buf[i] = '\0';
+    char lfn_buf[261];
+    int  lfn_valid = 0;
+    for (int i = 0; i < 261; i++) lfn_buf[i] = '\0';
 
+    u8  sec[512];
     u32 cluster = dir_cluster;
     while (cluster >= 2u && cluster < FAT32_EOC) {
         u32 lba = cluster_to_lba(cluster);
         for (u32 s = 0u; s < spc; s++) {
             u64 sec_lba = (u64)(lba + s);
-            if (read_sector(sec_lba, g_sector_buf) != 0) return -1;
+            if (read_sector(sec_lba, sec) != 0) return -1;
             for (u32 off = 0u; off < 512u; off += 32u) {
-                fat32_dirent_t *de = (fat32_dirent_t *)(g_sector_buf + off);
+                fat32_dirent_t *de = (fat32_dirent_t *)(sec + off);
                 if (de->name[0] == 0x00u) return -1;   /* end of directory */
                 if (de->name[0] == 0xE5u) {
-                    g_lfn_valid = 0;
-                    for (int i = 0; i < 261; i++) g_lfn_buf[i] = '\0';
+                    lfn_valid = 0;
+                    for (int i = 0; i < 261; i++) lfn_buf[i] = '\0';
                     continue;
                 }
                 if (de->attr == ATTR_LFN) {
-                    const fat32_lfn_t *lfn = (const fat32_lfn_t *)(g_sector_buf + off);
+                    const fat32_lfn_t *lfn = (const fat32_lfn_t *)(sec + off);
                     if (lfn->order & 0x40u)
-                        for (int i = 0; i < 261; i++) g_lfn_buf[i] = '\0';
-                    lfn_accumulate(lfn);
-                    g_lfn_valid = 1;
+                        for (int i = 0; i < 261; i++) lfn_buf[i] = '\0';
+                    lfn_accumulate(lfn, lfn_buf);
+                    lfn_valid = 1;
                     continue;
                 }
-                if (de->attr & ATTR_VOLUME_ID) { g_lfn_valid = 0; continue; }
+                if (de->attr & ATTR_VOLUME_ID) { lfn_valid = 0; continue; }
 
                 int matched = 0;
-                if (g_lfn_valid && g_lfn_buf[0]) {
+                if (lfn_valid && lfn_buf[0]) {
                     /* LFN entry: compare against the full long name */
                     char ename[261];
                     int k = 0;
-                    while (k < 260 && g_lfn_buf[k]) { ename[k] = g_lfn_buf[k]; k++; }
+                    while (k < 260 && lfn_buf[k]) { ename[k] = lfn_buf[k]; k++; }
                     ename[k] = '\0';
                     matched = fat_streq_ci(ename, target);
                 } else {
@@ -654,16 +660,19 @@ static int find_dirent_loc(u32 dir_cluster, const char *target,
                         if (de->ext[i] != t_ext[i]) matched = 0;
                 }
 
-                g_lfn_valid = 0;
-                for (int i = 0; i < 261; i++) g_lfn_buf[i] = '\0';
+                lfn_valid = 0;
+                for (int i = 0; i < 261; i++) lfn_buf[i] = '\0';
 
                 if (matched) {
                     if (out_lba)  *out_lba  = sec_lba;
                     if (out_off)  *out_off  = off;
+                    u32 fcl = ((u32)de->cluster_hi << 16) | (u32)de->cluster_lo;
                     if (out_first_cluster)
-                        *out_first_cluster = ((u32)de->cluster_hi << 16) | (u32)de->cluster_lo;
+                        *out_first_cluster = fcl;
                     if (out_file_size)
                         *out_file_size = de->file_size;
+                    kinfo("fat32: find_dirent_loc matched '%s' cl=%u sz=%u in dir_cl=%u\n",
+                          target, (unsigned)fcl, (unsigned)de->file_size, (unsigned)dir_cluster);
                     return 0;
                 }
             }
@@ -679,14 +688,15 @@ static int find_free_dirent_loc(u32 dir_cluster, u64 *out_lba, u32 *out_off)
 {
     u32 spc = g_bpb.sectors_per_cluster;
     u32 prev = 0u, cluster = dir_cluster;
+    u8  sec[512];
 
     while (cluster >= 2u && cluster < FAT32_EOC) {
         u32 lba = cluster_to_lba(cluster);
         for (u32 s = 0u; s < spc; s++) {
             u64 sec_lba = (u64)(lba + s);
-            if (read_sector(sec_lba, g_sector_buf) != 0) return -1;
+            if (read_sector(sec_lba, sec) != 0) return -1;
             for (u32 off = 0u; off < 512u; off += 32u) {
-                u8 first = g_sector_buf[off];
+                u8 first = sec[off];
                 if (first == 0x00u || first == 0xE5u) {
                     if (out_lba) *out_lba = sec_lba;
                     if (out_off) *out_off = off;
@@ -702,11 +712,11 @@ static int find_free_dirent_loc(u32 dir_cluster, u64 *out_lba, u32 *out_off)
     u32 nc = alloc_cluster();
     if (nc == 0u) return -1;
 
-    /* Zero-fill the new cluster using g_sector_buf */
-    for (int i = 0; i < 512; i++) g_sector_buf[i] = 0;
+    /* Zero-fill the new cluster */
+    for (int i = 0; i < 512; i++) sec[i] = 0;
     u32 lba = cluster_to_lba(nc);
     for (u32 s = 0u; s < spc; s++) {
-        if (write_sector((u64)(lba + s), g_sector_buf) != 0) return -1;
+        if (write_sector((u64)(lba + s), sec) != 0) return -1;
     }
     if (prev != 0u) set_fat_entry(prev, nc);
 
@@ -719,10 +729,11 @@ static int find_free_dirent_loc(u32 dir_cluster, u64 *out_lba, u32 *out_off)
 static int write_dirent_at(u64 sec_lba, u32 off, const char *name,
                             u32 first_cluster, u32 file_size, u8 attr)
 {
-    if (read_sector(sec_lba, g_sector_buf) != 0) return -1;
+    u8 sec[512];
+    if (read_sector(sec_lba, sec) != 0) return -1;
     u8 base[8], ext_b[3];
     name_to_83(name, base, ext_b);
-    fat32_dirent_t *de = (fat32_dirent_t *)(g_sector_buf + off);
+    fat32_dirent_t *de = (fat32_dirent_t *)(sec + off);
     for (int i = 0; i < 8; i++) de->name[i] = base[i];
     for (int i = 0; i < 3; i++) de->ext[i]  = ext_b[i];
     de->attr        = attr;
@@ -736,7 +747,7 @@ static int write_dirent_at(u64 sec_lba, u32 off, const char *name,
     de->write_date  = 0u;
     de->cluster_lo  = (u16)(first_cluster & 0xFFFFu);
     de->file_size   = file_size;
-    return write_sector(sec_lba, g_sector_buf);
+    return write_sector(sec_lba, sec);
 }
 
 /* ── Public: create ──────────────────────────────────────────────────────── */
@@ -782,10 +793,14 @@ int fat32_create(const char *path)
     int existing   = 0;
     u32 old_cluster = 0u;
 
+    kinfo("fat32_create: '%s' dir_cl=%u filename='%s'\n", path, (unsigned)dir_cluster, filename);
     if (find_dirent_loc(dir_cluster, filename,
                         &dirent_lba, &dirent_off, &old_cluster, (u32 *)0) == 0) {
+        kinfo("fat32_create: existing file found at cl=%u — freeing\n", (unsigned)old_cluster);
         if (old_cluster >= 2u) free_cluster_chain(old_cluster);
         existing = 1;
+    } else {
+        kinfo("fat32_create: new file (not found in dir_cl=%u)\n", (unsigned)dir_cluster);
     }
 
     /* Allocate the first data cluster for the new file */
@@ -853,9 +868,13 @@ int fat32_mkdir(const char *path)
 
     /* Reject if name already exists */
     u64 dummy_lba = 0u; u32 dummy_off = 0u, dummy_cl = 0u;
+    kinfo("fat32_mkdir: checking '%s' in dir_cl=%u\n", dirname, (unsigned)dir_cluster);
     if (find_dirent_loc(dir_cluster, dirname,
-                        &dummy_lba, &dummy_off, &dummy_cl, (u32 *)0) == 0)
+                        &dummy_lba, &dummy_off, &dummy_cl, (u32 *)0) == 0) {
+        kinfo("fat32_mkdir: '%s' already exists (cl=%u) — skipping\n", dirname, (unsigned)dummy_cl);
         return -1;   /* already exists */
+    }
+    kinfo("fat32_mkdir: '%s' NOT found — creating new directory\n", dirname);
 
     /* Allocate a cluster for the new directory's data */
     u32 new_cluster = alloc_cluster();
@@ -864,17 +883,18 @@ int fat32_mkdir(const char *path)
     /* Zero-fill the new cluster, then write . and .. entries */
     u32 spc = g_bpb.sectors_per_cluster;
     u32 lba = cluster_to_lba(new_cluster);
-    for (int i = 0; i < 512; i++) g_sector_buf[i] = 0;
+    u8  sec[512];
+    for (int i = 0; i < 512; i++) sec[i] = 0;
     for (u32 s = 0u; s < spc; s++) {
-        if (write_sector((u64)(lba + s), g_sector_buf) != 0) {
+        if (write_sector((u64)(lba + s), sec) != 0) {
             free_cluster_chain(new_cluster);
             return -1;
         }
     }
 
     /* Write "." entry pointing to the new directory itself */
-    if (read_sector((u64)lba, g_sector_buf) != 0) { free_cluster_chain(new_cluster); return -1; }
-    fat32_dirent_t *dot = (fat32_dirent_t *)g_sector_buf;
+    if (read_sector((u64)lba, sec) != 0) { free_cluster_chain(new_cluster); return -1; }
+    fat32_dirent_t *dot = (fat32_dirent_t *)sec;
     dot->name[0] = '.'; for (int i = 1; i < 8; i++) dot->name[i] = ' ';
     for (int i = 0; i < 3; i++) dot->ext[i] = ' ';
     dot->attr       = ATTR_DIRECTORY;
@@ -886,7 +906,7 @@ int fat32_mkdir(const char *path)
     dot->file_size  = 0u;
 
     /* Write ".." entry pointing to parent */
-    fat32_dirent_t *dotdot = (fat32_dirent_t *)(g_sector_buf + 32);
+    fat32_dirent_t *dotdot = (fat32_dirent_t *)(sec + 32);
     dotdot->name[0] = '.'; dotdot->name[1] = '.';
     for (int i = 2; i < 8; i++) dotdot->name[i] = ' ';
     for (int i = 0; i < 3; i++) dotdot->ext[i] = ' ';
@@ -899,7 +919,7 @@ int fat32_mkdir(const char *path)
     dotdot->cluster_lo = (u16)(parent_cl & 0xFFFFu);
     dotdot->file_size  = 0u;
 
-    if (write_sector((u64)lba, g_sector_buf) != 0) { free_cluster_chain(new_cluster); return -1; }
+    if (write_sector((u64)lba, sec) != 0) { free_cluster_chain(new_cluster); return -1; }
 
     /* Write the directory entry in the parent */
     u64 dirent_lba = 0u; u32 dirent_off = 0u;
@@ -927,6 +947,7 @@ int fat32_write(int fh, const u8 *buf, u32 len)
     u32 spc          = g_bpb.sectors_per_cluster;
     u32 cluster_sz   = spc * 512u;
     u32 written      = 0u;
+    u8  sec[512];
 
     while (written < len) {
         u32 avail = cluster_sz - f->cluster_pos;
@@ -947,11 +968,11 @@ int fat32_write(int fh, const u8 *buf, u32 len)
 
             /* Partial sector: read first to preserve surrounding bytes */
             if (off_in_sec != 0u || w < 512u) {
-                if (read_sector(lba, g_sector_buf) != 0) break;
+                if (read_sector(lba, sec) != 0) break;
             }
             for (u32 i = 0u; i < w; i++)
-                g_sector_buf[off_in_sec + i] = buf[written + done + i];
-            if (write_sector(lba, g_sector_buf) != 0) break;
+                sec[off_in_sec + i] = buf[written + done + i];
+            if (write_sector(lba, sec) != 0) break;
 
             cpos += w;
             done += w;
@@ -1021,8 +1042,9 @@ int fat32_remove(const char *path) {
     }
 
     // 3. Safety checks
-    if (read_sector(dirent_lba, g_sector_buf) != 0) return -1;
-    fat32_dirent_t *de = (fat32_dirent_t *)(g_sector_buf + dirent_off);
+    u8 sec[512];
+    if (read_sector(dirent_lba, sec) != 0) return -1;
+    fat32_dirent_t *de = (fat32_dirent_t *)(sec + dirent_off);
 
     if (de->attr & ATTR_DIRECTORY) {
         if (!is_dir_empty(first_cluster)) return -1; // Cannot delet non-empty dir
@@ -1034,11 +1056,11 @@ int fat32_remove(const char *path) {
     }
 
     // 5. Mark SFN as deleted
-    // Re-read to ensure buffer is fresh
-    read_sector(dirent_lba, g_sector_buf);
-    de = (fat32_dirent_t *)(g_sector_buf + dirent_off);
+    // Re-read to ensure buffer is fresh after free_cluster_chain's FAT writes
+    if (read_sector(dirent_lba, sec) != 0) return -1;
+    de = (fat32_dirent_t *)(sec + dirent_off);
     de->name[0] = 0xE5;
-    write_sector(dirent_lba, g_sector_buf);
+    write_sector(dirent_lba, sec);
 
     /* 
      * NOTE: To fully support LFN deletion, you would need to loop backwards 

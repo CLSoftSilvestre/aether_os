@@ -232,6 +232,13 @@ void gfx_icon_file_generic(int x, int y, int sz);
 #define ICON_BTN_FORWARD 14  /* envelope with right arrow — forward */
 #define ICON_BTN_REFRESH  15  /* circular arrow — refresh/reload */
 #define ICON_BTN_SETTINGS 16  /* gear — account settings */
+/* Browser-specific icons */
+#define ICON_BTN_NAV_BACK    17  /* left navigation arrow */
+#define ICON_BTN_NAV_FWD     18  /* right navigation arrow */
+#define ICON_BTN_STAR        19  /* star outline — not bookmarked */
+#define ICON_BTN_STAR_FILLED 20  /* filled star — bookmarked */
+#define ICON_BTN_NEWTAB      21  /* plus sign — new tab */
+#define ICON_BTN_CLOSE_SMALL 22  /* small X — close tab */
 
 /*
  * Draw a 14×14 toolbar icon centred at pixel (x, y) = top-left of the 14×14 cell.

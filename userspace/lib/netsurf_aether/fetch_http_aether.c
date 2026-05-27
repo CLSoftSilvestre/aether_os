@@ -44,6 +44,12 @@
 #  include "tls_aether.h"
 #endif
 
+/* Cookies (Iteration 5.3) */
+#include "cookies_aether.h"
+
+/* Downloads cache (Iteration 5.4) */
+#include "downloads_aether.h"
+
 /* libwapcaplet */
 #include <libwapcaplet/libwapcaplet.h>
 
@@ -307,16 +313,33 @@ static void do_http(fetch_http_ctx_t *ctx)
 #endif /* AETHER_TLS_ENABLED */
 
         /* ── HTTP/1.1 GET request ────────────────────────────── */
-        char req[4096];
-        int rlen = snprintf(req, sizeof(req),
-            "GET %s HTTP/1.1\r\n"
-            "Host: %s\r\n"
-            "Connection: close\r\n"
-            "User-Agent: AetherBrowser/0.1 (AetherOS; AArch64)\r\n"
-            "Accept: text/html,application/xhtml+xml,*/*;q=0.8\r\n"
-            "Accept-Encoding: gzip\r\n"
-            "\r\n",
-            cur_path, cur_host);
+        char cookie_val[1024];
+        cookies_build_header(cur_host, cur_path, cookie_val, sizeof(cookie_val));
+
+        char req[8192];
+        int rlen;
+        if (cookie_val[0]) {
+            rlen = snprintf(req, sizeof(req),
+                "GET %s HTTP/1.1\r\n"
+                "Host: %s\r\n"
+                "Connection: close\r\n"
+                "User-Agent: AetherBrowser/0.1 (AetherOS; AArch64)\r\n"
+                "Accept: text/html,application/xhtml+xml,*/*;q=0.8\r\n"
+                "Accept-Encoding: gzip\r\n"
+                "Cookie: %s\r\n"
+                "\r\n",
+                cur_path, cur_host, cookie_val);
+        } else {
+            rlen = snprintf(req, sizeof(req),
+                "GET %s HTTP/1.1\r\n"
+                "Host: %s\r\n"
+                "Connection: close\r\n"
+                "User-Agent: AetherBrowser/0.1 (AetherOS; AArch64)\r\n"
+                "Accept: text/html,application/xhtml+xml,*/*;q=0.8\r\n"
+                "Accept-Encoding: gzip\r\n"
+                "\r\n",
+                cur_path, cur_host);
+        }
         if (rlen < 0 || rlen >= (int)sizeof(req)) rlen = (int)sizeof(req) - 1;
 
 #ifdef AETHER_TLS_ENABLED
@@ -375,6 +398,28 @@ static void do_http(fetch_http_ctx_t *ctx)
             hdr_len    = 0;
             body_start = raw;
             body_sz    = total;
+        }
+
+        /* ── Set-Cookie headers ──────────────────────────────── */
+        if (hdr_end) {
+            const char *sc_scan = (const char *)raw;
+            while (sc_scan < hdr_end) {
+                const char *sc_hdr = ci_strstr(sc_scan, "Set-Cookie:");
+                if (!sc_hdr || sc_hdr >= hdr_end) break;
+                sc_hdr += 11;
+                while (*sc_hdr == ' ' || *sc_hdr == '\t') sc_hdr++;
+                char sc_val[1024];
+                size_t si = 0;
+                const char *sp2 = sc_hdr;
+                while (sp2 < hdr_end && *sp2 != '\r' && *sp2 != '\n'
+                       && si < sizeof(sc_val) - 1)
+                    sc_val[si++] = *sp2++;
+                sc_val[si] = '\0';
+                if (si > 0) cookie_set_from_header(sc_val, cur_host, cur_path);
+                sc_scan = sp2;
+                while (sc_scan < hdr_end && (*sc_scan == '\r' || *sc_scan == '\n'))
+                    sc_scan++;
+            }
         }
 
         /* ── Content-Type ────────────────────────────────────── */
@@ -561,6 +606,12 @@ static bool fetch_http_start(void *ctx_)
                  ctx->http_code, ctx->body_len,
                  nsurl_access(ctx->url));
         dbg_write(buf);
+
+        /* Cache response for Ctrl+S download (I5.4) */
+        if (ctx->http_code == 200 && ctx->body && ctx->body_len > 0)
+            downloads_cache_response(nsurl_access(ctx->url),
+                                     ctx->body, ctx->body_len,
+                                     ctx->content_type);
     }
     ctx->ready = true;
     return true;

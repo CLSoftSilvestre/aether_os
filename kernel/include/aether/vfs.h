@@ -18,8 +18,8 @@
 
 #include "aether/types.h"
 
-#define VFS_FD_BASE   200        /* VFS fds: 200 .. 215 */
-#define VFS_MAX_FD    16
+#define VFS_FD_BASE   200        /* VFS fds: 200 .. 231 */
+#define VFS_MAX_FD    32
 
 void vfs_init(void);             /* call after virtio_blk_init + fat32_mount */
 

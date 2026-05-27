@@ -256,6 +256,77 @@ static void icon_settings(int x, int y)
     gfx_fill((unsigned)(x+10), (unsigned)(y+5),  4u, 4u, c); /* right tooth */
 }
 
+/* Left-pointing navigation arrow (browser back) */
+static void icon_nav_back(int x, int y)
+{
+    gfx_fill(x+6, y+5, 7, 4, IC_ARROW);  /* shaft */
+    gfx_fill(x+5, y+4, 1, 6, IC_ARROW);  /* arrowhead outer wing */
+    gfx_fill(x+3, y+5, 2, 4, IC_ARROW);  /* arrowhead middle */
+    gfx_fill(x+1, y+6, 2, 2, IC_ARROW);  /* arrowhead inner */
+    gfx_fill(x+0, y+7, 1, 1, IC_ARROW);  /* tip */
+}
+
+/* Right-pointing navigation arrow (browser forward) */
+static void icon_nav_fwd(int x, int y)
+{
+    gfx_fill(x+1, y+5, 7, 4, IC_ARROW);   /* shaft */
+    gfx_fill(x+8, y+4, 1, 6, IC_ARROW);   /* arrowhead outer wing */
+    gfx_fill(x+9, y+5, 2, 4, IC_ARROW);   /* arrowhead middle */
+    gfx_fill(x+11, y+6, 2, 2, IC_ARROW);  /* arrowhead inner */
+    gfx_fill(x+13, y+7, 1, 1, IC_ARROW);  /* tip */
+}
+
+/* 5-pointed star shape shared by outline and filled variants */
+static void icon_star_draw(int x, int y, unsigned c)
+{
+    /* Top spike */
+    gfx_fill(x+5, y+0, 4, 3, c);
+    /* Arm band */
+    gfx_fill(x+0, y+3, 14, 3, c);
+    /* Upper body */
+    gfx_fill(x+2, y+6, 10, 2, c);
+    /* Lower left spike */
+    gfx_fill(x+0, y+8,  4, 5, c);
+    /* Lower right spike */
+    gfx_fill(x+10, y+8, 4, 5, c);
+    /* Lower center connector (V between spikes) */
+    gfx_fill(x+5, y+8,  4, 3, c);
+}
+
+/* Star outline — not bookmarked */
+static void icon_star(int x, int y)
+{
+    icon_star_draw(x, y, GFX_RGB(100, 95, 55));
+}
+
+/* Filled star — bookmarked */
+static void icon_star_filled(int x, int y)
+{
+    icon_star_draw(x, y, GFX_RGB(247, 201, 72));
+}
+
+/* Plus sign — new tab */
+static void icon_newtab(int x, int y)
+{
+    gfx_fill(x+6, y+1,  2, 12, IC_ARROW);  /* vertical bar */
+    gfx_fill(x+1, y+6, 12,  2, IC_ARROW);  /* horizontal bar */
+}
+
+/* Small X — close tab */
+static void icon_close_small(int x, int y)
+{
+    unsigned c = IC_RED;
+    gfx_fill(x+2,  y+2,  2, 2, c);
+    gfx_fill(x+10, y+2,  2, 2, c);
+    gfx_fill(x+4,  y+4,  2, 2, c);
+    gfx_fill(x+8,  y+4,  2, 2, c);
+    gfx_fill(x+6,  y+6,  2, 2, c);  /* centre */
+    gfx_fill(x+4,  y+8,  2, 2, c);
+    gfx_fill(x+8,  y+8,  2, 2, c);
+    gfx_fill(x+2,  y+10, 2, 2, c);
+    gfx_fill(x+10, y+10, 2, 2, c);
+}
+
 /* ── Dispatch ─────────────────────────────────────────────────────────────── */
 
 void gfx_toolbar_icon(int x, int y, unsigned char icon_id)
@@ -275,8 +346,14 @@ void gfx_toolbar_icon(int x, int y, unsigned char icon_id)
     case ICON_BTN_COMPOSE: icon_compose(x, y);      break;
     case ICON_BTN_REPLY:   icon_reply(x, y);        break;
     case ICON_BTN_FORWARD: icon_forward_mail(x, y); break;
-    case ICON_BTN_REFRESH:   icon_refresh(x, y);   break;
-    case ICON_BTN_SETTINGS:  icon_settings(x, y);  break;
+    case ICON_BTN_REFRESH:      icon_refresh(x, y);      break;
+    case ICON_BTN_SETTINGS:     icon_settings(x, y);     break;
+    case ICON_BTN_NAV_BACK:     icon_nav_back(x, y);     break;
+    case ICON_BTN_NAV_FWD:      icon_nav_fwd(x, y);      break;
+    case ICON_BTN_STAR:         icon_star(x, y);         break;
+    case ICON_BTN_STAR_FILLED:  icon_star_filled(x, y);  break;
+    case ICON_BTN_NEWTAB:       icon_newtab(x, y);       break;
+    case ICON_BTN_CLOSE_SMALL:  icon_close_small(x, y);  break;
     default: break;
     }
 }

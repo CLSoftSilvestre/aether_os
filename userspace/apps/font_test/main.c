@@ -17,7 +17,7 @@
 #include <string.h>
 #include "aether_font.h"
 
-#define FONT_PATH  "/fonts/NotoSans-Regular.ttf"
+#define FONT_PATH  "/fonts/sans.ttf"
 #define BUF_W      512
 #define BUF_H      200
 

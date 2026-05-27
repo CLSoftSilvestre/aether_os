@@ -35,7 +35,7 @@ static aether_font_t *get_font(void)
 {
     if (g_font_tried) return g_font_regular;
     g_font_tried = true;
-    aether_font_load("/fonts/NotoSans-Regular.ttf", &g_font_regular);
+    aether_font_load("/fonts/sans.ttf", &g_font_regular);
     return g_font_regular;
 }
 

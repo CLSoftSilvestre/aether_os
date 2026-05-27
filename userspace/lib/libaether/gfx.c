@@ -198,7 +198,7 @@ void gfx_init(void)
 
 #if GFX_HAVE_FREETYPE
     if (aether_font_init() == 0 &&
-        aether_font_load("/fonts/NotoSans-Regular.ttf", &g_ft_font) == 0) {
+        aether_font_load("/fonts/sans.ttf", &g_ft_font) == 0) {
         g_ft_ascent = aether_font_get_ascent(g_ft_font, GFX_FT_PX);
         g_ft_height = aether_font_get_height(g_ft_font, GFX_FT_PX);
         if (g_ft_ascent <= 0) g_ft_ascent = 11;
