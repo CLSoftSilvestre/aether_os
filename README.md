@@ -124,6 +124,11 @@ Self-explanatory application, however a fundamental piece of every operative sys
 Telnet client application. Allows the connection to external resources and test connectivity to several services.
 ![Alttext](./screenshots/telnet.png)
 
+### Aether IRC
+IRC client application, allow user to connect to irc servers and join channels.
+A good way to revive the good old days! ;)
+![Alttext](./screenshots/irc.png)
+
 ### Tic Tac Toe
 Because all OS should have at least one game ;) AetherOS comes with the well know Tic Tac Toe. It can be used in 2 modes. Agains other Humman or Against the CPU. Are you sure that you can beat the CPU?
 ![Alttext](./screenshots/calculator.png)

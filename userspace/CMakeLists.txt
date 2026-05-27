@@ -403,6 +403,27 @@ set_target_properties(user_telnet PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
 )
 
+# ── aether_irc — IRC client (RFC 1459 / RFC 2812) ────────────────────────────
+
+add_executable(user_aether_irc
+    apps/aether_irc/main.c
+    apps/aether_irc/irc.c
+    lib/crt0.S
+)
+target_include_directories(user_aether_irc PRIVATE
+    lib/include
+    apps/aether_irc
+)
+target_compile_options(user_aether_irc PRIVATE ${USER_COMPILE_FLAGS})
+target_link_libraries(user_aether_irc PRIVATE libwidget libaether)
+target_link_options(user_aether_irc PRIVATE
+    -T ${USER_LINKER_SCRIPT} -nostdlib -static -Wl,--build-id=none
+)
+set_target_properties(user_aether_irc PROPERTIES
+    OUTPUT_NAME "aether_irc" SUFFIX ""
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
+)
+
 # ── aether_mail — IMAP4rev1 + SMTP email client ──────────────────────────────
 #
 # Protocols : IMAP4rev1 (RFC 3501, port 993 IMAPS) + SMTP (RFC 5321, port 465)
@@ -2249,6 +2270,7 @@ add_custom_command(
             ${INITRD_FILES_SRC}/apps/ns_test.app
             ${INITRD_FILES_SRC}/apps/fetch_test.app
             ${INITRD_FILES_SRC}/apps/aether_mail.app
+            ${INITRD_FILES_SRC}/apps/aether_irc.app
     COMMENT "Copying initrd static files"
 )
 
@@ -2260,7 +2282,7 @@ add_custom_command(
                 ${INITRD_CPIO}
     DEPENDS user_init user_login user_dock user_topbar user_notif_center user_desktop user_compositor user_aether_term user_statusbar user_files
             user_textviewer user_calculator user_tictactoe user_widget_demo
-            user_aether_editor user_aether_http user_telnet user_aether_top user_aether_mail
+            user_aether_editor user_aether_http user_telnet user_aether_top user_aether_mail user_aether_irc
             user_sys_prefs user_aether_sound user_aether_guitar aeguitar_assets
             user_posix_test
             ${INTERP_TARGET}
