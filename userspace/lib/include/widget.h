@@ -174,6 +174,7 @@ typedef struct {
     int          n_items_max;
     int          selected;  /* -1 = none */
     int          scroll_top;
+    int          last_ax, last_ay; /* abs pos cached by draw_fn for hit-testing */
     void (*on_select)(widget_t *w, int index, void *userdata);
 } wdata_listview_t;
 
@@ -249,6 +250,7 @@ typedef struct {
     void (*per_frame_fn)(void *userdata);  /* called each loop iter, before redraw */
     void *userdata;
     int   running;        /* set to 0 from a callback to exit widget_run() */
+    int  *minimized_flag; /* if non-NULL, set to 1/0 on WM_EV_MINIMIZE/RESTORE */
 } widget_ctx_t;
 
 /* ── Core API ───────────────────────────────────────────────────────────── */

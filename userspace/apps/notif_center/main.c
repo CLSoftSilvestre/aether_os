@@ -303,9 +303,21 @@ int main(void)
     draw_window();
 
     int prev_lbtn = 0;
+    int poll_tick = 0;
 
     for (;;) {
         sys_vsync_wait();
+
+        /* Re-read /notif every ~3 s (180 vsyncs at 60 Hz) */
+        if (++poll_tick >= 180) {
+            poll_tick = 0;
+            int old_count = g_count;
+            store_load();
+            if (g_count != old_count) {
+                store_mark_read();
+                g_needs_draw = 1;
+            }
+        }
 
         unsigned long long wev;
         while ((wev = sys_wm_event_poll()) != 0u) {

@@ -7,9 +7,12 @@
  * Uses a GPU BO so the compositor z-orders it above all app windows.
  *
  * Layout:
- *   Left  : "AetherOS  v0.0.8"
- *   Center: "Lumina Desktop — Phase 6.2"
+ *   Left  : [pwr] "AetherOS  v0.0.8"
  *   Right : [net][vol][user][bell] | Weekday DD Mon  HH:MM
+ *
+ * Left-side icon:
+ *   pwr  — Power symbol; clicking spawns /power_menu (centered dialog with
+ *           Shut Down / Reboot options); one instance at a time.
  *
  * Right-side status icons (14×14 px, vertically centered in the 36px bar):
  *   net  — WiFi-style 3-arc icon; C_ACCENT when connected, dim when not
@@ -19,8 +22,8 @@
  *           red badge dot when unread > 0; clicking spawns /notif_center
  *
  * Click handling: the topbar window receives mouse events forwarded by
- * init (same mechanism as the dock).  Only the bell icon triggers an
- * action right now; the others are reserved for future menus.
+ * init (same mechanism as the dock).  Bell spawns /notif_center, power icon
+ * spawns /power_menu; others are reserved for future menus.
  */
 
 #include <gfx.h>
@@ -66,8 +69,12 @@ static unsigned int   g_notif_unread  = 0;
 /* Icon X positions updated each right-panel draw */
 static int g_x_net, g_x_vol, g_x_user, g_x_bell;
 
-/* PID of spawned notification center (0 = not running) */
+/* Power icon — fixed on the left side */
+#define POWER_ICON_X   4
+
+/* PIDs of spawned child apps (0 = not running) */
 static long g_nc_pid = 0;
+static long g_pm_pid = 0;
 
 /* ── Calendar helpers ────────────────────────────────────────────────────── */
 
@@ -139,6 +146,38 @@ static void poll_status(void)
 }
 
 /* ── Status icon drawing (14×14 into C_PANEL background) ────────────────── */
+
+static void draw_icon_power(int x, int y)
+{
+    unsigned c = C_TEXT;
+    gfx_fill(x, y, ICON_SZ, ICON_SZ, C_PANEL);
+
+    /* Stem — passes through the ring gap down to center */
+    gfx_fill(x+6, y+0, 2, 8, c);
+
+    /* Ring — top arc flanking the stem gap */
+    gfx_fill(x+2,  y+3, 2, 1, c);
+    gfx_fill(x+10, y+3, 2, 1, c);
+
+    /* Ring — sides taper outward */
+    gfx_fill(x+1,  y+4, 2, 1, c);
+    gfx_fill(x+11, y+4, 2, 1, c);
+
+    /* Ring — widest section */
+    gfx_fill(x+0,  y+5, 2, 4, c);
+    gfx_fill(x+12, y+5, 2, 4, c);
+
+    /* Ring — sides taper inward */
+    gfx_fill(x+1,  y+9, 2, 1, c);
+    gfx_fill(x+11, y+9, 2, 1, c);
+
+    /* Ring — bottom corners */
+    gfx_fill(x+2,  y+10, 2, 1, c);
+    gfx_fill(x+10, y+10, 2, 1, c);
+
+    /* Ring — bottom arc (2 px tall) */
+    gfx_fill(x+3, y+11, 8, 2, c);
+}
 
 static void draw_icon_net(int x, int y)
 {
@@ -279,9 +318,20 @@ static void handle_click(int cx, int cy)
 {
     if (cy < 0 || cy >= TOPBAR_H) return;
 
+    /* Power icon → launch power menu (one instance at a time) */
+    if (cx >= POWER_ICON_X && cx < POWER_ICON_X + ICON_SZ) {
+        if (g_pm_pid > 0) {
+            int st = 0;
+            if (sys_waitpid_nb(g_pm_pid, &st) != 0)
+                g_pm_pid = 0;
+        }
+        if (g_pm_pid <= 0)
+            g_pm_pid = sys_spawn("/power_menu");
+        return;
+    }
+
     /* Bell icon → launch notification center (one instance at a time) */
     if (cx >= g_x_bell && cx < g_x_bell + ICON_SZ) {
-        /* Reap previous NC if it already exited */
         if (g_nc_pid > 0) {
             int st = 0;
             if (sys_waitpid_nb(g_nc_pid, &st) != 0)
@@ -302,10 +352,13 @@ static void draw_topbar(void)
 
     gfx_fill(0, 0, (unsigned)SCR_W, TOPBAR_H, C_PANEL);
 
-    /* Branding — left */
-    gfx_text(14, 10, "AetherOS", C_TEXT, C_PANEL);
-    gfx_text((unsigned)(14 + gfx_text_width("AetherOS") + 8), 10,
-             "v0.0.8", C_TEXT_DIM, C_PANEL);
+    /* Power icon — far left, clickable */
+    draw_icon_power(POWER_ICON_X, ICON_Y);
+
+    /* Branding — left, shifted right to clear the power icon */
+    gfx_text(POWER_ICON_X + ICON_SZ + 6, 10, "AetherOS", C_TEXT, C_PANEL);
+    gfx_text((unsigned)(POWER_ICON_X + ICON_SZ + 6 + gfx_text_width("AetherOS") + 8), 10,
+             "v0.0.9", C_TEXT_DIM, C_PANEL);
 
     /* Center label
     gfx_text_center(0, (unsigned)SCR_W, 10,

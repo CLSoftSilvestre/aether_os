@@ -94,6 +94,10 @@ static fat32_bpb_t  g_bpb;
 static int          g_mounted;
 static fat32_file_t g_files[FAT32_MAX_FILES];
 
+/* Cluster range of /fonts/sans.ttf — computed at mount time and write-protected. */
+static u32 g_font_prot_first = 0u;
+static u32 g_font_prot_last  = 0u;
+
 /* No global sector buffer — each call site uses a local u8 sec[512] so
  * concurrent syscalls from different tasks cannot alias each other's I/O. */
 
@@ -404,6 +408,24 @@ int fat32_mount(void)
           label, (unsigned)g_bpb.root_cluster, (unsigned)g_bpb.data_lba);
 
     g_mounted = 1;
+
+    /* Walk sans.ttf's FAT chain to determine the full cluster range to protect.
+     * On a freshly generated disk all clusters are contiguous, so first..last
+     * covers every cluster the font occupies.  On a corrupted disk the chain
+     * may be short, but at minimum g_font_prot_first is guarded. */
+    {
+        u32 cl = 0u, sz = 0u; u8 attr = 0u;
+        if (lookup_path("fonts/sans.ttf", &cl, &sz, &attr) == 0 && cl >= 2u) {
+            g_font_prot_first = cl;
+            u32 c = cl, last = cl;
+            while (c >= 2u && c < FAT32_EOC) { last = c; c = fat_entry(c); }
+            g_font_prot_last = last;
+            kinfo("fat32: sans.ttf cluster guard: %u–%u (%u clusters)\n",
+                  (unsigned)g_font_prot_first, (unsigned)g_font_prot_last,
+                  (unsigned)(g_font_prot_last - g_font_prot_first + 1u));
+        }
+    }
+
     return 0;
 }
 
@@ -427,11 +449,15 @@ int fat32_open(const char *path)
     for (int i = 0; i < FAT32_MAX_FILES; i++) {
         if (!g_files[i].used) {
             g_files[i].used          = 1;
+            g_files[i].writable      = 0;
             g_files[i].first_cluster = cluster;
             g_files[i].cur_cluster   = cluster;
             g_files[i].file_size     = size;
             g_files[i].pos           = 0;
             g_files[i].cluster_pos   = 0;
+            g_files[i].last_cluster  = 0u;
+            g_files[i].dirent_lba    = 0u;
+            g_files[i].dirent_off    = 0u;
             kinfo("fat32_open: '%s' cluster=%u size=%u fh=%d\n", path, cluster, size, i);
             return i;
         }
@@ -498,6 +524,9 @@ void fat32_close(int fh)
     if (fh < 0 || fh >= FAT32_MAX_FILES || !g_files[fh].used) return;
     fat32_file_t *f = &g_files[fh];
     if (f->writable) {
+        kinfo("fat32_close: fh=%d cl=%u size=%u dirent_lba=%u off=%u\n",
+              fh, (unsigned)f->first_cluster, (unsigned)f->file_size,
+              (unsigned)f->dirent_lba, (unsigned)f->dirent_off);
         /* Flush final file size into the directory entry */
         u8 sec[512];
         if (read_sector(f->dirent_lba, sec) == 0) {
@@ -505,7 +534,15 @@ void fat32_close(int fh)
             de->cluster_hi = (u16)((f->first_cluster >> 16u) & 0xFFFFu);
             de->cluster_lo = (u16)(f->first_cluster & 0xFFFFu);
             de->file_size  = f->file_size;
-            virtio_blk_write_sectors(f->dirent_lba, 1, sec);
+            int rc = (int)virtio_blk_write_sectors(f->dirent_lba, 1, sec);
+            if (rc != 0)
+                kerror("fat32_close: dirent write failed lba=%u rc=%d\n",
+                       (unsigned)f->dirent_lba, rc);
+            else
+                kinfo("fat32_close: dirent committed ok\n");
+        } else {
+            kerror("fat32_close: failed to read dirent sector lba=%u\n",
+                   (unsigned)f->dirent_lba);
         }
     }
     f->used = 0;
@@ -523,8 +560,17 @@ static int write_sector(u64 lba, const u8 *buf)
  * Preserves the top 4 reserved bits of the existing FAT entry. */
 static int set_fat_entry(u32 c, u32 v)
 {
-    if (c == 2133u)
-        kerror("fat32: *** FAT[2133] <- 0x%x (font cluster!) ***\n", (unsigned)v);
+    /* Protect every cluster in sans.ttf's range from being freed or reallocated.
+     * g_font_prot_first/last are set at mount time by walking the font's FAT chain.
+     * Falls back to the hardcoded cluster 2133 before the chain walk completes. */
+    if (g_font_prot_first > 0u
+            ? (c >= g_font_prot_first && c <= g_font_prot_last)
+            : (c == 2133u)) {
+        kerror("fat32: *** refusing FAT[%u] <- 0x%x (font cluster guard [%u-%u]) ***\n",
+               (unsigned)c, (unsigned)v,
+               (unsigned)g_font_prot_first, (unsigned)g_font_prot_last);
+        return -1;
+    }
     u32 byte_off    = c * 4u;
     u32 sector_idx  = byte_off / 512u;
     u32 byte_in_sec = byte_off % 512u;
@@ -552,7 +598,7 @@ static u32 alloc_cluster(void)
 
     for (u32 c = 2u; c < total_clusters; c++) {
         if (fat_entry(c) == 0u) {
-            if (set_fat_entry(c, 0x0FFFFFFFu) != 0) return 0u;
+            if (set_fat_entry(c, 0x0FFFFFFFu) != 0) continue;  /* skip guarded/bad clusters */
             kinfo("fat32: alloc_cluster → %u\n", (unsigned)c);
             return c;
         }
@@ -567,7 +613,11 @@ static void free_cluster_chain(u32 first)
     u32 c = first;
     while (c >= 2u && c < FAT32_EOC) {
         u32 next = fat_entry(c);
-        set_fat_entry(c, 0u);
+        if (set_fat_entry(c, 0u) != 0) {
+            /* Protected cluster — stop here; do not traverse its chain */
+            kerror("fat32: free_cluster_chain stopped at protected cluster %u\n", (unsigned)c);
+            break;
+        }
         c = next;
     }
 }
@@ -671,8 +721,9 @@ static int find_dirent_loc(u32 dir_cluster, const char *target,
                         *out_first_cluster = fcl;
                     if (out_file_size)
                         *out_file_size = de->file_size;
-                    kinfo("fat32: find_dirent_loc matched '%s' cl=%u sz=%u in dir_cl=%u\n",
-                          target, (unsigned)fcl, (unsigned)de->file_size, (unsigned)dir_cluster);
+                    kinfo("fat32: find_dirent_loc matched '%s' cl=%u sz=%u lba=%u off=%u dir_cl=%u\n",
+                          target, (unsigned)fcl, (unsigned)de->file_size,
+                          (unsigned)sec_lba, (unsigned)off, (unsigned)dir_cluster);
                     return 0;
                 }
             }
@@ -813,6 +864,8 @@ int fat32_create(const char *path)
             free_cluster_chain(first_cluster);
             return -1;
         }
+        kinfo("fat32_create: new dirent at lba=%u off=%u cl=%u\n",
+              (unsigned)dirent_lba, (unsigned)dirent_off, (unsigned)first_cluster);
     }
 
     /* Write (or overwrite) the directory entry with size=0; close() sets final size */
@@ -942,6 +995,8 @@ int fat32_write(int fh, const u8 *buf, u32 len)
     if (fh < 0 || fh >= FAT32_MAX_FILES || !g_files[fh].used || !g_files[fh].writable)
         return -1;
     if (!buf || len == 0u) return 0;
+    kinfo("fat32_write: fh=%d cl=%u len=%u\n",
+          fh, (unsigned)g_files[fh].cur_cluster, (unsigned)len);
 
     fat32_file_t *f  = &g_files[fh];
     u32 spc          = g_bpb.sectors_per_cluster;
@@ -995,6 +1050,8 @@ int fat32_write(int fh, const u8 *buf, u32 len)
             f->cluster_pos  = 0u;
         }
     }
+    kinfo("fat32_write: fh=%d written=%u file_size=%u\n",
+          fh, (unsigned)written, (unsigned)g_files[fh].file_size);
     return (int)written;
 }
 
