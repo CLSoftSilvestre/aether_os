@@ -158,6 +158,22 @@ set_target_properties(user_notif_center PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
 )
 
+# ── power_menu — power dialog spawned by topbar power icon ───────────────────
+add_executable(user_power_menu
+    apps/power_menu/main.c
+    lib/crt0.S
+)
+target_include_directories(user_power_menu PRIVATE lib/include)
+target_compile_options(user_power_menu PRIVATE ${USER_COMPILE_FLAGS})
+target_link_libraries(user_power_menu PRIVATE libwidget libaether)
+target_link_options(user_power_menu PRIVATE
+    -T ${USER_LINKER_SCRIPT} -nostdlib -static -Wl,--build-id=none
+)
+set_target_properties(user_power_menu PROPERTIES
+    OUTPUT_NAME "power_menu" SUFFIX ""
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/initrd_staging
+)
+
 # ── desktop — Lumina desktop layer: wallpaper + icons (spawned by init) ───────
 add_executable(user_desktop
     apps/desktop/main.c
