@@ -363,6 +363,7 @@ static void rebuild_user_list(void)
 static void rebuild_chan_list(void)
 {
     listview_clear(&g_chan_list);
+    int sel_row = -1, row = 0;
     for (int i = 0; i < g_n_chans; i++) {
         if (i > 0 && !g_chans[i].active) continue;
         char label[IRC_CHAN_MAX + 3];
@@ -371,7 +372,10 @@ static void rebuild_chan_list(void)
         else
             strncpy(label, g_chans[i].name, sizeof(label) - 1);
         listview_add_item(&g_chan_list, label, (void *)(long)i);
+        if (i == g_current_chan) sel_row = row;
+        row++;
     }
+    g_chan_list.data.listview.selected = sel_row;
     widget_invalidate(&g_chan_list);
 }
 
