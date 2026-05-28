@@ -693,6 +693,7 @@ static inline void wm_decode_closed(unsigned long long ev,
 #define SYS_NET_SEND    705
 #define SYS_NET_RECV    706
 #define SYS_NET_CLOSE   707
+#define SYS_NET_RECV_NB 708
 
 #define SOCK_TCP  0
 #define SOCK_UDP  1
@@ -743,6 +744,12 @@ static inline long sys_net_send(long fd, const void *buf, long len)
 static inline long sys_net_recv(long fd, void *buf, long len)
 {
     return _sys3(SYS_NET_RECV, fd, (long)buf, len);
+}
+
+/* Non-blocking receive: returns bytes available now, 0 if empty, -1 on error */
+static inline long sys_net_recv_nb(long fd, void *buf, long len)
+{
+    return _sys3(SYS_NET_RECV_NB, fd, (long)buf, len);
 }
 
 /* Close socket */

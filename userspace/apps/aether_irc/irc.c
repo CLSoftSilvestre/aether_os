@@ -232,15 +232,19 @@ int irc_quit(irc_conn_t *c, const char *msg)
     return 0;
 }
 
-/* ── irc_recv ────────────────────────────────────────────────────────────── */
+/* ── irc_recv / irc_recv_nb ──────────────────────────────────────────────── */
 
 static char g_rxraw[2048];
 
-int irc_recv(irc_conn_t *c, void (*on_line)(const char *line, void *ud), void *ud)
+static int irc_recv_impl(irc_conn_t *c,
+                         void (*on_line)(const char *line, void *ud), void *ud,
+                         int nonblocking)
 {
     if (c->fd < 0) return -1;
 
-    long n = sys_net_recv(c->fd, g_rxraw, (long)sizeof(g_rxraw) - 1);
+    long n = nonblocking
+           ? sys_net_recv_nb(c->fd, g_rxraw, (long)sizeof(g_rxraw) - 1)
+           : sys_net_recv   (c->fd, g_rxraw, (long)sizeof(g_rxraw) - 1);
     if (n < 0) return -1;
     if (n == 0) return 0;
     g_rxraw[n] = '\0';
@@ -252,14 +256,12 @@ int irc_recv(irc_conn_t *c, void (*on_line)(const char *line, void *ud), void *u
             c->rxbuf[c->rxpos++] = ch;
 
         if (ch == '\n') {
-            /* Trim \r\n */
             int end = c->rxpos;
             if (end > 0 && c->rxbuf[end - 1] == '\n') end--;
             if (end > 0 && c->rxbuf[end - 1] == '\r') end--;
             c->rxbuf[end] = '\0';
 
             if (end > 0) {
-                /* Auto-reply to PING before dispatching */
                 if (strncmp(c->rxbuf, "PING ", 5) == 0) {
                     char pong[128];
                     snprintf(pong, sizeof(pong), "PONG %s", c->rxbuf + 5);
@@ -272,4 +274,14 @@ int irc_recv(irc_conn_t *c, void (*on_line)(const char *line, void *ud), void *u
         }
     }
     return count;
+}
+
+int irc_recv(irc_conn_t *c, void (*on_line)(const char *line, void *ud), void *ud)
+{
+    return irc_recv_impl(c, on_line, ud, 0);
+}
+
+int irc_recv_nb(irc_conn_t *c, void (*on_line)(const char *line, void *ud), void *ud)
+{
+    return irc_recv_impl(c, on_line, ud, 1);
 }

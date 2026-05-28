@@ -116,6 +116,11 @@ static long do_sys_net_recv(long fd, long buf_ptr, long len) {
     return (long)sock_recv((int)fd, (u8 *)buf_ptr, (u16)len, 5000u);
 }
 
+static long do_sys_net_recv_nb(long fd, long buf_ptr, long len) {
+    if (!buf_ptr || len <= 0) return -1;
+    return (long)sock_recv((int)fd, (u8 *)buf_ptr, (u16)len, 0u);
+}
+
 static long do_sys_net_close(long fd) {
     return (long)sock_close((int)fd);
 }
@@ -968,9 +973,10 @@ long syscall_dispatch(trap_frame_t *frame)
     case SYS_NET_DNS:    return do_sys_net_dns(arg0);
     case SYS_SOCKET:     return do_sys_socket(arg0);
     case SYS_CONNECT:    return do_sys_connect(arg0, arg1, arg2);
-    case SYS_NET_SEND:   return do_sys_net_send(arg0, arg1, arg2);
-    case SYS_NET_RECV:   return do_sys_net_recv(arg0, arg1, arg2);
-    case SYS_NET_CLOSE:  return do_sys_net_close(arg0);
+    case SYS_NET_SEND:      return do_sys_net_send(arg0, arg1, arg2);
+    case SYS_NET_RECV:      return do_sys_net_recv(arg0, arg1, arg2);
+    case SYS_NET_RECV_NB:   return do_sys_net_recv_nb(arg0, arg1, arg2);
+    case SYS_NET_CLOSE:     return do_sys_net_close(arg0);
 
     /* GPU / V3D (Phase 6.1) */
     case SYS_VSYNC_WAIT: {

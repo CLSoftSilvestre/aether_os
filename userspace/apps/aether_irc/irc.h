@@ -82,4 +82,9 @@ int  irc_quit    (irc_conn_t *c, const char *msg);
  * to avoid UI freezes during idle periods. */
 int  irc_recv(irc_conn_t *c, void (*on_line)(const char *line, void *ud), void *ud);
 
+/* Non-blocking variant: uses sys_net_recv_nb (0-ms timeout).
+ * Returns immediately — 0 if no data was available, otherwise the line count.
+ * Safe to call from a per-frame timer without freezing the UI. */
+int  irc_recv_nb(irc_conn_t *c, void (*on_line)(const char *line, void *ud), void *ud);
+
 #endif /* AETHER_IRC_H */

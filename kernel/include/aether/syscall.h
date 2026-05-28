@@ -153,6 +153,7 @@
 #define SYS_NET_SEND     705  /* (fd, buf_ptr, len) → bytes sent or -1          */
 #define SYS_NET_RECV     706  /* (fd, buf_ptr, len) → bytes recv or -1          */
 #define SYS_NET_CLOSE    707  /* (fd) → 0 or -1                                  */
+#define SYS_NET_RECV_NB  708  /* (fd, buf_ptr, len) → bytes recv or -1, no block */
 
 /* FB character without background (Phase 6.2 — glassmorphism) */
 #define SYS_FB_CHAR_NOBG  609  /* ((x<<32)|y, (ch<<16)|fg) → 0 */

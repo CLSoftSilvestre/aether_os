@@ -369,6 +369,16 @@ void widget_run(widget_t *root, widget_ctx_t *ctx)
                 break;
             }
 
+            /* Minimize / restore — update app-supplied flag if present */
+            if ((raw >> 56) == WM_EV_MINIMIZE) {
+                if (ctx->minimized_flag) *ctx->minimized_flag = 1;
+                continue;
+            }
+            if ((raw >> 56) == WM_EV_RESTORE) {
+                if (ctx->minimized_flag) *ctx->minimized_flag = 0;
+                continue;
+            }
+
             /* Mouse events forwarded by init via SYS_WM_PUSH_EVENT */
             if (wm_event_is_mouse(raw)) {
                 mouse_event_t mev = wm_event_mouse_unpack(raw);

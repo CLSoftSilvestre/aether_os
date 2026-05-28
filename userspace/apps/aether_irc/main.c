@@ -41,6 +41,7 @@
 #include <sys.h>
 #include <input.h>
 #include <widget.h>
+#include <notif.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -105,11 +106,21 @@
 #define C_IRC_GLOW     GFX_RGB( 68,  56, 132)
 #define C_GLASS_HIGH   GFX_RGB( 82,  70, 158)
 
+/* Auto-refresh: poll every 3 s when visible, every 1 s when minimized */
+#define POLL_TICKS_NORMAL    300L    /*  3 s at 100 Hz */
+#define POLL_TICKS_MINIMIZED 100L    /*  1 s at 100 Hz */
+
 /* ── Global window state ─────────────────────────────────────────────────── */
 
-static int  g_win_x  = WIN_X_INIT;
-static int  g_win_y  = WIN_Y_INIT;
-static long g_win_id = -1;
+static int  g_win_x      = WIN_X_INIT;
+static int  g_win_y      = WIN_Y_INIT;
+static long g_win_id     = -1;
+static int  g_minimized  = 0;   /* updated by widget_run via minimized_flag */
+
+/* Per-channel notification bitmask — cleared when app is restored */
+static unsigned int g_notif_mask = 0;
+/* Tick of last background recv */
+static long g_last_poll_tick = 0;
 
 /* ── IRC protocol state ──────────────────────────────────────────────────── */
 
@@ -368,7 +379,7 @@ static void update_status_for_chan(int idx)
 {
     if (g_conn.fd < 0 || !g_conn.logged_in) return;
     static char st[160];
-    snprintf(st, sizeof(st), "Connected as %s  |  %s  |  Enter or F5 to refresh",
+    snprintf(st, sizeof(st), "Connected as %s  |  %s  |  F5=refresh  F6=test notif",
              g_conn.nick, g_chans[idx].name);
     label_set_text(&g_lbl_status, st);
 }
@@ -725,12 +736,120 @@ static void on_irc_line(const char *line, void *ud)
     }
 }
 
+/* ── Notifications ───────────────────────────────────────────────────────── */
+
+static void post_notif(const char *chan, const char *msg)
+{
+    printf("[IRC] post_notif: chan='%s'\n", chan);
+
+    notif_header_t hdr;
+    notif_entry_t  entries[NOTIF_MAX];
+    memset(&hdr,    0, sizeof(hdr));
+    memset(entries, 0, sizeof(entries));
+    unsigned cnt = 0;
+
+    long vfd = sys_fs_open(NOTIF_PATH);
+    if (vfd >= 0) {
+        if (sys_fs_read(vfd, &hdr, (long)sizeof(hdr)) == (long)sizeof(hdr)
+                && hdr.magic == NOTIF_MAGIC) {
+            cnt = (hdr.count < (unsigned)NOTIF_MAX) ? hdr.count : (unsigned)NOTIF_MAX;
+            sys_fs_read(vfd, entries, (long)(cnt * sizeof(notif_entry_t)));
+        }
+        sys_fs_close(vfd);
+    }
+
+    if (hdr.magic != NOTIF_MAGIC) {
+        hdr.magic   = NOTIF_MAGIC;
+        hdr.version = NOTIF_VERSION;
+        hdr.count   = 0;
+        hdr.unread  = 0;
+        cnt         = 0;
+    }
+
+    if (cnt >= NOTIF_MAX) {
+        memmove(entries, entries + 1, (NOTIF_MAX - 1) * sizeof(notif_entry_t));
+        cnt = NOTIF_MAX - 1;
+    }
+
+    notif_entry_t *e = &entries[cnt++];
+    memset(e, 0, sizeof(*e));
+    e->id        = hdr.count + 1;
+    e->timestamp = (unsigned int)sys_rtc_get();
+    strncpy(e->app,   "AetherIRC",    NOTIF_APP_MAX   - 1);
+    snprintf(e->title, NOTIF_TITLE_MAX, "New message in %s", chan);
+    strncpy(e->msg,    msg,            NOTIF_MSG_MAX   - 1);
+
+    hdr.count  = cnt;
+    hdr.unread++;
+
+    vfd = sys_fs_create(NOTIF_PATH);
+    printf("[IRC] post_notif: create vfd=%ld cnt=%u\n", vfd, cnt);
+    if (vfd >= 0) {
+        long w1 = sys_fs_write(vfd, &hdr,    (long)sizeof(hdr));
+        long w2 = sys_fs_write(vfd, entries, (long)(cnt * sizeof(notif_entry_t)));
+        printf("[IRC] post_notif: wrote hdr=%ld entries=%ld\n", w1, w2);
+        sys_fs_close(vfd);
+    }
+}
+
+/* ── Background auto-refresh ─────────────────────────────────────────────── */
+
+static void per_frame_poll(void *ud)
+{
+    (void)ud;
+    if (g_conn.fd < 0 || !g_conn.logged_in) return;
+
+    /* Clear per-channel notification state when window is restored. */
+    static int prev_minimized = 0;
+    if (prev_minimized && !g_minimized)
+        g_notif_mask = 0;
+    prev_minimized = g_minimized;
+
+    long now      = sys_get_ticks();
+    long interval = g_minimized ? POLL_TICKS_MINIMIZED : POLL_TICKS_NORMAL;
+    if (now - g_last_poll_tick < interval) return;
+    g_last_poll_tick = now;
+
+    /* Snapshot unread flags before polling so we can detect new arrivals. */
+    unsigned int prev_unread = 0;
+    for (int i = 1; i < g_n_chans; i++)
+        if (g_chans[i].unread) prev_unread |= (1u << i);
+
+    int n = irc_recv_nb(&g_conn, on_irc_line, NULL);
+    if (n <= 0) return;
+
+    widget_invalidate_all(&g_root);
+
+    /* Post a notification for each channel that became unread this poll.
+     * When minimized: deduplicate per session via g_notif_mask.
+     * When visible: always notify so the notification center can be tested. */
+    for (int i = 1; i < g_n_chans; i++) {
+        unsigned int bit = (1u << i);
+        if (!g_chans[i].unread || (prev_unread & bit)) continue;
+        if (g_minimized && (g_notif_mask & bit)) continue;
+        if (g_minimized) g_notif_mask |= bit;
+        post_notif(g_chans[i].name, "New message");
+    }
+}
+
 /* ── Recv / poll ─────────────────────────────────────────────────────────── */
 
 static void do_recv(void)
 {
     if (g_conn.fd < 0) return;
     irc_recv(&g_conn, on_irc_line, NULL);
+    widget_invalidate_all(&g_root);
+}
+
+/* Non-blocking drain: pick up any already-buffered server lines without
+ * stalling the UI.  Used after sending commands so the UI stays responsive.
+ * The background per_frame_poll() handles anything that arrives later. */
+static void do_recv_nb(void)
+{
+    if (g_conn.fd < 0) return;
+    for (int i = 0; i < 8; i++) {
+        if (irc_recv_nb(&g_conn, on_irc_line, NULL) <= 0) break;
+    }
     widget_invalidate_all(&g_root);
 }
 
@@ -755,7 +874,7 @@ static void do_send(void)
             while (*chan == ' ') chan++;
             if (*chan && g_conn.fd >= 0) {
                 irc_join(&g_conn, chan);
-                do_recv();
+                do_recv_nb();
             }
 
         } else if (strncmp(cmd, "part", 4) == 0) {
@@ -765,7 +884,7 @@ static void do_send(void)
             else {
                 irc_chan_t *cur = &g_chans[g_current_chan];
                 const char *target = *rest ? rest : (cur->active ? cur->name : NULL);
-                if (target) { irc_part(&g_conn, target); do_recv(); }
+                if (target) { irc_part(&g_conn, target); do_recv_nb(); }
                 else server_append("! No channel to part from.\n");
             }
 
@@ -775,7 +894,7 @@ static void do_send(void)
             if (*nn && g_conn.fd >= 0) {
                 irc_nick_cmd(&g_conn, nn);
                 strncpy(g_conn.nick, nn, IRC_NICK_MAX - 1);
-                do_recv();
+                do_recv_nb();
             }
 
         } else if (strncmp(cmd, "quit", 4) == 0) {
@@ -810,7 +929,7 @@ static void do_send(void)
                     rebuild_chan_list();
                     switch_to_chan((int)(chan - g_chans));
                 }
-                do_recv();
+                do_recv_nb();
             }
 
         } else if (strncmp(cmd, "me ", 3) == 0) {
@@ -823,7 +942,7 @@ static void do_send(void)
                 char line2[IRC_NICK_MAX + IRC_TEXT_MAX + 4];
                 snprintf(line2, sizeof(line2), "* %s %s\n", g_conn.nick, action);
                 chan_append(cur, line2);
-                do_recv();
+                do_recv_nb();
             }
 
         } else {
@@ -845,7 +964,7 @@ static void do_send(void)
             char line2[IRC_NICK_MAX + IRC_TEXT_MAX + 8];
             snprintf(line2, sizeof(line2), "<%s> %s\n", g_conn.nick, text);
             chan_append(cur, line2);
-            do_recv();
+            do_recv_nb();
         }
     }
 
@@ -952,11 +1071,15 @@ static void on_user_select(widget_t *w, int idx, void *ud)
     widget_invalidate(&g_inp_msg);
 }
 
-/* Custom event_fn for g_inp_msg: intercepts F5 for manual refresh. */
+/* Custom event_fn for g_inp_msg: intercepts F5 for manual refresh, F6 for test notif. */
 static int inp_msg_event(widget_t *w, const widget_event_t *ev)
 {
     if (ev->type == WEV_KEY_DOWN && ev->keycode == KEY_F5) {
         do_recv();
+        return 1;
+    }
+    if (ev->type == WEV_KEY_DOWN && ev->keycode == KEY_F6) {
+        post_notif("test", "F6 test notification");
         return 1;
     }
     return g_inp_msg_orig_fn ? g_inp_msg_orig_fn(w, ev) : 0;
@@ -1123,10 +1246,11 @@ int main(void)
     ctx.win_id        = (int)g_win_id;
     ctx.win_w         = WIN_W;
     ctx.win_h         = WIN_H;
-    ctx.on_reposition = draw_chrome;
-    ctx.per_frame_fn  = NULL;
-    ctx.userdata      = NULL;
-    ctx.running       = 1;
+    ctx.on_reposition  = draw_chrome;
+    ctx.per_frame_fn   = per_frame_poll;
+    ctx.userdata       = NULL;
+    ctx.minimized_flag = &g_minimized;
+    ctx.running        = 1;
 
     widget_run(&g_root, &ctx);
 

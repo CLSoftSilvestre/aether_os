@@ -197,15 +197,20 @@ int tcp_recv(int handle, u8 *buf, u16 maxlen, u32 timeout_ms)
         g_conn.state != TCP_CLOSE_WAIT) return -1;
 
     extern void virtio_net_rx_poll(void);
-    u64 freq = cntfrq();
-    if (!timeout_ms) timeout_ms = 5000u;
-    u64 limit = (u64)timeout_ms * freq / 1000u;
-    u64 start = cntpct();
 
-    while (g_conn.rx_head == g_conn.rx_tail &&
-           g_conn.state == TCP_ESTABLISHED) {
+    if (timeout_ms == 0u) {
+        /* Non-blocking: single poll pass, return 0 immediately if empty */
         virtio_net_rx_poll();
-        if ((cntpct() - start) >= limit) return -1;
+        if (g_conn.rx_head == g_conn.rx_tail) return 0;
+    } else {
+        u64 freq  = cntfrq();
+        u64 limit = (u64)timeout_ms * freq / 1000u;
+        u64 start = cntpct();
+        while (g_conn.rx_head == g_conn.rx_tail &&
+               g_conn.state == TCP_ESTABLISHED) {
+            virtio_net_rx_poll();
+            if ((cntpct() - start) >= limit) return -1;
+        }
     }
 
     /* Drain RX ring */

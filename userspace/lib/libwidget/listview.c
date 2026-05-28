@@ -34,6 +34,8 @@ static int lv_visible_rows(widget_t *w)
 static void listview_draw(widget_t *w, int ax, int ay)
 {
     wdata_listview_t *d = &w->data.listview;
+    d->last_ax = ax;
+    d->last_ay = ay;
     int focused = (w->state == WS_FOCUSED || w->state == WS_PRESSED);
     int rows = lv_visible_rows(w);
     int has_sb = d->n_items > rows;
@@ -117,19 +119,11 @@ static int listview_event(widget_t *w, const widget_event_t *ev)
     }
 
     if (ev->type == WEV_MOUSE_DOWN) {
-        /* Compute which row was clicked */
-        /* We need the widget's abs position, but we only have raw (mx,my).
-         * widget_run sets the hit-test first, so we receive events when in bounds.
-         * We can compute the row from d->scroll_top and the event coords.
-         * The draw computes ty = ay + LV_PAD_Y.  We don't know ay here, so
-         * we approximate: the widget receives a click when (mx,my) is inside.
-         * Since we store no abs pos in widget_t, we use the last known abs pos.
-         * For now, treat any click as selecting: use the y offset within the
-         * event to guess row. The widget system doesn't expose abs pos to
-         * event handlers, so we simply select the next item as a demonstration.
-         * A richer implementation would carry abs coords via widget_ctx_t.
-         */
-        w->dirty = 1;
+        int row_y = ev->my - d->last_ay - LV_PAD_Y;
+        if (row_y >= 0) {
+            int row = row_y / LV_ROW_H;
+            lv_select(w, d->scroll_top + row);
+        }
         return 1;
     }
 
