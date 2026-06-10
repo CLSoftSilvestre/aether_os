@@ -13,6 +13,7 @@
 #include "drivers/block/virtio_blk.h"
 #include "drivers/pci/pci_ecam.h"
 #include "aether/printk.h"
+#include "aether/spinlock.h"
 #include "aether/types.h"
 
 /* ── VirtIO PCI common-config offsets ───────────────────────────────────── */
@@ -111,6 +112,9 @@ typedef struct {
 } virtio_blk_dev_t;
 
 static virtio_blk_dev_t g_devs[VIRTIO_BLK_MAX_DEV];
+
+/* Per-device I/O locks — serialise submit_request on each device independently */
+static spinlock_t g_dev_lock[VIRTIO_BLK_MAX_DEV] = { SPINLOCK_INIT, SPINLOCK_INIT };
 
 /* Pool of queue memory, 3 pages per device, 4096-byte aligned */
 static u8 q_pool[VIRTIO_BLK_MAX_DEV * VBLK_MEM_PER_DEV] __attribute__((aligned(4096)));
@@ -295,6 +299,8 @@ static int submit_request(u32 idx, u32 type, u64 lba, u32 num_sectors, u8 *data_
 {
     if (idx >= VIRTIO_BLK_MAX_DEV || !g_devs[idx].initialized) return -1;
 
+    spin_lock(&g_dev_lock[idx]);
+
     virtio_blk_dev_t *d = &g_devs[idx];
 
     g_req_hdr[idx].type     = type;
@@ -339,16 +345,19 @@ static int submit_request(u32 idx, u32 type, u64 lba, u32 num_sectors, u8 *data_
     if (d->used->idx == d->last_used) {
         kwarn("virtio-blk[%u]: request timeout lba=%lu\n",
               (unsigned)idx, (unsigned long)lba);
+        spin_unlock(&g_dev_lock[idx]);
         return -1;
     }
     d->last_used = d->used->idx;
 
+    int rc = 0;
     if (g_req_status[idx] != VIRTIO_BLK_S_OK) {
         kwarn("virtio-blk[%u]: device error status=%u lba=%lu\n",
               (unsigned)idx, (unsigned)g_req_status[idx], (unsigned long)lba);
-        return -1;
+        rc = -1;
     }
-    return 0;
+    spin_unlock(&g_dev_lock[idx]);
+    return rc;
 }
 
 /* ── Multi-device API ────────────────────────────────────────────────────── */

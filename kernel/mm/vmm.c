@@ -234,8 +234,12 @@ uintptr_t vmm_get_global_l1(void)
 
 /*
  * vmm_switch_user_pt — load a new L1 table into TTBR0_EL1 and flush
- * the TLB.  Called on every context switch when l1_table_phys differs
- * between the outgoing and incoming task.
+ * the local TLB.  Called on every context switch.
+ *
+ * tlbi vmalle1 (not vmalle1is) is intentional: switching TTBR0 only affects
+ * this PE's translations.  The IS broadcast is needed when modifying shared
+ * page table entries; concurrent IS-TLBI from all cores waking simultaneously
+ * triggers a QEMU TLB coherency race (EC=0 instruction fetch fault at ELR).
  */
 void vmm_switch_user_pt(uintptr_t l1_phys)
 {
@@ -243,11 +247,38 @@ void vmm_switch_user_pt(uintptr_t l1_phys)
     write_ttbr0_el1((u64)target);
     __asm__ volatile(
         "dsb ish\n"
-        "tlbi vmalle1\n"
+        "tlbi vmalle1\n"      /* local core only — TTBR0 switch only affects this PE */
         "dsb ish\n"
         "isb\n"
         ::: "memory"
     );
+}
+
+/*
+ * vmm_secondary_mmu_init — enable the MMU on a secondary core.
+ * Must be called first in secondary_main() before any EL0 task runs.
+ * Sets up the same MAIR/TCR/TTBR0 as the primary core so that user-space
+ * page tables work correctly on all cores.
+ */
+void vmm_secondary_mmu_init(void)
+{
+    write_mair_el1(MAIR_EL1_VAL);
+    write_tcr_el1(TCR_EL1_VAL);
+    write_ttbr0_el1((uintptr_t)l1_table);
+
+    __asm__ volatile(
+        "dsb sy\n"
+        "isb\n"
+        "tlbi vmalle1\n"
+        "dsb sy\n"
+        "isb\n"
+        ::: "memory"
+    );
+
+    u64 sctlr = read_sctlr_el1();
+    sctlr |= SCTLR_M | SCTLR_C | SCTLR_I;
+    write_sctlr_el1(sctlr);
+    __asm__ volatile("isb" ::: "memory");
 }
 
 /*

@@ -25,6 +25,7 @@
 
 #include "aether/sched.h"
 #include "aether/scheduler.h"
+#include "aether/smp.h"
 #include "aether/printk.h"
 #include "aether/types.h"
 
@@ -89,6 +90,9 @@ void sched_rt_get_latency_stats(audio_latency_stats_t *out)
  */
 int sched_rt_find_next(void)
 {
+    u32 my_core = cpu_id();
+    u8  my_mask = (u8)(1u << my_core);
+
     u32 n;
     task_t *tasks = task_get_table(&n);
 
@@ -100,6 +104,8 @@ int sched_rt_find_next(void)
         if (t->state != TASK_READY)
             continue;
         if (t->sched_policy == SCHED_NORMAL)
+            continue;
+        if (!(t->cpu_affinity & my_mask))   /* affinity: must include this core */
             continue;
         if ((int)t->rt_priority > best_prio) {
             best_prio = (int)t->rt_priority;

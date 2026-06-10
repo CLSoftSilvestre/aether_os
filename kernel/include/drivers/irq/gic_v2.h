@@ -48,6 +48,13 @@
 
 /* Public API */
 void gic_init(void);
+
+/*
+ * gic_cpu_interface_init — initialise the GIC CPU interface on the calling
+ * core.  Called by each secondary core during its bringup sequence.
+ * gic_init() must have already run on core 0 to set up the distributor.
+ */
+void gic_cpu_interface_init(void);
 void gic_enable_irq(u32 irq_id);
 void gic_disable_irq(u32 irq_id);
 u32  gic_acknowledge(void);         /* read IAR — returns IRQ id */

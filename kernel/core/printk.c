@@ -19,9 +19,12 @@
  */
 
 #include "aether/printk.h"
+#include "aether/spinlock.h"
 #include "drivers/char/uart_pl011.h"
 #include "drivers/video/fb_console.h"
 #include <stdarg.h>   /* va_list — provided by compiler even in -ffreestanding */
+
+static spinlock_t g_printk_lock = SPINLOCK_INIT;
 
 /* Output one character to all active sinks (UART always; framebuffer when ready) */
 static void pk_putc(char c)
@@ -196,6 +199,28 @@ void printk(int level, const char *fmt, ...)
     if (level < LOG_LEVEL_MIN)
         return;
 
+    /*
+     * IRQ-safe critical section.
+     *
+     * The SVC handler (_el0_sync) unmasks IRQs via daifclr so that blocking
+     * syscalls (task_sleep) work.  virtio_input_poll() is called from the
+     * timer ISR at 100 Hz and calls kinfo() on the very first few ticks.
+     * Without IRQ masking here, a timer firing while g_printk_lock is held
+     * by the outer SVC handler would deadlock the same core permanently.
+     *
+     * Pattern: save DAIF, disable IRQs, acquire spinlock, print, release,
+     * restore DAIF.  If IRQs were already masked (exception context, early
+     * boot) the save/restore is a no-op.
+     */
+    u64 daif_saved;
+    __asm__ volatile(
+        "mrs %0, DAIF\n"
+        "msr daifset, #2\n"
+        : "=r"(daif_saved) :: "memory"
+    );
+
+    spin_lock(&g_printk_lock);
+
     /* Print level prefix */
     if (level >= LOG_DEBUG && level <= LOG_PANIC)
         pk_puts(level_prefix[level]);
@@ -204,4 +229,9 @@ void printk(int level, const char *fmt, ...)
     va_start(args, fmt);
     vprintk(fmt, args);
     va_end(args);
+
+    spin_unlock(&g_printk_lock);
+
+    /* Restore IRQ mask state (no-op if they were already disabled) */
+    __asm__ volatile("msr DAIF, %0" :: "r"(daif_saved) : "memory");
 }

@@ -1,21 +1,39 @@
 /*
- * AetherOS — Round-Robin Cooperative Scheduler
+ * AetherOS — SMP-Aware Round-Robin Scheduler
  * File: kernel/core/scheduler.c
  *
- * Manages a fixed-size array of tasks and switches between them when
- * a task calls task_yield() or task_sleep().
+ * Manages a fixed-size array of tasks and switches between them when a task
+ * calls task_yield() or task_sleep().
  *
- * Scheduling policy: round-robin (circular scan from current task).
- *   - Pick the next READY task after the current one.
- *   - Skip SLEEPING tasks unless their wake_tick has passed.
- *   - If no other task is ready, stay in the current task (idle behaviour).
+ * SMP model (4-core Pi 5 / QEMU virt)
+ * ─────────────────────────────────────
+ * Each core maintains its own "currently running task" index:
+ *   g_current_idx[core_id]
  *
- * This file handles the high-level policy (which task runs next).
- * The low-level mechanism (register save/restore) is in context_switch.S.
+ * All task-table mutations are protected by g_sched_lock (spinlock).
+ * Context switches use context_switch_smp() which releases the spinlock
+ * atomically after saving 'from' registers, closing the race window where
+ * another core could try to load stale register state.
+ *
+ * Task selection (find_next)
+ * ──────────────────────────
+ * A task is eligible for scheduling on core N if:
+ *   1. state == TASK_READY  (not RUNNING / SLEEPING / DEAD / …)
+ *   2. cpu_affinity & (1 << N)  (task is allowed on this core)
+ * The RT picker (sched_rt_find_next) is tried first; if nothing qualifies,
+ * a SCHED_NORMAL round-robin scan follows.
+ *
+ * Idle tasks
+ * ──────────
+ * Core 0: registered by scheduler_add_idle(), pinned to CPU_MASK_CORE0.
+ * Cores 1-3: registered by scheduler_secondary_init(), pinned to their own
+ *   core mask.  The secondary idle runs in smp.c:secondary_main()'s loop.
  */
 
 #include "aether/scheduler.h"
 #include "aether/sched.h"
+#include "aether/spinlock.h"
+#include "aether/smp.h"
 #include "aether/mm.h"
 #include "aether/pipe.h"
 #include "aether/vmm.h"
@@ -23,53 +41,69 @@
 #include "aether/printk.h"
 #include "drivers/timer/arm_timer.h"
 
-/* Task table — statically allocated, no heap dependency */
-static task_t g_tasks[MAX_TASKS];
-static u32    g_num_tasks   = 0;
-static u32    g_current_idx = 0;   /* index into g_tasks[] of running task */
+/* Task table — statically allocated, shared across all cores */
+static task_t     g_tasks[MAX_TASKS];
+static u32        g_num_tasks              = 0;
+static u32        g_current_idx[NUM_CPUS]  = {0};  /* per-core current task index */
+
+/* Scheduler spinlock — must be held for any task-table read-modify-write */
+static spinlock_t g_sched_lock = SPINLOCK_INIT;
 
 /* ── Internal helpers ───────────────────────────────────────────────────── */
 
 static task_t *current_task(void)
 {
-    return &g_tasks[g_current_idx];
+    return &g_tasks[g_current_idx[cpu_id()]];
 }
 
 /*
- * find_next — scan for the next runnable task.
+ * find_next — select the best runnable task for the calling core.
  *
- * Phase 8.0: RT tasks (SCHED_FIFO / SCHED_RR) always preempt normal tasks.
- * Among RT tasks, highest rt_priority wins (ties broken by round-robin scan).
- * Falls through to normal round-robin when no RT task is ready.
+ * Called with g_sched_lock held.
+ *
+ * Priority order:
+ *   1. RT tasks (SCHED_FIFO / SCHED_RR) with affinity for this core.
+ *   2. Normal round-robin among SCHED_NORMAL tasks with affinity for this core.
+ *   3. Stay on the current task (no-op yield).
+ *
+ * A task is skipped if:
+ *   - state != TASK_READY  (RUNNING means it is on another core, SLEEPING is
+ *     waiting for a timer, DEAD/ZOMBIE/WAITING are not schedulable)
+ *   - cpu_affinity does not include the calling core's bit
  */
 static u32 find_next(void)
 {
-    u64 now = timer_get_ticks();
+    u32 my_core  = cpu_id();
+    u8  my_mask  = (u8)(1u << my_core);
+    u64 now      = timer_get_ticks();
 
-    /* Wake sleeping tasks first */
+    /* Wake sleeping tasks whose timer has expired */
     for (u32 i = 0; i < g_num_tasks; i++) {
         task_t *t = &g_tasks[i];
         if (t->state == TASK_SLEEPING && now >= t->wake_tick)
             t->state = TASK_READY;
     }
 
-    /* Phase 8.0: check for highest-priority RT task first */
+    /* RT tasks first (sched_rt_find_next also checks affinity now) */
     int rt_idx = sched_rt_find_next();
     if (rt_idx >= 0)
         return (u32)rt_idx;
 
-    /* Normal round-robin fallback */
+    /* Normal round-robin with affinity filter */
+    u32 cur = g_current_idx[my_core];
     for (u32 i = 1; i < g_num_tasks; i++) {
-        u32 idx = (g_current_idx + i) % g_num_tasks;
-        task_t *t = &g_tasks[idx];
-        if (t->state == TASK_READY && t->sched_policy == SCHED_NORMAL)
+        u32    idx = (cur + i) % g_num_tasks;
+        task_t *t  = &g_tasks[idx];
+        if (t->state == TASK_READY &&
+            t->sched_policy == SCHED_NORMAL &&
+            (t->cpu_affinity & my_mask))
             return idx;
     }
 
-    return g_current_idx;   /* no other task ready — stay current */
+    return cur;   /* stay: nothing else runnable on this core */
 }
 
-/* Phase 8.0 — expose task table for RT scheduler */
+/* Phase 8.0 — expose task table for RT scheduler (sched_rt.c) */
 task_t *task_get_table(u32 *count_out)
 {
     if (count_out)
@@ -84,41 +118,96 @@ void scheduler_init(void)
     for (u32 i = 0; i < MAX_TASKS; i++)
         g_tasks[i].state = TASK_UNUSED;
 
-    g_num_tasks   = 0;
-    g_current_idx = 0;
+    g_num_tasks = 0;
+    for (u32 c = 0; c < NUM_CPUS; c++)
+        g_current_idx[c] = 0;
 
     sched_rt_init();
-    kinfo("Scheduler: initialised (max %d tasks, RT enabled)\n", MAX_TASKS);
+    kinfo("Scheduler: initialised (max %d tasks, %d cores, RT enabled)\n",
+          MAX_TASKS, NUM_CPUS);
 }
 
 /*
- * scheduler_add_idle — register the current execution context as task 0 (idle).
- *
- * Called from kernel_main. The idle task's context is "whatever the CPU
- * currently is" — we don't pre-set its registers because it's already running.
- * When another task yields back to idle, context_switch() will restore the
- * cpu_context_t that was saved when idle called task_yield().
+ * scheduler_add_idle — register the current core 0 context as task 0 (idle).
+ * Pinned to CPU_MASK_CORE0 so secondary cores do not schedule it.
  */
 void scheduler_add_idle(void)
 {
     task_t *idle = &g_tasks[0];
-    idle->pid        = 0;
-    idle->state      = TASK_RUNNING;
-    idle->cpu_ticks  = 0;
-    idle->stack_phys = 0;   /* uses boot stack — not PMM-managed */
+    idle->pid          = 0;
+    idle->state        = TASK_RUNNING;
+    idle->cpu_ticks    = 0;
+    idle->stack_phys   = 0;   /* uses boot stack — not PMM-managed */
+    idle->sched_policy = SCHED_NORMAL;
+    idle->rt_priority  = 0;
+    idle->cpu_affinity = CPU_MASK_CORE0;   /* pinned: only runs on core 0 */
+    idle->mlocked      = 0;
+    for (u32 i = 0; i < PROC_MAX_FD; i++)
+        idle->fd_table[i].type = FD_TYPE_CLOSED;
     { const char *s = "idle"; int i = 0;
       while (i < PROC_NAME_MAX - 1 && s[i]) { idle->name[i] = s[i]; i++; }
       idle->name[i] = '\0'; }
-    /* ctx is zeroed; it will be filled on the first call to task_yield() */
 
-    g_num_tasks   = 1;
-    g_current_idx = 0;
+    g_num_tasks         = 1;
+    g_current_idx[0]    = 0;
 }
 
-/* ── Internal: allocate a task slot and initialise its kernel stack ─ */
+/*
+ * scheduler_secondary_init — called by secondary_main() on cores 1-3.
+ *
+ * Registers a per-core idle task pinned to core_id.  The task represents
+ * the current execution context (the idle loop in secondary_main).
+ * Must be called with g_sched_lock NOT held (takes it internally).
+ */
+void scheduler_secondary_init(u32 core_id)
+{
+    spin_lock(&g_sched_lock);
+
+    if (g_num_tasks >= MAX_TASKS) {
+        spin_unlock(&g_sched_lock);
+        kpanic("scheduler_secondary_init: task table full\n");
+    }
+
+    task_t *idle = &g_tasks[g_num_tasks];
+
+    /* Zero out the slot cleanly */
+    for (u32 i = 0; i < sizeof(task_t) / sizeof(u32); i++)
+        ((u32 *)idle)[i] = 0;
+
+    idle->pid          = g_num_tasks;
+    idle->state        = TASK_RUNNING;
+    idle->cpu_ticks    = 0;
+    idle->stack_phys   = 0;   /* secondary stack is in smp.c BSS — not PMM */
+    idle->sched_policy = SCHED_NORMAL;
+    idle->rt_priority  = 0;
+    idle->cpu_affinity = (u8)(1u << core_id);   /* pinned to this core */
+    idle->mlocked      = 0;
+    idle->bo_va_next   = VMM_USER_BO_BASE;
+
+    for (u32 i = 0; i < PROC_MAX_FD; i++)
+        idle->fd_table[i].type = FD_TYPE_CLOSED;
+
+    /* Name: "idle0" … "idle3" */
+    const char *prefix = "idle";
+    u32 j = 0;
+    while (prefix[j] && j < PROC_NAME_MAX - 2u) { idle->name[j] = prefix[j]; j++; }
+    idle->name[j++] = (char)('0' + core_id);
+    idle->name[j]   = '\0';
+
+    g_current_idx[core_id] = g_num_tasks;
+    g_num_tasks++;
+
+    spin_unlock(&g_sched_lock);
+
+    kinfo("Scheduler: core %u idle task registered (PID %u)\n",
+          core_id, idle->pid);
+}
+
+/* ── Internal: allocate a task slot and initialise its kernel stack ──────── */
 
 static task_t *alloc_task(void (*entry_fn)(void), const char *name)
 {
+    /* Caller holds g_sched_lock */
     if (g_num_tasks >= MAX_TASKS) {
         kerror("Scheduler: too many tasks (max %d)\n", MAX_TASKS);
         return NULL;
@@ -147,7 +236,7 @@ static task_t *alloc_task(void (*entry_fn)(void), const char *name)
     t->wait_pid         = 0;
     t->wake_tick        = 0;
     t->stack_phys       = stack_phys;
-    { int i = 0;
+    { u32 i = 0;
       if (name) while (i < PROC_NAME_MAX - 1 && name[i]) { t->name[i] = name[i]; i++; }
       t->name[i] = '\0'; }
     t->el0_entry        = 0;
@@ -165,7 +254,7 @@ static task_t *alloc_task(void (*entry_fn)(void), const char *name)
         t->fd_table[i].pipe_idx = 0;
     }
 
-    /* Phase 8.0: RT defaults */
+    /* Phase 8.0: RT defaults — new tasks run on any core */
     t->sched_policy  = SCHED_NORMAL;
     t->rt_priority   = 0;
     t->cpu_affinity  = CPU_MASK_ALL;
@@ -176,12 +265,11 @@ static task_t *alloc_task(void (*entry_fn)(void), const char *name)
 
 static void init_uart_fds(task_t *t)
 {
-    t->fd_table[0].type = FD_TYPE_UART;   /* stdin  */
-    t->fd_table[1].type = FD_TYPE_UART;   /* stdout */
-    t->fd_table[2].type = FD_TYPE_UART;   /* stderr */
+    t->fd_table[0].type = FD_TYPE_UART;
+    t->fd_table[1].type = FD_TYPE_UART;
+    t->fd_table[2].type = FD_TYPE_UART;
 }
 
-/* Wake any task in TASK_WAITING state that is waiting for 'child_pid' */
 static void wake_waiting_parent(u32 child_pid)
 {
     for (u32 i = 0; i < g_num_tasks; i++) {
@@ -196,22 +284,25 @@ static void wake_waiting_parent(u32 child_pid)
 
 int task_create(void (*entry)(void), const char *name)
 {
+    spin_lock(&g_sched_lock);
     task_t *t = alloc_task(entry, name);
-    if (!t) return -1;
+    if (!t) { spin_unlock(&g_sched_lock); return -1; }
 
     kinfo("Scheduler: created task[%lu] '%s' entry=%p stack=%p\n",
           (unsigned long)g_num_tasks, name,
           (void *)entry, (void *)t->stack_phys);
 
     g_num_tasks++;
+    spin_unlock(&g_sched_lock);
     return 0;
 }
 
 int task_create_user(uintptr_t el0_entry, uintptr_t el0_sp,
                      const char *name, void (*trampoline)(void))
 {
+    spin_lock(&g_sched_lock);
     task_t *t = alloc_task(trampoline, name);
-    if (!t) return -1;
+    if (!t) { spin_unlock(&g_sched_lock); return -1; }
 
     t->el0_entry = el0_entry;
     t->el0_sp    = el0_sp;
@@ -221,6 +312,7 @@ int task_create_user(uintptr_t el0_entry, uintptr_t el0_sp,
           (unsigned long)g_num_tasks, name, (void *)el0_entry);
 
     g_num_tasks++;
+    spin_unlock(&g_sched_lock);
     return 0;
 }
 
@@ -232,8 +324,9 @@ int task_create_isolated(uintptr_t el0_entry, uintptr_t el0_sp,
                          u32 argc, uintptr_t argv_user_va,
                          u32 *pid_out)
 {
+    spin_lock(&g_sched_lock);
     task_t *t = alloc_task(trampoline, name);
-    if (!t) return -1;
+    if (!t) { spin_unlock(&g_sched_lock); return -1; }
 
     t->el0_entry        = el0_entry;
     t->el0_sp           = el0_sp;
@@ -246,7 +339,6 @@ int task_create_isolated(uintptr_t el0_entry, uintptr_t el0_sp,
     t->user_stack_phys  = user_stack_phys;
     t->user_stack_pages = user_stack_pages;
 
-    /* Inherit parent's fd_table */
     task_t *parent = NULL;
     for (u32 i = 0; i < g_num_tasks; i++) {
         if (g_tasks[i].pid == ppid) { parent = &g_tasks[i]; break; }
@@ -254,7 +346,6 @@ int task_create_isolated(uintptr_t el0_entry, uintptr_t el0_sp,
     if (parent) {
         for (u32 i = 0; i < PROC_MAX_FD; i++) {
             t->fd_table[i] = parent->fd_table[i];
-            /* Bump pipe ref counts so each fd slot owns a reference */
             if (t->fd_table[i].type == FD_TYPE_PIPE_R)
                 pipe_open_read((int)t->fd_table[i].pipe_idx);
             if (t->fd_table[i].type == FD_TYPE_PIPE_W)
@@ -271,6 +362,7 @@ int task_create_isolated(uintptr_t el0_entry, uintptr_t el0_sp,
           (unsigned long)ppid, (void *)l1_phys);
 
     g_num_tasks++;
+    spin_unlock(&g_sched_lock);
     return 0;
 }
 
@@ -278,7 +370,7 @@ void task_get_user_regs(uintptr_t *entry_out, uintptr_t *sp_out,
                         uintptr_t *l1_phys_out,
                         u32 *argc_out, uintptr_t *argv_out)
 {
-    task_t *t = &g_tasks[g_current_idx];
+    task_t *t = current_task();
     if (entry_out)   *entry_out   = t->el0_entry;
     if (sp_out)      *sp_out      = t->el0_sp;
     if (l1_phys_out) *l1_phys_out = t->l1_table_phys;
@@ -286,32 +378,61 @@ void task_get_user_regs(uintptr_t *entry_out, uintptr_t *sp_out,
     if (argv_out)    *argv_out    = t->el0_argv;
 }
 
+/*
+ * task_yield — surrender the CPU to the next eligible task on this core.
+ *
+ * SMP-safe design:
+ *   1. Acquire g_sched_lock.
+ *   2. find_next() selects the best READY task with affinity for this core.
+ *   3. Mark 'from' TASK_READY, 'to' TASK_RUNNING.
+ *   4. Update g_current_idx[my_core].
+ *   5. Call context_switch_smp() which releases the lock AFTER saving 'from'
+ *      but BEFORE loading 'to' — no race window remains.
+ *   6. When we are RESUMED later, the lock is already released; continue.
+ */
 void task_yield(void)
 {
-    u32    from_idx = g_current_idx;
-    u32    to_idx   = find_next();
+    u32 my_core  = cpu_id();
 
-    if (from_idx == to_idx)
+    spin_lock(&g_sched_lock);
+
+    u32 from_idx = g_current_idx[my_core];
+    u32 to_idx   = find_next();
+
+    if (from_idx == to_idx) {
+        spin_unlock(&g_sched_lock);
         return;
+    }
 
     task_t *from = &g_tasks[from_idx];
     task_t *to   = &g_tasks[to_idx];
 
     if (from->state == TASK_RUNNING)
         from->state = TASK_READY;
-    to->state      = TASK_RUNNING;
+    to->state    = TASK_RUNNING;
     to->cpu_ticks++;
 
-    g_current_idx = to_idx;
-
-    context_switch(&from->ctx, &to->ctx);
+    g_current_idx[my_core] = to_idx;
 
     /*
-     * After context_switch returns we are the *resumed* task (which is
-     * 'from' in the call above, but now g_current_idx points to us).
-     * Switch TTBR0_EL1 to match the task now executing.
+     * context_switch_smp releases g_sched_lock after committing 'from'
+     * registers to from->ctx, then loads 'to' registers and branches.
+     * When task_yield() returns (we've been resumed), the lock is NOT held.
      */
-    vmm_switch_user_pt(g_tasks[g_current_idx].l1_table_phys);
+    context_switch_smp(&from->ctx, &to->ctx, &g_sched_lock);
+    /* Resume point: lock is released. TTBR0 switch deferred to _el0_sync exit. */
+}
+
+/*
+ * vmm_switch_to_current_pt — switch TTBR0_EL1 to the page table of the task
+ * currently assigned to this core.  Called from _el0_sync just before eret,
+ * after IRQs are re-masked, so no preemption can occur between this switch
+ * and the eret.  Replacing the old task_yield call-site avoids concurrent
+ * TTBR0 switches when many tasks wake from the same vsync tick simultaneously.
+ */
+void vmm_switch_to_current_pt(void)
+{
+    vmm_switch_user_pt(task_current_l1());
 }
 
 void task_sleep(u64 ticks)
@@ -319,7 +440,7 @@ void task_sleep(u64 ticks)
     task_t *t = current_task();
     t->state     = TASK_SLEEPING;
     t->wake_tick = timer_get_ticks() + ticks;
-    task_yield();   /* give up CPU; find_next() will wake us when ready */
+    task_yield();
 }
 
 __attribute__((noreturn))
@@ -329,12 +450,8 @@ void task_exit(void)
     kinfo("Scheduler: task[%lu] '%s' exited (ppid=%lu)\n",
           (unsigned long)t->pid, t->name, (unsigned long)t->ppid);
 
-    /* Remove any WM window before freeing memory so the rect is still valid.
-     * Gentle (force=0): if closing=1, leave the window alive for compositor anim. */
     wm_unregister_by_pid(t->pid, 0);
 
-    /* Switch back to global PT before freeing process-specific tables.
-     * This closes the window where we'd hold TTBR0 pointing to freed pages. */
     if (t->l1_table_phys) {
         vmm_switch_user_pt(0);
         vmm_free_process_pt(t->l1_table_phys);
@@ -351,7 +468,6 @@ void task_exit(void)
         t->user_stack_phys = 0;
     }
 
-    /* Close all pipe fds so pipe_read() in the parent gets EOF */
     for (u32 i = 0; i < PROC_MAX_FD; i++) {
         fd_entry_t *e = &t->fd_table[i];
         if (e->type == FD_TYPE_PIPE_R) pipe_close_read((int)e->pipe_idx);
@@ -360,7 +476,7 @@ void task_exit(void)
     }
 
     if (t->ppid) {
-        t->state = TASK_ZOMBIE;     /* parent may call waitpid */
+        t->state = TASK_ZOMBIE;
         wake_waiting_parent(t->pid);
     } else {
         t->state = TASK_DEAD;
@@ -377,8 +493,7 @@ int task_waitpid(u32 pid, int *status)
     task_t *child = NULL;
     for (u32 i = 0; i < g_num_tasks; i++) {
         if (g_tasks[i].pid == pid && g_tasks[i].ppid == cur->pid) {
-            child = &g_tasks[i];
-            break;
+            child = &g_tasks[i]; break;
         }
     }
     if (!child) return -1;
@@ -394,10 +509,6 @@ int task_waitpid(u32 pid, int *status)
     return (int)pid;
 }
 
-/*
- * task_waitpid_nb — non-blocking waitpid.
- * Returns child PID if zombie (and reaps it), 0 if still running, -1 if not found.
- */
 int task_waitpid_nb(u32 pid, int *status)
 {
     task_t *cur = current_task();
@@ -405,8 +516,7 @@ int task_waitpid_nb(u32 pid, int *status)
     task_t *child = NULL;
     for (u32 i = 0; i < g_num_tasks; i++) {
         if (g_tasks[i].pid == pid && g_tasks[i].ppid == cur->pid) {
-            child = &g_tasks[i];
-            break;
+            child = &g_tasks[i]; break;
         }
     }
     if (!child) return -1;
@@ -417,11 +527,6 @@ int task_waitpid_nb(u32 pid, int *status)
     return (int)pid;
 }
 
-/*
- * task_kill — forcefully terminate a child process from the parent.
- * Frees the child's resources and marks it ZOMBIE so the parent can reap.
- * Only the child's parent (or PID 1) may call this.
- */
 int task_ps(ps_entry_t *entries, int max_entries)
 {
     int n = 0;
@@ -445,24 +550,22 @@ int task_kill(u32 pid, int exit_code)
 {
     task_t *cur = current_task();
 
-    if (pid == 0)        return -1;   /* idle task — not killable */
-    if (pid == cur->pid) return -1;   /* cannot kill yourself */
+    if (pid == 0)        return -1;
+    if (pid == cur->pid) return -1;
 
     task_t *t = NULL;
     for (u32 i = 0; i < g_num_tasks; i++) {
         if (g_tasks[i].pid == pid) { t = &g_tasks[i]; break; }
     }
     if (!t) return -1;
-    if (t->state == TASK_ZOMBIE || t->state == TASK_DEAD || t->state == TASK_UNUSED) return 0;
+    if (t->state == TASK_ZOMBIE || t->state == TASK_DEAD || t->state == TASK_UNUSED)
+        return 0;
 
     kinfo("Scheduler: task_kill pid=%lu by pid=%lu\n",
           (unsigned long)pid, (unsigned long)cur->pid);
 
-    /* Remove any WM window before freeing memory so the rect is still valid.
-     * Force (force=1): always unregister even if closing=1 (external kill, no anim). */
     wm_unregister_by_pid(pid, 1);
 
-    /* Free process page tables (safe: we're on the caller's PT, not the target's) */
     if (t->l1_table_phys) {
         vmm_free_process_pt(t->l1_table_phys);
         t->l1_table_phys = 0;
@@ -490,17 +593,17 @@ int task_kill(u32 pid, int exit_code)
 
 u32 task_current_pid(void)
 {
-    return g_tasks[g_current_idx].pid;
+    return g_tasks[g_current_idx[cpu_id()]].pid;
 }
 
 const char *task_current_name(void)
 {
-    return g_tasks[g_current_idx].name;
+    return g_tasks[g_current_idx[cpu_id()]].name;
 }
 
 uintptr_t task_current_l1(void)
 {
-    uintptr_t l1 = g_tasks[g_current_idx].l1_table_phys;
+    uintptr_t l1 = g_tasks[g_current_idx[cpu_id()]].l1_table_phys;
     return l1 ? l1 : vmm_get_global_l1();
 }
 
@@ -515,7 +618,7 @@ uintptr_t task_alloc_bo_va(u32 n_pages)
 fd_entry_t *task_get_fd(u32 fd)
 {
     if (fd >= PROC_MAX_FD) return NULL;
-    return &g_tasks[g_current_idx].fd_table[fd];
+    return &g_tasks[g_current_idx[cpu_id()]].fd_table[fd];
 }
 
 int task_alloc_fd(u8 type, u16 pipe_idx)
@@ -548,13 +651,11 @@ long task_dup2_fd(u32 oldfd, u32 newfd)
     task_t *t = current_task();
     if (t->fd_table[oldfd].type == FD_TYPE_CLOSED) return -1;
 
-    /* Close newfd's existing pipe end */
     fd_entry_t *ne = &t->fd_table[newfd];
     if (ne->type == FD_TYPE_PIPE_R) pipe_close_read((int)ne->pipe_idx);
     if (ne->type == FD_TYPE_PIPE_W) pipe_close_write((int)ne->pipe_idx);
 
     *ne = t->fd_table[oldfd];
-    /* Bump ref count for the new alias */
     if (ne->type == FD_TYPE_PIPE_R) pipe_open_read((int)ne->pipe_idx);
     if (ne->type == FD_TYPE_PIPE_W) pipe_open_write((int)ne->pipe_idx);
     return (long)newfd;
@@ -575,8 +676,9 @@ void scheduler_print_tasks(void)
     kinfo("─── Task List ──────────────────────────\n");
     for (u32 i = 0; i < g_num_tasks; i++) {
         task_t *t = &g_tasks[i];
-        kinfo("  [%lu] %s  (%s)\n",
-              (unsigned long)t->pid, t->name, state_names[t->state]);
+        kinfo("  [%lu] %s  (%s) aff=0x%x\n",
+              (unsigned long)t->pid, t->name,
+              state_names[t->state], t->cpu_affinity);
     }
     kinfo("────────────────────────────────────────\n");
 }

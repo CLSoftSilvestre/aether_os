@@ -47,6 +47,8 @@
 #include "drivers/power/cpufreq.h"
 #include "drivers/power/thermal.h"
 #include "drivers/power/dpms.h"
+#include "aether/smp.h"
+#include "aether/sched.h"
 
 extern u8 __stack_top[];
 
@@ -185,6 +187,7 @@ void kernel_main(void)
     wm_init();
     scheduler_init();
     scheduler_add_idle();
+    cpu_affinity_init();
     boot_prof_stamp("scheduler+wm");
 
     /* ── 8. initrd ──────────────────────────────────────────────────── */
@@ -201,6 +204,17 @@ void kernel_main(void)
         kpanic("kernel_main: failed to spawn /init\n");
     boot_prof_stamp("spawn_init");
 
+    /*
+     * ── 9b. SMP bringup — wake secondary cores ───────────────────────
+     * smp_init() fills per-core stack top pointers and issues PSCI CPU_ON
+     * for cores 1-3.  Secondary cores boot asynchronously: they set up their
+     * own GIC/timer/scheduler state then spin on g_smp_ready.
+     * smp_signal_ready() is called just before enabling IRQs so secondaries
+     * only start scheduling once all kernel subsystems are fully initialised.
+     */
+    smp_init();
+    boot_prof_stamp("smp_init");
+
     /* ── 10. Enable IRQs and enter idle loop ────────────────────────── */
     /* Seed the tick counter with the real elapsed boot time so that
      * userspace uptime counts from QEMU launch, not from this moment. */
@@ -209,6 +223,13 @@ void kernel_main(void)
     kinfo("Enabling IRQs — entering idle loop\n");
     kinfo("────────────────────────────────────────────\n");
     __asm__ volatile("msr daifclr, #2" ::: "memory");
+
+    /*
+     * Signal secondary cores that kernel init is complete.
+     * They will exit their WFE spin, enable IRQs, and enter their
+     * own idle loops — at this point all 4 cores are scheduling tasks.
+     */
+    smp_signal_ready();
 
     /*
      * The scheduler will yield from idle to the init task on the next

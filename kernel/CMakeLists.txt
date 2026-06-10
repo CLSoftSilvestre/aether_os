@@ -7,8 +7,11 @@ set(KERNEL_SOURCES
     # Exception vector table
     arch/arm64/exceptions.S
 
-    # Context switch (cooperative scheduler)
+    # Context switch (cooperative + SMP-safe variant)
     arch/arm64/context_switch.S
+
+    # SMP spinlock (LDAXR/STLXR)
+    arch/arm64/spinlock.S
 
     # Core kernel
     core/main.c
@@ -24,6 +27,7 @@ set(KERNEL_SOURCES
     core/config.c
     core/users.c
     core/audio_conf.c
+    core/smp.c
 
     # Memory management
     mm/pmm.c

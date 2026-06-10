@@ -24,6 +24,8 @@
  */
 
 #include "aether/types.h"
+#include "aether/spinlock.h"
+#include "aether/smp.h"
 
 /* ── Process snapshot (used by SYS_PS) ──────────────────────────────── */
 #define PROC_NAME_MAX 16
@@ -126,6 +128,13 @@ typedef struct {
 void scheduler_init(void);
 void scheduler_add_idle(void);
 
+/*
+ * scheduler_secondary_init — register a per-core idle task for a secondary
+ * core.  Called from secondary_main() on cores 1-3 before entering the idle
+ * loop.  The current execution context becomes that core's idle task.
+ */
+void scheduler_secondary_init(u32 core_id);
+
 int task_create(void (*entry)(void), const char *name);
 
 /*
@@ -216,6 +225,13 @@ const char *task_current_name(void);
 uintptr_t task_current_l1(void);
 
 /*
+ * vmm_switch_to_current_pt — switch TTBR0_EL1 to the current task's page
+ * table.  Called from _el0_sync (exceptions.S) just before eret, with IRQs
+ * masked, so the switch is atomic with respect to scheduling on this core.
+ */
+void vmm_switch_to_current_pt(void);
+
+/*
  * Allocate n_pages * 4KB of virtual address space from the current task's
  * GPU BO mapping area (0x74000000+).  Returns the base VA of the allocation.
  */
@@ -227,7 +243,21 @@ void scheduler_print_tasks(void);
 /* Phase 8.0 — expose task table for RT scheduler (sched_rt.c) */
 task_t *task_get_table(u32 *count_out);
 
-/* Context switch (implemented in context_switch.S) */
+/* Context switch — cooperative, single-core path (context_switch.S) */
 void context_switch(cpu_context_t *from, cpu_context_t *to);
+
+/*
+ * context_switch_smp — SMP-safe context switch used by task_yield().
+ *
+ * Caller must hold *lock.  The function:
+ *   1. Saves 'from' registers to *from  (commit complete)
+ *   2. Releases *lock via STLR          (from is now schedulable by any core)
+ *   3. Loads 'to' registers from *to
+ *   4. Branches into 'to' task
+ *
+ * The lock is NOT held when this function "returns" (in 'to' task context).
+ */
+void context_switch_smp(cpu_context_t *from, cpu_context_t *to,
+                        spinlock_t *lock);
 
 #endif /* AETHER_SCHEDULER_H */

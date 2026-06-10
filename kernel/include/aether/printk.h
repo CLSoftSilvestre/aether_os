@@ -1,6 +1,8 @@
 #ifndef AETHER_PRINTK_H
 #define AETHER_PRINTK_H
 
+#include "aether/smp.h"   /* smp_halt_all_cores, g_kernel_halted */
+
 /*
  * AetherOS kernel logging — printk
  *
@@ -21,7 +23,7 @@
 #define LOG_PANIC  4
 
 /* Minimum level to actually print (change to LOG_DEBUG to see everything) */
-#define LOG_LEVEL_MIN  LOG_DEBUG
+#define LOG_LEVEL_MIN  LOG_INFO
 
 /* Main logging function */
 void printk(int level, const char *fmt, ...)
@@ -34,12 +36,14 @@ void printk(int level, const char *fmt, ...)
 #define kerror(fmt, ...)  printk(LOG_ERROR, fmt, ##__VA_ARGS__)
 
 /*
- * kpanic — print message and halt the CPU.
- * The do{}while(0) wrapper makes it safe to use after if/else without braces.
+ * kpanic — print message, halt all cores, and park this one.
+ * smp_halt_all_cores() sets g_kernel_halted=1 + SEV so secondary idle loops
+ * stop scheduling.  The do{}while(0) wrapper makes it safe without braces.
  */
 #define kpanic(fmt, ...) \
     do { \
         printk(LOG_PANIC, "PANIC at %s:%d: " fmt, __FILE__, __LINE__, ##__VA_ARGS__); \
+        smp_halt_all_cores(); \
         for (;;) { __asm__ volatile("wfi"); } \
     } while (0)
 

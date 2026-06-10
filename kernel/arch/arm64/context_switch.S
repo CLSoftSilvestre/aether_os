@@ -109,3 +109,60 @@ context_switch:
      * every context_switch looks like a normal function return to both tasks.
      */
     ret
+
+/* ── context_switch_smp ──────────────────────────────────────────────────── */
+/*
+ * context_switch_smp(cpu_context_t *from, cpu_context_t *to, spinlock_t *lock)
+ *
+ * SMP-safe context switch used by task_yield() on multi-core systems.
+ *
+ * The caller holds *lock (the scheduler spinlock) when it calls this function.
+ * This function:
+ *   1. Saves 'from' callee-saved registers to *from   — 'from' context committed
+ *   2. Releases *lock via STLR                        — safe: from->ctx is complete
+ *   3. Loads  'to'  callee-saved registers from *to
+ *   4. Switches SP to 'to' stack, branches to 'to' x30
+ *
+ * Releasing the lock BETWEEN save and load is the critical design point:
+ *   - Before the release: no other core can pick 'from' (lock held, state=READY but blocked)
+ *   - After  the release: 'from' is schedulable; another core may load from->ctx
+ *     concurrently, but we are already loading 'to' ctx into OUR registers — no conflict.
+ *   - We never touch 'from' stack after the STLR, so no use-after-free hazard.
+ *
+ * x0 = from cpu_context_t*, x1 = to cpu_context_t*, x2 = spinlock_t*
+ */
+.global context_switch_smp
+context_switch_smp:
+    /* Step 1 — save 'from' callee-saved registers (same layout as context_switch) */
+    stp  x19, x20, [x0, #0]
+    stp  x21, x22, [x0, #16]
+    stp  x23, x24, [x0, #32]
+    stp  x25, x26, [x0, #48]
+    stp  x27, x28, [x0, #64]
+    stp  x29, x30, [x0, #80]
+    mov  x8, sp
+    str  x8,       [x0, #96]
+
+    /* Step 2 — release the scheduler spinlock now that from->ctx is committed.
+     * STLR = store-release: all prior stores (the stp/str above) are globally
+     * visible before *x2 is cleared.  Other cores can now safely pick 'from'. */
+    stlr  wzr, [x2]
+
+    /* Step 3 — load 'to' callee-saved registers.
+     * We are still physically on 'from' stack, but we do NOT access it — every
+     * load below reads from [x1+offset], not from the stack.  Safe. */
+    ldp  x19, x20, [x1, #0]
+    ldp  x21, x22, [x1, #16]
+    ldp  x23, x24, [x1, #32]
+    ldp  x25, x26, [x1, #48]
+    ldp  x27, x28, [x1, #64]
+    ldp  x29, x30, [x1, #80]   /* x30 = 'to' task's saved LR (next PC after ret) */
+
+    /* Step 4 — switch stack pointer and branch into 'to' task */
+    ldr  x8,       [x1, #96]
+    mov  sp, x8               /* switch to 'to' task's stack                    */
+
+    /* ret branches to 'to' task's x30:
+     *   – existing task: the instruction after its last context_switch_smp call
+     *   – new task:      its entry function (set in alloc_task)                 */
+    ret
