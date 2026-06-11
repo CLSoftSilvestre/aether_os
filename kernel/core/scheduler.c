@@ -228,6 +228,7 @@ static task_t *alloc_task(void (*entry_fn)(void), const char *name)
     t->ctx.x27 = t->ctx.x28 = t->ctx.x29 = 0;
     t->ctx.x30 = (u64)entry_fn;
     t->ctx.sp  = stack_top;
+    t->ctx.daif = 0x80;   /* DAIF.I=1: IRQs masked until trampoline eret */
 
     t->pid              = g_num_tasks;
     t->ppid             = 0;
@@ -270,6 +271,7 @@ static void init_uart_fds(task_t *t)
     t->fd_table[2].type = FD_TYPE_UART;
 }
 
+/* Caller MUST hold g_sched_lock — mutates task state shared across cores. */
 static void wake_waiting_parent(u32 child_pid)
 {
     for (u32 i = 0; i < g_num_tasks; i++) {
@@ -390,24 +392,83 @@ void task_get_user_regs(uintptr_t *entry_out, uintptr_t *sp_out,
  *      but BEFORE loading 'to' — no race window remains.
  *   6. When we are RESUMED later, the lock is already released; continue.
  */
-void task_yield(void)
+/*
+ * task_switch_away — common scheduler core for task_yield() and task_sleep().
+ *
+ * If `sleep` is non-zero, the calling task is put to sleep until `wake_tick`;
+ * otherwise it is simply yielded (left READY).  CRITICALLY, the state change
+ * is applied here, while g_sched_lock is held, immediately before find_next()
+ * and the context switch.  context_switch_smp() then saves the caller's
+ * registers and releases the lock atomically.
+ *
+ * Why the state MUST change under the lock (SMP correctness):
+ *   If task_sleep() set state=SLEEPING before acquiring the lock (the old
+ *   design), another core running find_next() could observe the task as
+ *   SLEEPING-with-an-expired-wake_tick, revive it to READY, and resume it
+ *   from its STALE saved context — while this core is still executing on the
+ *   same kernel stack.  Two cores on one kernel stack corrupt each other's
+ *   frames; a later `ret` jumps to a stack data word (EC=0 undefined-instr
+ *   panic).  Mutating state here, after the lock and before the register
+ *   save, closes that window: by the time the task is schedulable again its
+ *   context is already committed and this core has switched away.
+ */
+static void task_switch_away(u8 next_state, u64 wake_tick, u32 wait_pid)
 {
-    u32 my_core  = cpu_id();
+    u32 my_core = cpu_id();
 
     spin_lock(&g_sched_lock);
 
     u32 from_idx = g_current_idx[my_core];
-    u32 to_idx   = find_next();
+    task_t *from = &g_tasks[from_idx];
+
+    /*
+     * WAIT mode: re-test the wake condition under the lock before blocking.
+     * If the child already became a ZOMBIE we must NOT block, or we would
+     * miss the wake_waiting_parent() that ran before we set TASK_WAITING —
+     * a lost-wakeup hang.  Aborting here keeps check-and-block atomic.
+     */
+    if (next_state == TASK_WAITING) {
+        for (u32 i = 0; i < g_num_tasks; i++) {
+            if (g_tasks[i].pid == wait_pid &&
+                g_tasks[i].state == TASK_ZOMBIE) {
+                spin_unlock(&g_sched_lock);
+                return;   /* caller's loop will collect the zombie */
+            }
+        }
+    }
+
+    /* Apply the caller's requested blocking state under the lock. */
+    if (next_state == TASK_SLEEPING) {
+        from->state     = TASK_SLEEPING;
+        from->wake_tick = wake_tick;
+    } else if (next_state == TASK_WAITING) {
+        from->state     = TASK_WAITING;
+        from->wait_pid  = wait_pid;
+    }
+    /* next_state == TASK_READY (plain yield): handled after find_next below. */
+
+    u32 to_idx = find_next();
 
     if (from_idx == to_idx) {
+        /*
+         * Nothing else is runnable on this core.  A task that asked to block
+         * (SLEEPING/WAITING) with no replacement must not keep executing while
+         * flagged blocked, so restore it to RUNNING.  (In practice the per-core
+         * idle task is always READY, so this is only hit by idle yielding.)
+         * Plain-yield (TASK_READY) leaves from->state untouched here, matching
+         * the original semantics — important so task_exit()'s ZOMBIE/DEAD set
+         * before a yield is never clobbered back to RUNNING.
+         */
+        if (next_state == TASK_SLEEPING || next_state == TASK_WAITING)
+            from->state = TASK_RUNNING;
         spin_unlock(&g_sched_lock);
         return;
     }
 
-    task_t *from = &g_tasks[from_idx];
-    task_t *to   = &g_tasks[to_idx];
+    task_t *to = &g_tasks[to_idx];
 
-    if (from->state == TASK_RUNNING)
+    /* A plain-yielding RUNNING task returns to the READY pool. */
+    if (next_state == TASK_READY && from->state == TASK_RUNNING)
         from->state = TASK_READY;
     to->state    = TASK_RUNNING;
     to->cpu_ticks++;
@@ -417,10 +478,19 @@ void task_yield(void)
     /*
      * context_switch_smp releases g_sched_lock after committing 'from'
      * registers to from->ctx, then loads 'to' registers and branches.
-     * When task_yield() returns (we've been resumed), the lock is NOT held.
+     * When we return (we've been resumed), the lock is NOT held.
      */
     context_switch_smp(&from->ctx, &to->ctx, &g_sched_lock);
     /* Resume point: lock is released. TTBR0 switch deferred to _el0_sync exit. */
+}
+
+/*
+ * task_yield — surrender the CPU to the next eligible task on this core.
+ * The caller is left READY and may be rescheduled immediately.
+ */
+void task_yield(void)
+{
+    task_switch_away(TASK_READY, 0, 0);
 }
 
 /*
@@ -437,10 +507,13 @@ void vmm_switch_to_current_pt(void)
 
 void task_sleep(u64 ticks)
 {
-    task_t *t = current_task();
-    t->state     = TASK_SLEEPING;
-    t->wake_tick = timer_get_ticks() + ticks;
-    task_yield();
+    /*
+     * Compute the wake deadline and hand off to task_switch_away(), which
+     * applies the SLEEPING state under g_sched_lock.  Setting the state here
+     * (outside the lock) would let another core revive and double-schedule
+     * this task from a stale context — see task_switch_away() for details.
+     */
+    task_switch_away(TASK_SLEEPING, timer_get_ticks() + ticks, 0);
 }
 
 __attribute__((noreturn))
@@ -475,12 +548,23 @@ void task_exit(void)
         e->type = FD_TYPE_CLOSED;
     }
 
+    /*
+     * Publish the terminal state and wake any waiting parent atomically under
+     * g_sched_lock.  This pairs with the locked zombie-recheck in
+     * task_switch_away(TASK_WAITING, …): the parent either sees ZOMBIE during
+     * its recheck (and does not block) or is flipped to READY here — never
+     * both-missed (lost wakeup) nor both-applied (double schedule).
+     * ZOMBIE/DEAD are not READY, so find_next() never reselects us in the
+     * window between unlocking and the task_yield() below.
+     */
+    spin_lock(&g_sched_lock);
     if (t->ppid) {
         t->state = TASK_ZOMBIE;
-        wake_waiting_parent(t->pid);
+        wake_waiting_parent(t->pid);   /* sets parent READY (caller holds lock) */
     } else {
         t->state = TASK_DEAD;
     }
+    spin_unlock(&g_sched_lock);
 
     task_yield();
     for (;;) __asm__ volatile("wfi");
@@ -498,11 +582,14 @@ int task_waitpid(u32 pid, int *status)
     }
     if (!child) return -1;
 
-    while (child->state != TASK_ZOMBIE) {
-        cur->state    = TASK_WAITING;
-        cur->wait_pid = pid;
-        task_yield();
-    }
+    /*
+     * Block until the child is a zombie.  task_switch_away(TASK_WAITING, …)
+     * sets our state and saves our context under g_sched_lock, and re-tests
+     * the zombie condition under the same lock — so we can neither be
+     * double-scheduled from a stale context nor miss the child's wakeup.
+     */
+    while (child->state != TASK_ZOMBIE)
+        task_switch_away(TASK_WAITING, 0, pid);
 
     if (status) *status = child->exit_code;
     child->state = TASK_DEAD;
@@ -553,41 +640,67 @@ int task_kill(u32 pid, int exit_code)
     if (pid == 0)        return -1;
     if (pid == cur->pid) return -1;
 
+    /* Snapshot was_running under the lock so we can decide whether to free. */
+    spin_lock(&g_sched_lock);
+
     task_t *t = NULL;
     for (u32 i = 0; i < g_num_tasks; i++) {
         if (g_tasks[i].pid == pid) { t = &g_tasks[i]; break; }
     }
-    if (!t) return -1;
-    if (t->state == TASK_ZOMBIE || t->state == TASK_DEAD || t->state == TASK_UNUSED)
-        return 0;
+    if (!t) { spin_unlock(&g_sched_lock); return -1; }
+    if (t->state == TASK_ZOMBIE || t->state == TASK_DEAD || t->state == TASK_UNUSED) {
+        spin_unlock(&g_sched_lock); return 0;
+    }
 
-    kinfo("Scheduler: task_kill pid=%lu by pid=%lu\n",
-          (unsigned long)pid, (unsigned long)cur->pid);
+    bool was_running = (t->state == TASK_RUNNING);
+
+    /*
+     * Mark ZOMBIE/DEAD *before* releasing the lock and *before* freeing any
+     * resources.  This prevents another core from scheduling the task again
+     * and prevents a concurrent task_kill from double-freeing.
+     */
+    t->exit_code = exit_code;
+    if (t->ppid)
+        t->state = TASK_ZOMBIE;
+    else
+        t->state = TASK_DEAD;
+
+    spin_unlock(&g_sched_lock);
+
+    kinfo("Scheduler: task_kill pid=%lu by pid=%lu%s\n",
+          (unsigned long)pid, (unsigned long)cur->pid,
+          was_running ? " (was running — deferred free)" : "");
 
     wm_unregister_by_pid(pid, 1);
 
-    if (t->l1_table_phys) {
-        vmm_free_process_pt(t->l1_table_phys);
-        t->l1_table_phys = 0;
-    }
-    if (t->user_code_phys) {
-        for (u32 i = 0; i < t->user_code_pages; i++)
-            pmm_free_page(t->user_code_phys + (uintptr_t)i * PMM_PAGE_SIZE);
-        t->user_code_phys = 0;
-    }
-    if (t->user_stack_phys) {
-        for (u32 i = 0; i < t->user_stack_pages; i++)
-            pmm_free_page(t->user_stack_phys + (uintptr_t)i * PMM_PAGE_SIZE);
-        t->user_stack_phys = 0;
+    /*
+     * Only free physical resources if the task was NOT actively running on
+     * another core at kill time.  If it was RUNNING, its TTBR0_EL1 and code
+     * pages are still live on that core; freeing them immediately would cause
+     * a use-after-free.  The resources leak until a proper deferred-cleanup
+     * pass is added.  This is intentional and safer than the crash.
+     */
+    if (!was_running) {
+        if (t->l1_table_phys) {
+            vmm_free_process_pt(t->l1_table_phys);
+            t->l1_table_phys = 0;
+        }
+        if (t->user_code_phys) {
+            for (u32 i = 0; i < t->user_code_pages; i++)
+                pmm_free_page(t->user_code_phys + (uintptr_t)i * PMM_PAGE_SIZE);
+            t->user_code_phys = 0;
+        }
+        if (t->user_stack_phys) {
+            for (u32 i = 0; i < t->user_stack_pages; i++)
+                pmm_free_page(t->user_stack_phys + (uintptr_t)i * PMM_PAGE_SIZE);
+            t->user_stack_phys = 0;
+        }
     }
 
-    t->exit_code = exit_code;
-    if (t->ppid) {
-        t->state = TASK_ZOMBIE;
-        wake_waiting_parent(t->pid);
-    } else {
-        t->state = TASK_DEAD;
-    }
+    spin_lock(&g_sched_lock);
+    wake_waiting_parent(pid);
+    spin_unlock(&g_sched_lock);
+
     return 0;
 }
 

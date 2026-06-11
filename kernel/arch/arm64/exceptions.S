@@ -243,16 +243,6 @@ _el0_sync:
     mov  x0, sp
     bl   el0_sync_handler
     msr  daifset, #2            /* re-mask before EXCEPTION_EXIT modifies SPSR/ELR */
-    /*
-     * Switch TTBR0_EL1 to the current task's page table here, NOT inside
-     * task_yield.  With IRQs masked no context switch can occur between
-     * this call and eret, so we are guaranteed to eret with the right PT.
-     * Doing it here instead of at the task_yield resume point also means
-     * concurrent vmm_switch_user_pt calls (e.g. many tasks waking from the
-     * same vsync tick) no longer race — each core switches independently at
-     * its own eret.
-     */
-    bl   vmm_switch_to_current_pt
     EXCEPTION_EXIT
 
 _el0_irq:

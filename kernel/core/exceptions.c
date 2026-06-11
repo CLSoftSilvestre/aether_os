@@ -14,6 +14,7 @@
 #include "aether/printk.h"
 #include "aether/syscall.h"
 #include "aether/scheduler.h"
+#include "aether/smp.h"
 #include "drivers/irq/gic_v2.h"
 #include "drivers/timer/arm_timer.h"
 #include "drivers/char/uart_pl011.h"
@@ -98,12 +99,17 @@ static void print_exception_info(const trap_frame_t *frame, const char *type)
     default:            ec_name = "Unrecognised EC";           break;
     }
 
+    u64 far = 0;
+    __asm__ volatile("mrs %0, FAR_EL1" : "=r"(far));
+
     kerror("═══════════════════════════════════════════\n");
-    kerror("EXCEPTION: %s  (PID %lu, task '%s')\n",
+    kerror("EXCEPTION: %s  (PID %lu, task '%s', core %lu)\n",
            type,
            (unsigned long)task_current_pid(),
-           task_current_name());
+           task_current_name(),
+           (unsigned long)cpu_id());
     kerror("  ELR  (PC):  %p\n",   (void *)frame->elr);
+    kerror("  FAR (addr): %p\n",   (void *)(uintptr_t)far);
     kerror("  SPSR:       0x%lx\n", (unsigned long)frame->spsr);
     kerror("  ESR:        0x%lx\n", (unsigned long)frame->esr);
     kerror("  EC:  0x%x  — %s\n",  ec, ec_name);
@@ -205,6 +211,19 @@ void el0_sync_handler(trap_frame_t *frame)
     if (ESR_EC(frame->esr) == EC_SVC64) {
         record_elr(frame->elr);
         frame->x[0] = (u64)syscall_dispatch(frame);
+        /*
+         * Switch TTBR0_EL1 to the current task's page table before returning
+         * to the assembly stub (_el0_sync). The switch happens here inside a
+         * normal C call frame rather than from bare assembly, so the compiler
+         * correctly saves/restores x30 around the bl to vmm_switch_user_pt.
+         *
+         * All per-process tables map the kernel region identically, so running
+         * the kernel between the switch and eret is safe. Moving the switch
+         * here (rather than in task_yield's resume point) means each core
+         * switches its own TTBR0 exactly once per SVC exit, preventing the
+         * concurrent-switch race that caused the earlier EC=0 panics.
+         */
+        vmm_switch_to_current_pt();
         return;
     }
     print_last_elrs();
@@ -221,4 +240,16 @@ void el0_sync_handler(trap_frame_t *frame)
 void el0_irq_handler(trap_frame_t *frame)
 {
     el1_irq_handler(frame);
+    /*
+     * Switch TTBR0_EL1 to the current task's page table before returning to
+     * EL0.  This mirrors the same call in el0_sync_handler.
+     *
+     * Without this, a process preempted by a timer IRQ and context-switched
+     * away resumes with whichever TTBR0 was last written on this core — which
+     * may belong to a different process.  All user processes load at the same
+     * VA (0x70000000), so the wrong table causes the process to silently
+     * execute another process's binary rather than triggering a clean fault.
+     * On 4 cores with task migration this fires on almost every IRQ return.
+     */
+    vmm_switch_to_current_pt();
 }

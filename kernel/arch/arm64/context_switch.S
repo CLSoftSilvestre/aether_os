@@ -118,22 +118,26 @@ context_switch:
  *
  * The caller holds *lock (the scheduler spinlock) when it calls this function.
  * This function:
- *   1. Saves 'from' callee-saved registers to *from   — 'from' context committed
- *   2. Releases *lock via STLR                        — safe: from->ctx is complete
- *   3. Loads  'to'  callee-saved registers from *to
- *   4. Switches SP to 'to' stack, branches to 'to' x30
+ *   1. Saves 'from' callee-saved registers + DAIF to *from
+ *   2. Masks IRQs on THIS core           — must happen BEFORE the STLR;
+ *      after STLR another core can immediately pick 'from' and load its SP,
+ *      so any IRQ on this core after the STLR but before SP switch would
+ *      push 288 bytes onto 'from' stack while another core is already there.
+ *   3. Releases *lock via STLR           — 'from' is now schedulable
+ *   4. Loads 'to' callee-saved registers from *to
+ *   5. Switches SP to 'to' stack         — 'from' stack no longer in use
+ *   6. Restores DAIF from 'to' context   — correct IRQ state for 'to' task
+ *   7. ret → branches into 'to' task
  *
- * Releasing the lock BETWEEN save and load is the critical design point:
- *   - Before the release: no other core can pick 'from' (lock held, state=READY but blocked)
- *   - After  the release: 'from' is schedulable; another core may load from->ctx
- *     concurrently, but we are already loading 'to' ctx into OUR registers — no conflict.
- *   - We never touch 'from' stack after the STLR, so no use-after-free hazard.
+ * cpu_context_t offsets (must match scheduler.h):
+ *   x19@0  x20@8  x21@16  x22@24  x23@32  x24@40  x25@48  x26@56
+ *   x27@64 x28@72 x29@80  x30@88  sp@96   daif@104
  *
  * x0 = from cpu_context_t*, x1 = to cpu_context_t*, x2 = spinlock_t*
  */
 .global context_switch_smp
 context_switch_smp:
-    /* Step 1 — save 'from' callee-saved registers (same layout as context_switch) */
+    /* Step 1 — save 'from' callee-saved registers */
     stp  x19, x20, [x0, #0]
     stp  x21, x22, [x0, #16]
     stp  x23, x24, [x0, #32]
@@ -142,15 +146,27 @@ context_switch_smp:
     stp  x29, x30, [x0, #80]
     mov  x8, sp
     str  x8,       [x0, #96]
+    mrs  x8, DAIF
+    str  x8,       [x0, #104]  /* save IRQ mask state */
 
-    /* Step 2 — release the scheduler spinlock now that from->ctx is committed.
-     * STLR = store-release: all prior stores (the stp/str above) are globally
-     * visible before *x2 is cleared.  Other cores can now safely pick 'from'. */
+    /* Step 2 — mask IRQs on this core BEFORE releasing the lock.
+     * After STLR another core can immediately pick 'from', load from->ctx.sp,
+     * and start using 'from' kernel stack.  If a timer IRQ then fires on
+     * this core in the gap between STLR and daifset, EXCEPTION_ENTRY pushes
+     * 288 bytes onto from's stack while the other core is already there —
+     * concurrent writes corrupt return addresses (seen as ELR=0x60000345).
+     * Masking IRQs BEFORE the STLR closes this window completely: by the time
+     * any other core can see 'from' as READY, IRQs are already masked here. */
+    msr  daifset, #2
+
+    /* Step 3 — release the scheduler spinlock now that from->ctx is committed.
+     * STLR = store-release: all prior stores are globally visible before the
+     * lock word is cleared.  Other cores can now safely pick 'from'. */
     stlr  wzr, [x2]
 
-    /* Step 3 — load 'to' callee-saved registers.
-     * We are still physically on 'from' stack, but we do NOT access it — every
-     * load below reads from [x1+offset], not from the stack.  Safe. */
+    /* Step 4 — load 'to' callee-saved registers.
+     * Every load reads from [x1+offset], not from the stack — safe even
+     * while SP_EL1 still points to 'from' stack. */
     ldp  x19, x20, [x1, #0]
     ldp  x21, x22, [x1, #16]
     ldp  x23, x24, [x1, #32]
@@ -158,11 +174,20 @@ context_switch_smp:
     ldp  x27, x28, [x1, #64]
     ldp  x29, x30, [x1, #80]   /* x30 = 'to' task's saved LR (next PC after ret) */
 
-    /* Step 4 — switch stack pointer and branch into 'to' task */
+    /* Step 5 — switch stack pointer.
+     * From this point 'from' stack is not touched by this core. */
     ldr  x8,       [x1, #96]
-    mov  sp, x8               /* switch to 'to' task's stack                    */
+    mov  sp, x8
+
+    /* Step 6 — restore 'to' task's DAIF (IRQ mask state).
+     * If 'to' was in a SVC handler with IRQs enabled, this re-enables them.
+     * If 'to' was in an IRQ handler with IRQs masked, they stay masked.
+     * 'eret' in the exception-return path will restore DAIF again from SPSR
+     * when returning to EL0, so this is always correct. */
+    ldr  x8,       [x1, #104]
+    msr  DAIF, x8
 
     /* ret branches to 'to' task's x30:
-     *   – existing task: the instruction after its last context_switch_smp call
-     *   – new task:      its entry function (set in alloc_task)                 */
+     *   – existing task: the resume point inside its last context_switch_smp call
+     *   – new task:      its entry function (trampoline, set in alloc_task) */
     ret

@@ -84,7 +84,10 @@ typedef struct {
     u64 x29;                   /* frame pointer */
     u64 x30;                   /* link register — next PC after ret */
     u64 sp;                    /* stack pointer */
-} cpu_context_t;               /* total: 13 × 8 = 104 bytes */
+    u64 daif;                  /* IRQ/FIQ/SError/Debug mask — saved so the
+                                * critical window in context_switch_smp can
+                                * mask IRQs then restore the to-task's state */
+} cpu_context_t;               /* total: 14 × 8 = 112 bytes */
 
 /*
  * task_t — task control block (TCB)
