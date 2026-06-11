@@ -20,11 +20,15 @@
 #include "aether/mm.h"
 #include "aether/printk.h"
 #include "aether/types.h"
+#include "aether/spinlock.h"
 /* No string.h in bare-metal — page zeroing is done with inline loops below */
 
 /* The bitmap lives in BSS — zeroed by boot.S before kernel_main.           */
 /* 262144 pages / 8 bits per byte = 32768 bytes = 32 KB.                    */
 static u8 phys_bitmap[PMM_NUM_PAGES / 8];
+
+/* SMP spinlock — protects bitmap and g_free_pages against concurrent alloc/free */
+static spinlock_t g_pmm_lock = SPINLOCK_INIT;
 
 /* Statistics */
 static u32 g_free_pages = 0;
@@ -110,13 +114,15 @@ void pmm_init(void)
  */
 uintptr_t pmm_alloc_page(void)
 {
+    spin_lock(&g_pmm_lock);
     for (u32 i = 0; i < PMM_NUM_PAGES; i++) {
         if (!bitmap_test(i)) {
             bitmap_set(i);
             g_free_pages--;
-
-            /* Zero the page before handing it out (security + correctness) */
             uintptr_t addr = PMM_IDX_TO_ADDR(i);
+            spin_unlock(&g_pmm_lock);
+
+            /* Zero the page after releasing the lock (page is ours now) */
             u64 *p = (u64 *)addr;
             for (u32 j = 0; j < PMM_PAGE_SIZE / 8; j++)
                 p[j] = 0;
@@ -124,6 +130,7 @@ uintptr_t pmm_alloc_page(void)
             return addr;
         }
     }
+    spin_unlock(&g_pmm_lock);
 
     kerror("PMM: out of memory!\n");
     return 0;
@@ -140,6 +147,8 @@ uintptr_t pmm_alloc_pages(u32 count)
     if (count == 0) return 0;
     if (count == 1) return pmm_alloc_page();
 
+    spin_lock(&g_pmm_lock);
+
     u32 run = 0;
     u32 run_start = 0;
 
@@ -148,11 +157,15 @@ uintptr_t pmm_alloc_pages(u32 count)
             if (run == 0) run_start = i;
             run++;
             if (run == count) {
-                /* Found a run — mark all as used and zero them */
+                /* Mark all pages as used under the lock */
                 for (u32 j = run_start; j < run_start + count; j++) {
                     bitmap_set(j);
                     g_free_pages--;
+                }
+                spin_unlock(&g_pmm_lock);
 
+                /* Zero pages after releasing the lock (all are ours now) */
+                for (u32 j = run_start; j < run_start + count; j++) {
                     u64 *p = (u64 *)PMM_IDX_TO_ADDR(j);
                     for (u32 k = 0; k < PMM_PAGE_SIZE / 8; k++)
                         p[k] = 0;
@@ -164,6 +177,7 @@ uintptr_t pmm_alloc_pages(u32 count)
         }
     }
 
+    spin_unlock(&g_pmm_lock);
     kerror("PMM: cannot allocate %lu contiguous pages\n", (unsigned long)count);
     return 0;
 }
@@ -179,14 +193,16 @@ void pmm_free_page(uintptr_t addr)
         return;
     }
 
+    spin_lock(&g_pmm_lock);
     u32 idx = PMM_ADDR_TO_IDX(addr);
     if (!bitmap_test(idx)) {
+        spin_unlock(&g_pmm_lock);
         kwarn("PMM: double-free of page %p\n", (void *)addr);
         return;
     }
-
     bitmap_clear(idx);
     g_free_pages++;
+    spin_unlock(&g_pmm_lock);
 }
 
 void pmm_print_stats(void)

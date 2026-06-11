@@ -87,7 +87,7 @@ echo ""
 QEMU_ARGS=(
     -M virt,highmem=off     # Virtual ARM board, no >4GB memory regions
     -cpu cortex-a76         # Pi 5 CPU core
-    -smp 1                  # Single core for now
+    -smp 4                  # Uses the 4 cored of the CPU
     -m 1G                   # 1GB RAM
     -kernel "${KERNEL_IMG}" # Load kernel image
     -no-reboot              # Don't restart on crash

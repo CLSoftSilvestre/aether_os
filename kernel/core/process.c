@@ -41,8 +41,8 @@ static void user_task_trampoline(void)
     u32       argc;
     task_get_user_regs(&entry, &sp, &l1_phys, &argc, &argv_va);
     vmm_switch_user_pt(l1_phys);   /* load process page table before eret */
-    kinfo("Process: entering EL0 — entry=%p  sp=%p  argc=%u\n",
-          (void *)entry, (void *)sp, argc);
+    kinfo("Process: entering EL0 — entry=%p  sp=%p  argc=%u  l1=%p\n",
+          (void *)entry, (void *)sp, argc, (void *)l1_phys);
     launch_el0(entry, sp, (uintptr_t)argc, argv_va);
 }
 
@@ -120,10 +120,14 @@ int process_spawn_child(const char *path, u32 ppid, u32 *child_pid_out)
 
     /* Round up code allocation to page boundary */
     u32 code_pages = (u32)((va_max - va_min + PMM_PAGE_SIZE - 1) / PMM_PAGE_SIZE);
+    kinfo("Process: '%s' ELF va=0x%lx..0x%lx code_pages=%lu\n",
+          path, (unsigned long)va_min, (unsigned long)va_max,
+          (unsigned long)code_pages);
 
     /* 3. Allocate physical pages */
     uintptr_t code_phys  = pmm_alloc_pages(code_pages);
     if (!code_phys) { kerror("Process: OOM (code)\n"); return -1; }
+    kinfo("Process: '%s' code_phys=0x%lx\n", path, (unsigned long)code_phys);
 
     uintptr_t stack_phys = pmm_alloc_pages(SPAWN_STACK_PAGES);
     if (!stack_phys) {
@@ -132,6 +136,7 @@ int process_spawn_child(const char *path, u32 ppid, u32 *child_pid_out)
         kerror("Process: OOM (stack)\n");
         return -1;
     }
+    kinfo("Process: '%s' stack_phys=0x%lx\n", path, (unsigned long)stack_phys);
 
     /* 4. Create per-process page tables */
     uintptr_t proc_l1 = vmm_create_process_pt();
@@ -139,12 +144,14 @@ int process_spawn_child(const char *path, u32 ppid, u32 *child_pid_out)
         kerror("Process: failed to create page tables\n");
         goto fail_pt;
     }
+    kinfo("Process: '%s' proc_l1=0x%lx\n", path, (unsigned long)proc_l1);
 
     /* 5. Map code pages: VA va_min → PA code_phys */
     if (vmm_map_user_pages(proc_l1, va_min, code_phys, code_pages) != 0) {
         kerror("Process: vmm_map_user_pages(code) failed\n");
         goto fail_map;
     }
+    kinfo("Process: '%s' code mapped\n", path);
 
     /* 6. Map stack pages: VA (STACK_TOP - stack_size) → PA stack_phys */
     uintptr_t stack_va = VMM_USER_STACK_TOP -
@@ -153,6 +160,7 @@ int process_spawn_child(const char *path, u32 ppid, u32 *child_pid_out)
         kerror("Process: vmm_map_user_pages(stack) failed\n");
         goto fail_map;
     }
+    kinfo("Process: '%s' stack mapped\n", path);
 
     /* 7. Copy ELF segments to physical memory (kernel can write via identity map) */
     for (u16 i = 0; i < ehdr->e_phnum; i++) {
@@ -181,6 +189,7 @@ int process_spawn_child(const char *path, u32 ppid, u32 *child_pid_out)
             __asm__ volatile("ic ivau, %0" :: "r"(a) : "memory");
         __asm__ volatile("dsb ish\n isb\n" ::: "memory");
     }
+    kinfo("Process: '%s' ELF copied + cache flushed\n", path);
 
     /* 8. Create the isolated task */
     int rc = task_create_isolated(

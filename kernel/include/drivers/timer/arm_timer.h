@@ -34,8 +34,16 @@
 
 /* Public API */
 void timer_init(void);
+
+/*
+ * timer_secondary_init — enable the per-CPU timer on a secondary core.
+ * Must be called from secondary_main() on cores 1-3 after gic_cpu_interface_init().
+ * gic_init() and timer_init() must already have run on core 0.
+ */
+void timer_secondary_init(void);
+
 void timer_irq_handler(void);    /* call from el1_irq_handler when IRQ==30 */
-u64  timer_get_ticks(void);      /* number of timer interrupts since boot */
+u64  timer_get_ticks(void);      /* number of timer interrupts since boot (core 0 only) */
 u64  timer_get_freq(void);       /* counter frequency in Hz */
 void timer_seed_from_cntpct(void); /* pre-seed ticks with real boot time */
 

@@ -315,6 +315,13 @@ void xhci_init(void);
 int  xhci_ready(void);
 
 /*
+ * xhci_num_slots — number of device slots actually assigned during
+ * enumeration (0..XHCI_MAX_DEV_SLOTS).  Class probes should scan only these
+ * slots; probing unassigned slots costs a full 500 ms timeout each.
+ */
+u8   xhci_num_slots(void);
+
+/*
  * xhci_ctrl_xfer — issue one USB control transfer on the given slot's EP0.
  * Returns 0 on success, -1 on error/timeout.
  */

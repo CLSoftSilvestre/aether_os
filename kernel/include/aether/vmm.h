@@ -191,4 +191,10 @@ void vmm_free_process_pt(uintptr_t l1_phys);
 /* Return physical address of the global L1 table (for TTBR0 restore). */
 uintptr_t vmm_get_global_l1(void);
 
+/*
+ * vmm_secondary_mmu_init — enable the MMU on a secondary core.
+ * Must be the first call inside secondary_main() on each secondary core.
+ */
+void vmm_secondary_mmu_init(void);
+
 #endif /* AETHER_VMM_H */

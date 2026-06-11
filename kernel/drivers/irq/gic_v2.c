@@ -109,6 +109,27 @@ void gic_init(void)
     kinfo("GICv2 initialised — %lu IRQs supported\n", (unsigned long)num_irqs);
 }
 
+/* ── Per-CPU interface init (called by secondary cores) ─────────────────── */
+
+/*
+ * gic_cpu_interface_init — enable the GIC CPU interface on the calling core.
+ *
+ * gic_init() handles the global distributor (GICD) — this function handles
+ * only the per-CPU interface (GICC) that each secondary core must initialise
+ * independently.  The three writes mirror what gic_init() does for core 0.
+ */
+void gic_cpu_interface_init(void)
+{
+    /* Accept all interrupt priorities */
+    gicc_write(GICC_PMR, 0xFF);
+
+    /* No priority grouping */
+    gicc_write(GICC_BPR, 0);
+
+    /* Enable this core's CPU interface */
+    gicc_write(GICC_CTLR, 1);
+}
+
 /* ── Per-interrupt control ──────────────────────────────────────────────── */
 
 /*

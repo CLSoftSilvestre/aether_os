@@ -1016,10 +1016,10 @@ long syscall_dispatch(trap_frame_t *frame)
 
         if (vmm_map_user_pages(l1, va, phys, n_pages) != 0) return -1;
 
-        /* Flush TLB so EL0 sees the new mapping immediately after eret */
+        /* Flush TLB on all cores so EL0 sees the new mapping immediately */
         __asm__ volatile(
             "dsb ish\n"
-            "tlbi vmalle1\n"
+            "tlbi vmalle1is\n"    /* broadcast to all inner-shareable cores */
             "dsb ish\n"
             "isb\n"
             ::: "memory"

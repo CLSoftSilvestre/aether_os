@@ -15,6 +15,7 @@
 
 #include "aether/fat32.h"
 #include "aether/printk.h"
+#include "aether/spinlock.h"
 #include "aether/types.h"
 #include "drivers/block/virtio_blk.h"
 
@@ -93,6 +94,9 @@ typedef struct {
 static fat32_bpb_t  g_bpb;
 static int          g_mounted;
 static fat32_file_t g_files[FAT32_MAX_FILES];
+
+/* Protects g_files[] handle table: open (slot allocation) and close. */
+static spinlock_t   g_fat32_lock = SPINLOCK_INIT;
 
 /* Cluster range of /fonts/sans.ttf — computed at mount time and write-protected. */
 static u32 g_font_prot_first = 0u;
@@ -445,7 +449,9 @@ int fat32_open(const char *path)
     }
     if (attr & ATTR_DIRECTORY) return -1;   /* directories are not files */
 
-    /* Find a free handle */
+    /* Find a free handle — protected to prevent two cores claiming the same slot */
+    spin_lock(&g_fat32_lock);
+    int fh = -1;
     for (int i = 0; i < FAT32_MAX_FILES; i++) {
         if (!g_files[i].used) {
             g_files[i].used          = 1;
@@ -458,12 +464,17 @@ int fat32_open(const char *path)
             g_files[i].last_cluster  = 0u;
             g_files[i].dirent_lba    = 0u;
             g_files[i].dirent_off    = 0u;
-            kinfo("fat32_open: '%s' cluster=%u size=%u fh=%d\n", path, cluster, size, i);
-            return i;
+            fh = i;
+            break;
         }
     }
-    kwarn("fat32_open: no free handle (all %d busy) for '%s'\n", FAT32_MAX_FILES, path);
-    return -1;   /* too many open files */
+    spin_unlock(&g_fat32_lock);
+    if (fh < 0) {
+        kwarn("fat32_open: no free handle (all %d busy) for '%s'\n", FAT32_MAX_FILES, path);
+        return -1;
+    }
+    kinfo("fat32_open: '%s' cluster=%u size=%u fh=%d\n", path, cluster, size, fh);
+    return fh;
 }
 
 /* ── Public: read ────────────────────────────────────────────────────────── */
@@ -521,7 +532,9 @@ int fat32_read(int fh, u8 *buf, u32 len)
 
 void fat32_close(int fh)
 {
-    if (fh < 0 || fh >= FAT32_MAX_FILES || !g_files[fh].used) return;
+    if (fh < 0 || fh >= FAT32_MAX_FILES) return;
+    spin_lock(&g_fat32_lock);
+    if (!g_files[fh].used) { spin_unlock(&g_fat32_lock); return; }
     fat32_file_t *f = &g_files[fh];
     if (f->writable) {
         kinfo("fat32_close: fh=%d cl=%u size=%u dirent_lba=%u off=%u\n",
@@ -546,6 +559,7 @@ void fat32_close(int fh)
         }
     }
     f->used = 0;
+    spin_unlock(&g_fat32_lock);
 }
 
 /* ── Write support (Phase 5.5 prerequisite) ──────────────────────────────── */

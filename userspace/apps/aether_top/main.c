@@ -68,6 +68,7 @@
 /* ── Refresh cadence ─────────────────────────────────────────────────────── */
 
 #define REFRESH_TICKS  100   /* 1 second at 100 Hz */
+#define NUM_CORES        4   /* AetherOS always boots 4 cores */
 
 /* ── Colors ──────────────────────────────────────────────────────────────── */
 
@@ -235,8 +236,11 @@ static void do_refresh(void)
                 ticks_for_pid(g_prev, g_prev_cnt, g_curr[i].pid);
             unsigned long long d = (g_curr[i].cpu_ticks > pv)
                                    ? g_curr[i].cpu_ticks - pv : 0;
-            g_cpu_pct[i] = (total_d > 0) ? (int)((d * 100) / total_d) : 0;
-            if (g_curr[i].pid == 0) idle_d = d;
+            /* Scale by NUM_CORES: 100% = one full core, matching Linux top */
+            int pct = (total_d > 0) ? (int)((d * 100 * NUM_CORES) / total_d) : 0;
+            g_cpu_pct[i] = (pct > 100) ? 100 : pct;
+            /* All per-core idle tasks share the "idle" name prefix */
+            if (strncmp(g_curr[i].name, "idle", 4) == 0) idle_d += d;
         }
         g_sys_cpu_pct = (total_d > 0)
             ? (int)(((total_d - idle_d) * 100) / total_d) : 0;

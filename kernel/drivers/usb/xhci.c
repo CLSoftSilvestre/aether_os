@@ -111,6 +111,7 @@ static uintptr_t g_db_base;    /* BAR0 + DBOFF */
 static u8  g_max_ports;
 static int g_ctx64;            /* 1 if Context Size = 64 bytes */
 static int g_ready;
+static u8  g_slots_used;       /* number of device slots actually assigned */
 
 /* Command Ring producer state */
 static u32 g_cmd_enq;    /* enqueue index into g_cmd_ring[] */
@@ -932,7 +933,7 @@ void xhci_init(void)
 
     /* 11. Scan all ports — enumerate every connected device (up to XHCI_MAX_DEV_SLOTS) */
     u8 n = g_max_ports < XHCI_MAX_PORTS ? g_max_ports : XHCI_MAX_PORTS;
-    u8 slots_used = 0;
+    g_slots_used = 0;
     for (u8 i = 0; i < n; i++) {
         u32 ps = port_rd(i);
         if (!(ps & XHCI_PORT_CCS)) continue;
@@ -940,7 +941,7 @@ void xhci_init(void)
               (unsigned)i, (unsigned)ps);
         if (enumerate_port(i) == 0) {
             g_ready = 1;
-            if (++slots_used >= XHCI_MAX_DEV_SLOTS)
+            if (++g_slots_used >= XHCI_MAX_DEV_SLOTS)
                 break;   /* device context array full */
         }
     }
@@ -950,3 +951,9 @@ void xhci_init(void)
 }
 
 int xhci_ready(void) { return g_ready; }
+
+/* Number of device slots actually assigned during enumeration (0..MAX_DEV_SLOTS).
+ * Class probes (UAC1/UAC2/MIDI) scan only these slots — probing unassigned
+ * slots issues control transfers that have no device to answer and burn a full
+ * 500 ms event-ring timeout each. */
+u8 xhci_num_slots(void) { return g_slots_used; }

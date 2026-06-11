@@ -111,7 +111,7 @@ _el1_start:
      */
     mrs x0, MPIDR_EL1
     and x0, x0, #0xFF       /* keep only CPU ID bits */
-    cbnz x0, _cpu_idle      /* CPUs 1-3: sleep forever for now */
+    cbnz x0, _secondary_start  /* CPUs 1-3: SMP secondary entry */
 
     /*
      * Switch to SP_EL1 (dedicated kernel stack pointer).
@@ -180,12 +180,81 @@ _bss_done:
      * kernel_main should never return. If it does, fall through to idle.
      */
 
-/* ─── Idle loop ─────────────────────────────────────────────────────────── */
+/* ─── Core 0 fallback idle (kernel_main should never return) ────────────── */
 _cpu_idle:
-    /*
-     * wfe = Wait For Event — puts the CPU into low-power sleep.
-     * The CPU wakes on any event (interrupt, cache snoop, etc.) and
-     * loops back. Equivalent to HLT in x86 but re-entrant.
-     */
     wfe
     b _cpu_idle
+
+/* ─── Secondary core entry point ────────────────────────────────────────── */
+/*
+ * _secondary_start — entered by cores 1-3 via PSCI CPU_ON.
+ *
+ * PSCI delivers secondary cores at EL2 or EL1 depending on firmware.
+ * We handle both cases, mirroring the EL2→EL1 drop done for core 0.
+ *
+ * Steps:
+ *   1. Drop from EL2 to EL1 if needed (same as primary boot path).
+ *   2. Enable FP/SIMD at EL1 (CPACR_EL1.FPEN = 0b11).
+ *   3. Switch to SP_EL1.
+ *   4. Read core_id from MPIDR_EL1[7:0].
+ *   5. Load the per-core stack top from g_secondary_stack_tops[core_id].
+ *   6. Call secondary_main(core_id) in C.
+ *
+ * Exposed as secondary_boot_entry so smp.c can pass its address to PSCI.
+ */
+.global secondary_boot_entry
+secondary_boot_entry:
+_secondary_start:
+    /* ── 1. EL check — drop to EL1 if we arrived at EL2 ── */
+    mrs x0, CurrentEL
+    lsr x0, x0, #2         /* x0 = EL number */
+    cmp x0, #2
+    b.eq _secondary_el2_drop
+    b   _secondary_el1      /* already at EL1 */
+
+_secondary_el2_drop:
+    /* Configure HCR_EL2 to make EL1 run as AArch64 */
+    mov x0, #(1 << 31)     /* RW bit: EL1 is AArch64 */
+    msr HCR_EL2, x0
+
+    /* Drop to EL1h with all interrupts masked */
+    mov x0, #0x3c5          /* EL1h (SPSel=1) + DAIF masked */
+    msr SPSR_EL2, x0
+    adr x0, _secondary_el1
+    msr ELR_EL2, x0
+    eret
+
+_secondary_el1:
+    /* ── 2. Enable FP/SIMD — required for user-space float operations ── */
+    mov x0, #(3 << 20)     /* CPACR_EL1.FPEN = 0b11 */
+    msr CPACR_EL1, x0
+    isb
+
+    /* ── 3. Switch to SP_EL1 (dedicated kernel stack pointer) ── */
+    msr SPSel, #1
+
+    /* ── 4. Get our core ID from MPIDR_EL1 [7:0] ── */
+    mrs x0, MPIDR_EL1
+    and x0, x0, #0xFF       /* x0 = core_id (1, 2, or 3) */
+
+    /*
+     * ── 5. Load per-core stack top ──
+     * g_secondary_stack_tops is a u64[4] filled by smp_init() before the
+     * PSCI calls.  g_secondary_stack_tops[core_id] is the stack top address.
+     * ldr x1, =symbol loads the symbol's address (like MOV AX, OFFSET var).
+     * [x1, x0, lsl #3] = *(x1 + core_id * 8) — one 64-bit entry per core.
+     */
+    ldr x1, =g_secondary_stack_tops
+    ldr x2, [x1, x0, lsl #3]  /* x2 = g_secondary_stack_tops[core_id] */
+    mov sp, x2                 /* sp cannot be a direct ldr destination   */
+
+    /*
+     * ── 6. Call secondary_main(core_id) ──
+     * x0 still holds core_id — AArch64 calling convention passes first
+     * argument in x0 (equivalent to pushing it on the stack in x86).
+     */
+    bl secondary_main
+
+    /* secondary_main() never returns — park the core for safety */
+1:  wfi
+    b   1b

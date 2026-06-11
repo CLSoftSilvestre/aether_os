@@ -30,6 +30,7 @@
 #include "aether/net.h"
 #include "aether/printk.h"
 #include "aether/scheduler.h"
+#include "aether/smp.h"
 
 /* Tick counter — incremented by timer_irq_handler() on every timer interrupt */
 static volatile u64 g_ticks = 0;
@@ -110,6 +111,32 @@ void timer_init(void)
 }
 
 /*
+ * timer_secondary_init — enable the per-CPU timer on a secondary core.
+ *
+ * The ARM Generic Timer (CNTP) is per-CPU: each core has its own
+ * CNTP_TVAL_EL0 and CNTP_CTL_EL0.  GICv2 PPI 30 is also banked per CPU,
+ * so gic_enable_irq(30) from here affects only the calling core.
+ *
+ * The timer fires at the same TIMER_HZ rate as core 0, waking the secondary
+ * idle loop from WFI so it can call task_yield() and pick up new work.
+ * The full timer_irq_handler() tick accounting runs only on core 0.
+ */
+void timer_secondary_init(void)
+{
+    u64 freq = read_cntfrq();
+    if (!freq) freq = 62500000ULL;
+    u64 interval = freq / TIMER_HZ;
+
+    /* Enable PPI 30 for this core only (GICv2 banked register) */
+    gic_enable_irq(TIMER_IRQ_ID);
+
+    /* Program first countdown and enable */
+    write_cntp_tval(interval);
+    write_cntp_ctl(CNTP_CTL_ENABLE);
+    __asm__ volatile("isb" ::: "memory");
+}
+
+/*
  * timer_irq_handler — called from el1_irq_handler when IRQ ID == 30.
  *
  * Must re-arm the timer by rewriting CNTP_TVAL_EL0, otherwise only
@@ -123,14 +150,24 @@ static u32 s_pm_total = 0;
 
 void timer_irq_handler(void)
 {
-    g_ticks++;
+    /* Re-arm this core's timer regardless of which core we're on */
     write_cntp_tval(g_interval);
 
-    /* Track idle vs busy for ondemand governor */
+    /*
+     * Only core 0 does global tick accounting and peripheral polling.
+     * Secondary cores just keep their timer armed so WFI wakes the idle loop,
+     * allowing task_yield() to distribute runnable tasks to all cores.
+     */
+    if (cpu_id() != 0)
+        return;
+
+    g_ticks++;
+
+    /* Track idle vs busy for the ondemand cpufreq governor */
     {
         const char *name = task_current_name();
         s_pm_total++;
-        if (name[0] == 'i' && name[1] == 'd')   /* "idle" */
+        if (name[0] == 'i' && name[1] == 'd')   /* "idle*" tasks */
             s_pm_idle++;
     }
 

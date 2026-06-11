@@ -148,7 +148,9 @@ void usb_midi_init(void)
 
     static u8 cfg_buf[512];
 
-    for (u8 slot = 1; slot <= 32; slot++) {
+    /* Scan only assigned slots — probing empty slots burns a 500 ms timeout each. */
+    u8 nslots = xhci_num_slots();
+    for (u8 slot = 1; slot <= nslots; slot++) {
         usb_setup_t get_cfg = {
             .bmRequestType = 0x80,
             .bRequest      = 0x06,

@@ -315,19 +315,19 @@ void virtio_input_poll(void)
         test_ev.y = SCREEN_H() / 2u;
         test_ev.buttons = 0;
         mouse_post_event(mouse_event_pack(test_ev));
-        kinfo("vi: software-path test — injected cursor→(%u,%u)\n",
-              test_ev.x, test_ev.y);
+        kdebug("vi: software-path test — injected cursor→(%u,%u)\n",
+               test_ev.x, test_ev.y);
     }
 
     u32 interval = (tick < 3000u) ? 50u : 500u;
     if (tick % interval == 0u) {
-        kinfo("vi poll tick=%lu ndevs=%d\n",
-              (unsigned long)tick, vi_ndevs);
+        kdebug("vi poll tick=%lu ndevs=%d\n",
+               (unsigned long)tick, vi_ndevs);
         for (int i = 0; i < vi_ndevs; i++) {
-            kinfo("  vi[%d] avail=%u used=%u last=%u\n", i,
-                  (unsigned)vi_devs[i].avail->idx,
-                  (unsigned)vi_devs[i].used->idx,
-                  (unsigned)vi_devs[i].last_used);
+            kdebug("  vi[%d] avail=%u used=%u last=%u\n", i,
+                   (unsigned)vi_devs[i].avail->idx,
+                   (unsigned)vi_devs[i].used->idx,
+                   (unsigned)vi_devs[i].last_used);
         }
     }
 
