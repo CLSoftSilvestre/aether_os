@@ -422,12 +422,23 @@ static void task_switch_away(u8 next_state, u64 wake_tick, u32 wait_pid)
     task_t *from = &g_tasks[from_idx];
 
     /*
+     * A task killed while RUNNING on this core (task_kill's deferred-free path)
+     * is left ZOMBIE/DEAD but keeps executing in EL0 until its next syscall.
+     * When it reaches here it must NOT be revived into a schedulable state —
+     * doing so would resurrect a reaped task (whose resources may be freed)
+     * back into the run queue.  Treat any non-RUNNING caller as a terminal
+     * task that simply needs to be switched off this core: skip the blocking-
+     * state change and just pick the next task below.
+     */
+    int terminal = (from->state != TASK_RUNNING);
+
+    /*
      * WAIT mode: re-test the wake condition under the lock before blocking.
      * If the child already became a ZOMBIE we must NOT block, or we would
      * miss the wake_waiting_parent() that ran before we set TASK_WAITING —
      * a lost-wakeup hang.  Aborting here keeps check-and-block atomic.
      */
-    if (next_state == TASK_WAITING) {
+    if (next_state == TASK_WAITING && !terminal) {
         for (u32 i = 0; i < g_num_tasks; i++) {
             if (g_tasks[i].pid == wait_pid &&
                 g_tasks[i].state == TASK_ZOMBIE) {
@@ -437,11 +448,11 @@ static void task_switch_away(u8 next_state, u64 wake_tick, u32 wait_pid)
         }
     }
 
-    /* Apply the caller's requested blocking state under the lock. */
-    if (next_state == TASK_SLEEPING) {
+    /* Apply the caller's requested blocking state under the lock (live tasks only). */
+    if (!terminal && next_state == TASK_SLEEPING) {
         from->state     = TASK_SLEEPING;
         from->wake_tick = wake_tick;
-    } else if (next_state == TASK_WAITING) {
+    } else if (!terminal && next_state == TASK_WAITING) {
         from->state     = TASK_WAITING;
         from->wait_pid  = wait_pid;
     }
@@ -459,7 +470,7 @@ static void task_switch_away(u8 next_state, u64 wake_tick, u32 wait_pid)
          * the original semantics — important so task_exit()'s ZOMBIE/DEAD set
          * before a yield is never clobbered back to RUNNING.
          */
-        if (next_state == TASK_SLEEPING || next_state == TASK_WAITING)
+        if (!terminal && (next_state == TASK_SLEEPING || next_state == TASK_WAITING))
             from->state = TASK_RUNNING;
         spin_unlock(&g_sched_lock);
         return;
