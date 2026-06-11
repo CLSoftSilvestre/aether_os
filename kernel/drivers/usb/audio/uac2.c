@@ -287,7 +287,9 @@ void uac2_init(void)
     /* GET_DESCRIPTOR for Configuration descriptor (type=0x02, index=0) */
     static u8 cfg_buf[512];
 
-    for (u8 slot = 1; slot <= 32; slot++) {
+    /* Scan only assigned slots — probing empty slots burns a 500 ms timeout each. */
+    u8 nslots = xhci_num_slots();
+    for (u8 slot = 1; slot <= nslots; slot++) {
         usb_setup_t get_cfg = {
             .bmRequestType = 0x80,  /* Standard, Device, Device-to-Host */
             .bRequest      = 0x06,  /* GET_DESCRIPTOR                   */
