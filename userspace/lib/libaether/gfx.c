@@ -946,6 +946,66 @@ void gfx_fill_rounded(unsigned x, unsigned y, unsigned w, unsigned h,
     }
 }
 
+/* Write one pixel with its full 32 bits (incl. the alpha/coverage byte) into
+ * the active render target, bypassing gfx_fill's 0xFFFFFF mask.  Only valid
+ * inside a gfx_begin_frame block (render-target backed); no-op otherwise. */
+static void gfx_rt_put_argb(unsigned x, unsigned y, unsigned argb)
+{
+    if (!g_rt_buf) return;
+    rt_fill((int)x - g_rt_off_x, (int)y - g_rt_off_y,
+            (int)x - g_rt_off_x + 1, (int)y - g_rt_off_y + 1, argb);
+}
+
+/*
+ * Anti-alias the four rounded corners of a window into the chroma-key model.
+ * For each corner scanline we compute the fractional arc boundary and:
+ *   - fully-outside pixels  → chroma-key (compositor shows the wallpaper),
+ *   - boundary pixel(s)     → rim colour with a partial coverage byte, which
+ *                             the compositor blends against the wallpaper,
+ *   - fully-inside pixels   → left as drawn (opaque body / rim).
+ * This replaces the hard 1-bit cut that produced jagged corner edges.
+ * Call after the frame body + rim are drawn.
+ */
+void gfx_mask_rounded_corners(unsigned x, unsigned y, unsigned w, unsigned h,
+                               unsigned r)
+{
+    if (r < 2u || r * 2u > w || r * 2u > h) return;
+    unsigned r2  = r * r;
+    unsigned rim = C_GLASS_RIM & 0x00FFFFFFu;
+
+    for (unsigned dr = 0; dr < r; dr++) {
+        unsigned dy    = r - dr;
+        /* ax256 = sqrt(r^2 - dy^2) * 256  (8-bit fixed point).
+         * sqrt(N)*256 == sqrt(N << 16). */
+        unsigned ax256 = gfx_isqrt_u((r2 - dy * dy) << 16);
+        int xb256 = (int)(r << 8) - (int)ax256;             /* left boundary  */
+
+        unsigned top = y + dr;
+        unsigned bot = y + h - 1u - dr;
+
+        for (unsigned c = 0; c < r; c++) {
+            int cov = ((int)((c + 1u) << 8)) - xb256;       /* coverage * 256 */
+            if (cov <= 0) {
+                /* Fully outside — transparent on both sides. */
+                gfx_fill(x + c,            top, 1u, 1u, GFX_ICON_TRANSPARENT);
+                gfx_fill(x + w - 1u - c,   top, 1u, 1u, GFX_ICON_TRANSPARENT);
+                gfx_fill(x + c,            bot, 1u, 1u, GFX_ICON_TRANSPARENT);
+                gfx_fill(x + w - 1u - c,   bot, 1u, 1u, GFX_ICON_TRANSPARENT);
+            } else if (cov < 256) {
+                /* Boundary — partial coverage of the rim colour. */
+                unsigned argb = ((unsigned)cov << 24) | rim;
+                gfx_rt_put_argb(x + c,          top, argb);
+                gfx_rt_put_argb(x + w - 1u - c, top, argb);
+                gfx_rt_put_argb(x + c,          bot, argb);
+                gfx_rt_put_argb(x + w - 1u - c, bot, argb);
+            } else {
+                /* Fully inside — the rest of this scanline is opaque body. */
+                break;
+            }
+        }
+    }
+}
+
 void gfx_rect_rounded(unsigned x, unsigned y, unsigned w, unsigned h,
                        unsigned r, unsigned color)
 {
@@ -1099,6 +1159,11 @@ void gfx_glass_window_frame(int wx, int wy, int ww, int wh,
     gfx_text_center_transparent((unsigned)wx, (unsigned)ww,
                                 (unsigned)(wy + title_row),
                                 title, C_TEXT);
+
+    /* 9. Mask the rounded-corner cut-outs so the wallpaper shows through
+     *    instead of an opaque black square at each corner. */
+    gfx_mask_rounded_corners((unsigned)wx, (unsigned)wy,
+                             (unsigned)ww, (unsigned)wh, r);
 }
 
 /* ── BMP loader ──────────────────────────────────────────────────────────── */

@@ -53,6 +53,27 @@ static gpu_bo_t   g_bos[GPU_MAX_BOS];
  * logging happen outside it.  Order is always v3d_bo→pmm, never the reverse. */
 static spinlock_t g_bo_lock = SPINLOCK_INIT;
 
+/*
+ * Chroma-key transparency for window BOs.  A source pixel exactly equal to
+ * pure magenta (XRGB 0x00FF00FF) is treated as "do not draw" — the compositor
+ * skips it so whatever is behind (wallpaper / lower window) shows through.
+ * This is the per-window mask used for rounded-corner cut-outs and the dock's
+ * icon-protrusion strip.  Same convention as gfx.h's GFX_ICON_TRANSPARENT;
+ * it never occurs in the Lumina palette (dark purples + cyans).  Compare only
+ * the low 24 bits since the alpha/X byte may be 0 or undefined.
+ */
+#define V3D_CHROMA_KEY 0x00FF00FFu
+#define V3D_IS_KEY(p)  (((p) & 0x00FFFFFFu) == V3D_CHROMA_KEY)
+
+/*
+ * Per-pixel coverage: the top (alpha) byte of a BO pixel encodes edge
+ * anti-aliasing.  0 = fully opaque (the default for all normal content, which
+ * gfx_fill writes with a zero alpha byte); 1..254 = partial coverage, blended
+ * against the background; the chroma-key handles fully-transparent pixels.
+ * Used by gfx_mask_rounded_corners() to soften window corners.
+ */
+#define V3D_COVERAGE(p) (((p) >> 24) & 0xFFu)
+
 /* Double-buffer back buffer (allocated by v3d_dbl_init when compositor claims FB) */
 static volatile u32 *g_back_buf;
 static u32           g_back_pages;
@@ -748,22 +769,41 @@ int v3d_composite_anim(u32 bo_handle,
        (((p01)>>(sh))&(mask)) * (256u-fx) * fy        +           \
        (((p11)>>(sh))&(mask)) * fx        * fy) + (1u << 15)) >> 16)
 
-            u32 sr = BL(p00, p10, p01, p11, 16u, 0xFFu);
-            u32 sg = BL(p00, p10, p01, p11,  8u, 0xFFu);
-            u32 sb = BL(p00, p10, p01, p11,  0u, 0xFFu);
+            u32 sr, sg, sb, pa;
+            if (V3D_IS_KEY(p00) || V3D_IS_KEY(p10) ||
+                V3D_IS_KEY(p01) || V3D_IS_KEY(p11)) {
+                /* Boundary: nearest-neighbour to avoid magenta bleed. */
+                u32 pn = (fx >= 128u) ? ((fy >= 128u) ? p11 : p10)
+                                      : ((fy >= 128u) ? p01 : p00);
+                if (V3D_IS_KEY(pn)) { fb_row[dx] = bg; continue; }
+                sr = (pn >> 16) & 0xFFu;
+                sg = (pn >>  8) & 0xFFu;
+                sb =  pn        & 0xFFu;
+                pa = V3D_COVERAGE(pn);
+            } else {
+                sr = BL(p00, p10, p01, p11, 16u, 0xFFu);
+                sg = BL(p00, p10, p01, p11,  8u, 0xFFu);
+                sb = BL(p00, p10, p01, p11,  0u, 0xFFu);
+                pa = V3D_COVERAGE(p00);
+            }
 #undef BL
 
-            if (alpha == 255u) {
+            /* Effective alpha = per-pixel coverage × animation opacity. */
+            u32 ea = (pa ? pa : 255u);
+            ea = (ea * (u32)alpha) / 255u;
+            if (ea >= 255u) {
                 fb_row[dx] = (sr << 16) | (sg << 8) | sb;
-            } else {
-                u32 br = (bg >> 16) & 0xFFu;
+            } else if (ea != 0u) {
+                u32 br  = (bg >> 16) & 0xFFu;
                 u32 bg_ = (bg >>  8) & 0xFFu;
                 u32 bb  =  bg        & 0xFFu;
-                u32 ia  = 255u - (u32)alpha;
+                u32 ia  = 255u - ea;
                 fb_row[dx] =
-                    (((sr * (u32)alpha + br  * ia) / 255u) << 16) |
-                    (((sg * (u32)alpha + bg_ * ia) / 255u) <<  8) |
-                     ((sb * (u32)alpha + bb  * ia) / 255u);
+                    (((sr * ea + br  * ia) / 255u) << 16) |
+                    (((sg * ea + bg_ * ia) / 255u) <<  8) |
+                     ((sb * ea + bb  * ia) / 255u);
+            } else {
+                fb_row[dx] = bg;
             }
         }
     }
@@ -1067,7 +1107,6 @@ int v3d_composite_layers(const v3d_layer_t *layers, int n,
 #endif
 
         const volatile u32 *src = (const volatile u32 *)src_phys;
-        u32 inv_a = 255u - (u32)alpha;
 
         for (u32 dy = 0; dy < clip_h; dy++) {
             u32 ty = dst_y + dy;
@@ -1090,21 +1129,41 @@ int v3d_composite_layers(const v3d_layer_t *layers, int n,
                 u32 p01 = src[sy1 * src_w + sx0];
                 u32 p11 = src[sy1 * src_w + sx1];
 
-                u32 sr = _CL(p00, p10, p01, p11, 16u, 0xFFu);
-                u32 sg = _CL(p00, p10, p01, p11,  8u, 0xFFu);
-                u32 sb = _CL(p00, p10, p01, p11,  0u, 0xFFu);
-
-                if (alpha == 255u) {
-                    tgt[ty * tgt_stride_px + tx] = (sr << 16) | (sg << 8) | sb;
+                u32 sr, sg, sb, pa;
+                if (V3D_IS_KEY(p00) || V3D_IS_KEY(p10) ||
+                    V3D_IS_KEY(p01) || V3D_IS_KEY(p11)) {
+                    /* Near a transparency boundary — snap to the nearest texel
+                     * instead of bilinear, so the magenta key never bleeds into
+                     * the edge (the pink fringe seen during open animations). */
+                    u32 pn = (fx >= 128u) ? ((fy >= 128u) ? p11 : p10)
+                                          : ((fy >= 128u) ? p01 : p00);
+                    if (V3D_IS_KEY(pn)) continue;        /* transparent */
+                    sr = (pn >> 16) & 0xFFu;
+                    sg = (pn >>  8) & 0xFFu;
+                    sb =  pn        & 0xFFu;
+                    pa = V3D_COVERAGE(pn);
                 } else {
-                    u32 fp   = tgt[ty * tgt_stride_px + tx];
-                    u32 fr   = (fp >> 16) & 0xFFu;
-                    u32 fg_  = (fp >>  8) & 0xFFu;
-                    u32 fb_  =  fp        & 0xFFu;
-                    tgt[ty * tgt_stride_px + tx] =
-                        (((sr * (u32)alpha + fr  * inv_a) / 255u) << 16) |
-                        (((sg * (u32)alpha + fg_ * inv_a) / 255u) <<  8) |
-                         ((sb * (u32)alpha + fb_ * inv_a) / 255u);
+                    sr = _CL(p00, p10, p01, p11, 16u, 0xFFu);
+                    sg = _CL(p00, p10, p01, p11,  8u, 0xFFu);
+                    sb = _CL(p00, p10, p01, p11,  0u, 0xFFu);
+                    pa = V3D_COVERAGE(p00);
+                }
+
+                /* Effective alpha = per-pixel coverage × layer opacity. */
+                u32 ea = (pa ? pa : 255u);
+                ea = (ea * (u32)alpha) / 255u;
+                volatile u32 *dst = &tgt[ty * tgt_stride_px + tx];
+                if (ea >= 255u) {
+                    *dst = (sr << 16) | (sg << 8) | sb;
+                } else if (ea != 0u) {
+                    u32 fp  = *dst;
+                    u32 fr  = (fp >> 16) & 0xFFu;
+                    u32 fg_ = (fp >>  8) & 0xFFu;
+                    u32 fb_ =  fp        & 0xFFu;
+                    u32 ia  = 255u - ea;
+                    *dst = (((sr * ea + fr  * ia) / 255u) << 16) |
+                           (((sg * ea + fg_ * ia) / 255u) <<  8) |
+                            ((sb * ea + fb_ * ia) / 255u);
                 }
             }
         }

@@ -49,6 +49,39 @@ static u32        g_current_idx[NUM_CPUS]  = {0};  /* per-core current task inde
 /* Scheduler spinlock — must be held for any task-table read-modify-write */
 static spinlock_t g_sched_lock = SPINLOCK_INIT;
 
+/*
+ * CPU-time accounting (real wall-clock via the ARM generic timer).
+ *
+ * g_core_run_start[core] holds the CNTPCT value at the moment 'core' last
+ * switched to its current task.  On the next switch_away we charge the span
+ * (now − start) to whatever task was running.  Summed across all cores this
+ * yields true per-task CPU time, so AetherTop's percentages reflect real
+ * occupancy instead of raw context-switch counts.
+ *
+ * g_cpu_time_total / g_cpu_time_idle are monotonic system-wide accumulators
+ * (idle = the per-core "idle*" tasks) used by scheduler_cpu_load() to drive
+ * the ondemand cpufreq governor with a genuine 4-core load figure.
+ *
+ * All four are written only under g_sched_lock.
+ */
+static u64 g_core_run_start[NUM_CPUS] = {0};
+static u64 g_cpu_time_total = 0;
+static u64 g_cpu_time_idle  = 0;
+
+/* Read the free-running physical counter (CNTFRQ_EL0-rate, clock-independent). */
+static inline u64 sched_now(void)
+{
+    u64 v;
+    __asm__ volatile("mrs %0, CNTPCT_EL0" : "=r"(v));
+    return v;
+}
+
+/* True for the per-core idle tasks ("idle", "idle1", …). */
+static inline int task_is_idle(const task_t *t)
+{
+    return t->name[0] == 'i' && t->name[1] == 'd';
+}
+
 /* ── Internal helpers ───────────────────────────────────────────────────── */
 
 static task_t *current_task(void)
@@ -438,6 +471,26 @@ static void task_switch_away(u8 next_state, u64 wake_tick, u32 wait_pid)
     task_t *from = &g_tasks[from_idx];
 
     /*
+     * CPU-time accounting.  Charge the CNTPCT span since this core last took a
+     * switch to the *outgoing* task.  Run on every pass — including the
+     * from==to early-returns below — so a core that stays on one task (an idle
+     * core spinning WFI+yield, or a busy task yielding to itself) still accrues
+     * that task's time and the per-core clock keeps advancing.
+     */
+    {
+        u64 now  = sched_now();
+        u64 prev = g_core_run_start[my_core];
+        g_core_run_start[my_core] = now;
+        if (prev && now > prev) {
+            u64 d = now - prev;
+            from->cpu_ticks  += d;
+            g_cpu_time_total += d;
+            if (task_is_idle(from))
+                g_cpu_time_idle += d;
+        }
+    }
+
+    /*
      * A task killed while RUNNING on this core (task_kill's deferred-free path)
      * is left ZOMBIE/DEAD but keeps executing in EL0 until its next syscall.
      * When it reaches here it must NOT be revived into a schedulable state —
@@ -498,7 +551,8 @@ static void task_switch_away(u8 next_state, u64 wake_tick, u32 wait_pid)
     if (next_state == TASK_READY && from->state == TASK_RUNNING)
         from->state = TASK_READY;
     to->state    = TASK_RUNNING;
-    to->cpu_ticks++;
+    /* cpu_ticks is now real run-time, charged to the outgoing task at the top
+     * of this function — not a per-switch counter, so nothing to bump here. */
 
     g_current_idx[my_core] = to_idx;
 
@@ -658,6 +712,32 @@ int task_ps(ps_entry_t *entries, int max_entries)
         n++;
     }
     return n;
+}
+
+/*
+ * scheduler_cpu_load — aggregate busy percentage (0-100) across all cores
+ * since the previous call.  Computed from the monotonic CNTPCT accumulators
+ * so it reflects genuine 4-core occupancy.  Called once per second from the
+ * timer ISR to drive the ondemand cpufreq governor.  Lock-free: 64-bit
+ * aligned loads are single-copy-atomic on AArch64 and slight skew is
+ * harmless for a frequency heuristic.
+ */
+u32 scheduler_cpu_load(void)
+{
+    static u64 last_total = 0;
+    static u64 last_idle  = 0;
+
+    u64 total = g_cpu_time_total;
+    u64 idle  = g_cpu_time_idle;
+
+    u64 dt = total - last_total;
+    u64 di = idle  - last_idle;
+    last_total = total;
+    last_idle  = idle;
+
+    if (dt == 0) return 0;
+    if (di > dt) di = dt;
+    return (u32)(((dt - di) * 100u) / dt);
 }
 
 int task_kill(u32 pid, int exit_code)

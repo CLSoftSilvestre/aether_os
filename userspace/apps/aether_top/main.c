@@ -331,8 +331,12 @@ static void draw_header(void)
     gfx_text((unsigned)cx, (unsigned)(cy + 50), "CPU", C_TEXT_DIM, C_HDR_BG);
     progress_set_value(&g_bar_cpu_hdr, g_sys_cpu_pct);
     g_bar_cpu_hdr.draw_fn(&g_bar_cpu_hdr, cx + HDR_BAR_X, cy + 50);
+    unsigned cur_mhz = sys_cpu_freq_hz()     / 1000000u;
+    unsigned max_mhz = sys_cpu_freq_max_hz() / 1000000u;
     gfx_printf((unsigned)(cx + HDR_VAL_X), (unsigned)(cy + 50),
-                C_TEXT, C_HDR_BG, "%d%%", g_sys_cpu_pct);
+                C_TEXT, C_HDR_BG, "%d%%   %u / %u MHz%s",
+                g_sys_cpu_pct, cur_mhz, max_mhz,
+                (max_mhz && cur_mhz >= max_mhz) ? "  (max)" : "");
 
     gfx_hline((unsigned)cx, (unsigned)(cy + HDR_H - 1),
                (unsigned)CONT_W, C_SEP);

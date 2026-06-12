@@ -142,12 +142,6 @@ void timer_secondary_init(void)
  * Must re-arm the timer by rewriting CNTP_TVAL_EL0, otherwise only
  * one interrupt fires. (The hardware clears TVAL to 0 when it fires.)
  */
-/* ── Power management sampling (Phase 6.2) ────────────────────────────── */
-/* Count idle ticks within each 1-second (TIMER_HZ tick) window.
- * The idle task's name is "idle"; checking the first two chars is cheap. */
-static u32 s_pm_idle  = 0;
-static u32 s_pm_total = 0;
-
 void timer_irq_handler(void)
 {
     /* Re-arm this core's timer regardless of which core we're on */
@@ -163,14 +157,6 @@ void timer_irq_handler(void)
 
     g_ticks++;
 
-    /* Track idle vs busy for the ondemand cpufreq governor */
-    {
-        const char *name = task_current_name();
-        s_pm_total++;
-        if (name[0] == 'i' && name[1] == 'd')   /* "idle*" tasks */
-            s_pm_idle++;
-    }
-
     virtio_input_poll();
 
     /* USB: record input activity for DPMS and autosuspend */
@@ -184,9 +170,10 @@ void timer_irq_handler(void)
 
     /* 1 Hz power management tick */
     if ((g_ticks % TIMER_HZ) == 0) {
-        cpufreq_sample(s_pm_idle, s_pm_total);
-        s_pm_idle  = 0;
-        s_pm_total = 0;
+        /* Feed the ondemand governor a true 4-core busy figure derived from
+         * the scheduler's CNTPCT run-time accounting (load%, out of 100). */
+        u32 load = scheduler_cpu_load();
+        cpufreq_sample(100u - load, 100u);
 
         thermal_tick();
         dpms_tick();

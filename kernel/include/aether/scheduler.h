@@ -36,11 +36,14 @@ typedef struct {
     int          state;
     char         name[PROC_NAME_MAX];
     u32          mem_pages;  /* user_code_pages + user_stack_pages (×4 KB each) */
-    u64          cpu_ticks;  /* cumulative scheduler invocations for this task   */
+    u64          cpu_ticks;  /* cumulative CPU run-time, CNTPCT counter units    */
 } ps_entry_t;
 
 /* Fill entries[] with live (non-unused, non-dead) tasks; returns count. */
 int task_ps(ps_entry_t *entries, int max_entries);
+
+/* Aggregate busy % (0-100) across all cores since the previous call. */
+u32 scheduler_cpu_load(void);
 
 /* ── Task states ─────────────────────────────────────────────────────── */
 #define TASK_UNUSED   0
@@ -104,7 +107,7 @@ typedef struct {
     int           exit_code;        /* valid when TASK_ZOMBIE */
     u32           wait_pid;         /* PID being waited on (TASK_WAITING) */
     u64           wake_tick;        /* tick when TASK_SLEEPING wakes */
-    u64           cpu_ticks;        /* cumulative scheduler invocations         */
+    u64           cpu_ticks;        /* cumulative CPU run-time, CNTPCT units     */
     char          name[PROC_NAME_MAX]; /* copied at creation — always kernel memory */
     uintptr_t     stack_phys;          /* physical address of kernel stack */
     /* User-process fields (0 for kernel tasks) */

@@ -1216,6 +1216,9 @@ long syscall_dispatch(trap_frame_t *frame)
     /* ── Power management (Phase 6.2) ───────────────────────────────────── */
 
     case SYS_POWER_CPUFREQ_GET:
+        /* arg0 selects which value: 0 (default) = current, 1 = max, 2 = min. */
+        if (arg0 == 1) return (long)cpufreq_get_max_hz();
+        if (arg0 == 2) return (long)cpufreq_get_min_hz();
         return (long)cpufreq_get_current_hz();
 
     case SYS_POWER_CPUFREQ_GOV: {

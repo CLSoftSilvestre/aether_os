@@ -99,6 +99,11 @@ void gfx_fill_rounded(unsigned x, unsigned y, unsigned w, unsigned h,
 void gfx_rect_rounded(unsigned x, unsigned y, unsigned w, unsigned h,
                        unsigned r, unsigned color);
 
+/* Paint the four out-of-arc corner cut-outs of a rounded rect with the
+ * chroma-key (GFX_ICON_TRANSPARENT) so the compositor masks them out. */
+void gfx_mask_rounded_corners(unsigned x, unsigned y, unsigned w, unsigned h,
+                               unsigned r);
+
 /* Fill a rectangle with a vertical linear gradient from top_color to bot_color. */
 void gfx_gradient_v(unsigned x, unsigned y, unsigned w, unsigned h,
                     unsigned top_color, unsigned bot_color);

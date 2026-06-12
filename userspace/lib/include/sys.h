@@ -990,8 +990,21 @@ static inline long sys_puts(const char *s)
 }
 
 /* ── Power control syscalls ──────────────────────────────────────── */
+#define SYS_POWER_CPUFREQ_GET  920  /* (sel: 0=current,1=max,2=min) → ARM clock Hz */
 #define SYS_POWER_SHUTDOWN  924  /* () → does not return; powers off the machine */
 #define SYS_POWER_REBOOT    925  /* () → does not return; resets the machine     */
+
+/* Current ARM CPU clock in Hz (governor-driven; ondemand boosts under load). */
+static inline unsigned sys_cpu_freq_hz(void)
+{
+    return (unsigned)_sys1(SYS_POWER_CPUFREQ_GET, 0);
+}
+
+/* Maximum ARM CPU clock in Hz (the "full speed" ceiling). */
+static inline unsigned sys_cpu_freq_max_hz(void)
+{
+    return (unsigned)_sys1(SYS_POWER_CPUFREQ_GET, 1);
+}
 
 __attribute__((noreturn))
 static inline void sys_power_shutdown(void)

@@ -132,26 +132,6 @@ static void raise_to_front(long win_id)
     }
 }
 
-/* ── Procedural gradient for protrusion strip ────────────────────────────── */
-/* Matches init's wp_bg_at — gives a plausible background color when icons
- * protrude above the dock. Not pixel-perfect with the BMP wallpaper but
- * close enough in the near-dock region that is mostly dark. */
-static unsigned wp_bg_at(int y)
-{
-    int r, g, b;
-    if (y < 280) {
-        r =  4 + y *  8 / 280;
-        g =  4 + y *  4 / 280;
-        b = 14 + y * 14 / 280;
-    } else {
-        int dy = y - 280, span = 488;
-        r = 12 - dy * 6  / span;
-        g =  8 - dy * 3  / span;
-        b = 28 - dy * 10 / span;
-    }
-    return GFX_RGB((unsigned)r, (unsigned)g, (unsigned)b);
-}
-
 /* ── Procedural icon drawing ─────────────────────────────────────────────── */
 
 static void icon_round_corners(int ix, int iy)
@@ -463,20 +443,12 @@ static int hit_minimized_thumb(int mx, int my)
 
 static void draw_dock_magnified(void)
 {
-    static int s_strip_h = 0;
-
     /* Effective scale = max(hover spring, bounce spring) */
     float eff[DOCK_ITEM_COUNT];
-    float max_scale = 1.0f;
     for (int i = 0; i < DOCK_ITEM_COUNT; i++) {
         float hs = g_dock_mag[i].pos;
         float bs = g_dock_bounce[i].active ? g_dock_bounce[i].scale_sp.pos : 1.0f;
         eff[i] = hs > bs ? hs : bs;
-        if (eff[i] > max_scale) max_scale = eff[i];
-    }
-    /* Include thumb scales — thumbs protrude more (DOCK_H-8 tall vs DOCK_ICON_SIZE) */
-    for (int i = 0; i < g_minimized_n; i++) {
-        if (g_thumb_mag[i].pos > max_scale) max_scale = g_thumb_mag[i].pos;
     }
 
     /* Magnified slot widths and centred start X */
@@ -493,16 +465,12 @@ static void draw_dock_magnified(void)
                     (unsigned)(DOCK_BB_STRIP + DOCK_H),
                     0, DOCK_Y - DOCK_BB_STRIP);
 
-    /* Repaint protrusion strip — use DOCK_H-8 as height basis since thumbs
-     * are taller than DOCK_ICON_SIZE and protrude further when magnified */
-    int cur_prot = max_scale > 1.001f
-                   ? (int)((max_scale - 1.0f) * (float)(DOCK_H - 8)) + 2 : 0;
-    int prot = cur_prot > s_strip_h ? cur_prot : s_strip_h;
-    if (prot > 0 && DOCK_Y - prot >= 0) {
-        for (int y = DOCK_Y - prot; y < DOCK_Y; y++)
-            gfx_fill(0, y, SCR_W, 1, wp_bg_at(y));
-    }
-    s_strip_h = cur_prot;
+    /* Protrusion strip above the panel: paint it with the chroma-key so the
+     * compositor masks it out and the real wallpaper shows through behind the
+     * magnified icons — instead of an approximate solid colour (wp_bg_at) or
+     * leftover black, which read as a dark band above the dock. */
+    gfx_fill(0, (unsigned)(DOCK_Y - DOCK_BB_STRIP), (unsigned)SCR_W,
+             (unsigned)DOCK_BB_STRIP, GFX_ICON_TRANSPARENT);
 
     /* Dock background — solid panel (glass added in a later phase) */
     gfx_fill(0, (unsigned)DOCK_Y, (unsigned)SCR_W, DOCK_H, C_PANEL);
