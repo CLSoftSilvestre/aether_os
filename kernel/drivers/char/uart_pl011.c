@@ -81,9 +81,22 @@ void uart_putc(char c)
     if (c == '\n')
         uart_putc('\r');
 
-    /* Spin while transmit FIFO is full */
-    while (uart_read(UART_FR) & UART_FR_TXFF)
-        ;
+    /*
+     * Spin while the transmit FIFO is full — but BOUNDED.
+     *
+     * printk() holds g_printk_lock (with IRQs masked) across the whole
+     * message and calls uart_putc() per character.  If the host stops
+     * draining the UART (terminal backpressure, paused capture), an
+     * unbounded wait here spins forever WHILE HOLDING g_printk_lock — every
+     * other core then blocks on its next printk with IRQs masked, wedging
+     * the entire machine with no panic.  Capping the wait drops a log
+     * character under extreme backpressure instead, which is vastly
+     * preferable to hanging the OS.
+     */
+    for (u32 spins = 0; (uart_read(UART_FR) & UART_FR_TXFF); spins++) {
+        if (spins > 1000000u)
+            return;   /* UART wedged — drop this char rather than hang */
+    }
 
     /* Write character — only the low 8 bits matter */
     uart_write(UART_DR, (u32)c);

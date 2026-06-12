@@ -19,6 +19,17 @@
 
 #include "aether/wm.h"
 #include "aether/printk.h"
+#include "aether/spinlock.h"
+
+/*
+ * Protects the window registry (g_wins[]) slot allocation and the per-PID
+ * event FIFOs (g_fifos[]) against concurrent access from multiple cores.
+ * WM calls all originate from syscall context (never the timer ISR), so a
+ * plain spinlock without IRQ masking is sufficient.  Functions that mutate
+ * the registry snapshot what they need and release the lock BEFORE calling
+ * wm_deliver_to_pid() (which takes the lock itself) to avoid self-deadlock.
+ */
+static spinlock_t g_wm_lock = SPINLOCK_INIT;
 
 /* Must match MAX_TASKS in scheduler.h */
 #define WM_MAX_PIDS  32
@@ -58,6 +69,7 @@ void wm_init(void)
 
 int wm_register(u32 pid, int x, int y, int w, int h, const char *title)
 {
+    spin_lock(&g_wm_lock);
     for (int i = 0; i < WM_MAX_WINDOWS; i++) {
         if (g_wins[i].active)
             continue;
@@ -75,7 +87,6 @@ int wm_register(u32 pid, int x, int y, int w, int h, const char *title)
         }
         g_wins[i].title[j] = '\0';
 
-        g_wins[i].active      = 1;
         g_wins[i].z_index     = i;      /* default: registration order */
         g_wins[i].opacity     = 255;    /* fully opaque */
         g_wins[i].blur_radius = 0;
@@ -85,33 +96,47 @@ int wm_register(u32 pid, int x, int y, int w, int h, const char *title)
         g_wins[i].minimized   = 0;
         g_wins[i].flags       = 0;
         g_wins[i].buf_handle  = 0;
+        /* Claim the slot LAST, after every field is populated, so a concurrent
+         * wm_enum() either sees a fully-initialised window or an inactive one. */
+        g_wins[i].active      = 1;
 
+        spin_unlock(&g_wm_lock);
         kinfo("[WM] register pid=%u win=%d (%dx%d+%d+%d) '%s'\n",
               pid, i, w, h, x, y, g_wins[i].title);
         return i;
     }
 
+    spin_unlock(&g_wm_lock);
     kwarn("[WM] register: no free slots (pid=%u)\n", pid);
     return -1;
 }
 
 void wm_unregister(int id)
 {
-    if (id < 0 || id >= WM_MAX_WINDOWS || !g_wins[id].active)
+    if (id < 0 || id >= WM_MAX_WINDOWS)
         return;
 
-    kinfo("[WM] unregister win=%d pid=%u\n", id, g_wins[id].pid);
+    spin_lock(&g_wm_lock);
+    if (!g_wins[id].active) {
+        spin_unlock(&g_wm_lock);
+        return;
+    }
 
+    u32 pid = g_wins[id].pid;
     /* Snapshot rect before clearing — init needs it to repaint the desktop */
     int x = g_wins[id].x, y = g_wins[id].y;
     int w = g_wins[id].w, h = g_wins[id].h;
 
-    if (g_focused_pid == g_wins[id].pid)
+    if (g_focused_pid == pid)
         g_focused_pid = 0;
 
     g_wins[id].active = 0;
+    spin_unlock(&g_wm_lock);
 
-    /* Notify init (PID 1) so it can repaint the vacated region */
+    kinfo("[WM] unregister win=%d pid=%u\n", id, pid);
+
+    /* Notify init (PID 1) so it can repaint the vacated region.
+     * Done AFTER releasing g_wm_lock — wm_deliver_to_pid takes the lock too. */
     wm_deliver_to_pid(1, wm_pack_window_closed(x, y, w, h));
 }
 
@@ -185,14 +210,17 @@ void wm_deliver_to_pid(u32 pid, u64 packed)
     if (idx >= WM_MAX_PIDS)
         return;
 
-    key_fifo_t *f    = &g_fifos[idx];
-    u32         next = (f->head + 1) % WM_KEY_RING;
+    key_fifo_t *f = &g_fifos[idx];
 
-    if (next == f->tail)
+    spin_lock(&g_wm_lock);
+    u32 next = (f->head + 1) % WM_KEY_RING;
+    if (next == f->tail) {
+        spin_unlock(&g_wm_lock);
         return;   /* ring full — drop event */
-
+    }
     f->buf[f->head] = packed;
     f->head         = next;
+    spin_unlock(&g_wm_lock);
 }
 
 void wm_deliver_key(u64 packed)
@@ -210,11 +238,15 @@ u64 wm_key_dequeue(u32 pid)
         return 0;
 
     key_fifo_t *f = &g_fifos[idx];
-    if (f->head == f->tail)
-        return 0;
 
-    u64 ev   = f->buf[f->tail];
-    f->tail  = (f->tail + 1) % WM_KEY_RING;
+    spin_lock(&g_wm_lock);
+    if (f->head == f->tail) {
+        spin_unlock(&g_wm_lock);
+        return 0;
+    }
+    u64 ev  = f->buf[f->tail];
+    f->tail = (f->tail + 1) % WM_KEY_RING;
+    spin_unlock(&g_wm_lock);
     return ev;
 }
 

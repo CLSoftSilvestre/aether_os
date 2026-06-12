@@ -102,14 +102,24 @@ static void print_exception_info(const trap_frame_t *frame, const char *type)
     u64 far = 0;
     __asm__ volatile("mrs %0, FAR_EL1" : "=r"(far));
 
+    u64 sp_el0 = 0, sp_el1 = 0;
+    __asm__ volatile("mrs %0, SP_EL0" : "=r"(sp_el0));
+    __asm__ volatile("mov %0, sp"     : "=r"(sp_el1));
+
+    /*
+     * Print the raw fault registers FIRST — these are reads from the trap
+     * frame and direct MRS, so they cannot themselves fault.  Only after the
+     * crucial diagnostics are out do we attempt task_current_name(), which
+     * indexes g_tasks[g_current_idx[cpu_id()]] and CAN fault if scheduler
+     * state is corrupt — exactly the kind of crash we're debugging.  Ordering
+     * it last means a fault there never hides ELR/FAR/ESR.
+     */
     kerror("═══════════════════════════════════════════\n");
-    kerror("EXCEPTION: %s  (PID %lu, task '%s', core %lu)\n",
-           type,
-           (unsigned long)task_current_pid(),
-           task_current_name(),
-           (unsigned long)cpu_id());
+    kerror("EXCEPTION: %s  (core %lu)\n", type, (unsigned long)cpu_id());
     kerror("  ELR  (PC):  %p\n",   (void *)frame->elr);
     kerror("  FAR (addr): %p\n",   (void *)(uintptr_t)far);
+    kerror("  SP_EL1:     %p\n",   (void *)(uintptr_t)sp_el1);
+    kerror("  SP_EL0:     %p\n",   (void *)(uintptr_t)sp_el0);
     kerror("  SPSR:       0x%lx\n", (unsigned long)frame->spsr);
     kerror("  ESR:        0x%lx\n", (unsigned long)frame->esr);
     kerror("  EC:  0x%x  — %s\n",  ec, ec_name);
@@ -122,10 +132,35 @@ static void print_exception_info(const trap_frame_t *frame, const char *type)
                i+1, (void *)frame->x[i+1]);
     }
     kerror("  x30: %p\n", (void *)frame->x30);
+
+    /* Riskiest call last — see note above. */
+    kerror("  PID %lu, task '%s'\n",
+           (unsigned long)task_current_pid(), task_current_name());
     kerror("═══════════════════════════════════════════\n");
 }
 
 /* ── Handlers called from exceptions.S ─────────────────────────────────── */
+
+/*
+ * Fatal-exception recursion/concurrency guard.
+ *
+ * A fatal fault dumps registers via printk.  If that dump itself faults (e.g.
+ * the faulting core's kernel stack is corrupt) or a second core faults at the
+ * same time, we must NOT recurse into the printer again — that produces an
+ * endless storm of half-printed banners that buries the one dump we need.
+ * The first core to fault claims the dump; everyone else parks silently.
+ *
+ * A plain flag (not an atomic) is deliberate: we're already in an
+ * unrecoverable state, the tiny race where two cores both print one dump is
+ * harmless, and this avoids pulling in outline-atomic libcalls.
+ */
+static volatile int g_panicking = 0;
+
+__attribute__((noreturn))
+static void park_core_forever(void)
+{
+    for (;;) __asm__ volatile("wfi");
+}
 
 /*
  * el1_sync_handler — kernel synchronous exception.
@@ -138,6 +173,10 @@ static void print_exception_info(const trap_frame_t *frame, const char *type)
  */
 void el1_sync_handler(trap_frame_t *frame)
 {
+    if (g_panicking)
+        park_core_forever();   /* nested/concurrent fault — don't storm */
+    g_panicking = 1;
+
     print_exception_info(frame, "Synchronous (EL1)");
     kpanic("Unhandled kernel exception — halting\n");
 }
@@ -196,6 +235,10 @@ void el1_irq_handler(trap_frame_t *frame)
  */
 void el1_serror_handler(trap_frame_t *frame)
 {
+    if (g_panicking)
+        park_core_forever();
+    g_panicking = 1;
+
     print_exception_info(frame, "SError (System Error)");
     kpanic("SError — unrecoverable hardware fault\n");
 }
@@ -226,6 +269,10 @@ void el0_sync_handler(trap_frame_t *frame)
         vmm_switch_to_current_pt();
         return;
     }
+    if (g_panicking)
+        park_core_forever();
+    g_panicking = 1;
+
     print_last_elrs();
     print_exception_info(frame, "Synchronous (EL0 — user)");
     kpanic("Unhandled user exception — halting\n");

@@ -473,7 +473,6 @@ int fat32_open(const char *path)
         kwarn("fat32_open: no free handle (all %d busy) for '%s'\n", FAT32_MAX_FILES, path);
         return -1;
     }
-    kinfo("fat32_open: '%s' cluster=%u size=%u fh=%d\n", path, cluster, size, fh);
     return fh;
 }
 

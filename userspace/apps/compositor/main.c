@@ -451,11 +451,46 @@ int main(void)
      *        if those apps are blocked waiting for input.
      *   3. If any damage: composite all GPU-BO-backed windows in z order.
      */
+    /*
+     * Force-composite window, RE-ARMED on every window-set change.
+     *
+     * Apps register then draw their first frame asynchronously; the desktop in
+     * particular paints its wallpaper+icons exactly once and emits a single
+     * damage event.  If that damage races (dropped, or arrives before the BO is
+     * drawn/bound), a purely damage-driven compositor latches a blank scene and
+     * — since the desktop never redraws on its own — the screen stays dark.
+     *
+     * Anchoring this to compositor startup alone is not enough: the desktop
+     * appears only AFTER login, by which time a startup-only window has long
+     * expired.  Instead we re-arm the force window whenever the set of windows
+     * changes (a window registered or unregistered), so newly-appeared windows
+     * are guaranteed to be composited for the next ~2 s regardless of damage
+     * timing, then we fall back to efficient damage-driven mode.
+     */
+    int force_frames    = 180;   /* ~3 s — initial */
+    int prev_win_count  = -1;
+
     for (;;) {
         sys_vsync_wait();
 
         int needs_composite = 0;
         unsigned long long ev;
+
+        /* Re-arm the force window if the window set changed since last frame. */
+        {
+            wm_entry_t wsnap[COMPOSITOR_MAX_WINDOWS];
+            int wc = sys_wm_enum(wsnap, COMPOSITOR_MAX_WINDOWS);
+            if (wc != prev_win_count) {
+                prev_win_count = wc;
+                if (force_frames < 120)
+                    force_frames = 120;   /* ~2 s after any window change */
+            }
+        }
+
+        if (force_frames > 0) {
+            force_frames--;
+            needs_composite = 1;
+        }
 
         /* Drain event ring — sys_wm_event_poll also routes kbd hardware
          * events to the focused PID as a side effect. */

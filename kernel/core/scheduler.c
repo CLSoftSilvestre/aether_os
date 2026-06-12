@@ -310,6 +310,11 @@ int task_create_user(uintptr_t el0_entry, uintptr_t el0_sp,
     t->el0_sp    = el0_sp;
     init_uart_fds(t);
 
+    /* init (the global-PT process) runs the cursor/input loop and owns the GUI
+     * daemons it spawns — pin it to core 0 alongside them for race-free,
+     * single-core cooperative scheduling of the whole display path. */
+    t->cpu_affinity = CPU_MASK_CORE0;
+
     kinfo("Scheduler: created user task[%lu] '%s' el0_entry=%p\n",
           (unsigned long)g_num_tasks, name, (void *)el0_entry);
 
@@ -340,6 +345,17 @@ int task_create_isolated(uintptr_t el0_entry, uintptr_t el0_sp,
     t->user_code_pages  = user_code_pages;
     t->user_stack_phys  = user_stack_phys;
     t->user_stack_pages = user_stack_pages;
+
+    /*
+     * Pin the system GUI daemons to core 0.  init (PID 1) spawns exactly
+     * compositor, login, topbar, desktop and dock — the processes that
+     * interact tightly through the WM/compositor during bring-up.  Running
+     * them all on one core gives them the single-core cooperative semantics
+     * they were written for (no inter-core races), while apps launched later
+     * by the dock/desktop (ppid != 1) keep CPU_MASK_ALL and use every core.
+     */
+    if (ppid == 1)
+        t->cpu_affinity = CPU_MASK_CORE0;
 
     task_t *parent = NULL;
     for (u32 i = 0; i < g_num_tasks; i++) {

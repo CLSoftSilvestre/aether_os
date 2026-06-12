@@ -424,7 +424,17 @@ int main(void)
      * initialising at spawn time) is guaranteed to receive a damage event
      * once it is ready. */
     int prev_buttons  = 0;
-    int startup_draws = 2;
+    /*
+     * Repaint periodically for the first few seconds, not just twice.
+     *
+     * The desktop is a static window: it paints once and never redraws on its
+     * own.  If the compositor isn't ready (or the single damage event races)
+     * when those first frames land, the desktop layer is never composited and
+     * the screen stays dark forever.  Redrawing+damaging every few frames for
+     * ~3 s guarantees the compositor eventually latches a drawn frame, then we
+     * go idle.  desktop_draw_full() ends with sys_wm_damage().
+     */
+    int frame = 0;
     for (;;) {
         unsigned long long ev;
         while ((ev = sys_wm_event_poll()) != 0) {
@@ -436,10 +446,9 @@ int main(void)
                 prev_buttons = btn;
             }
         }
-        if (startup_draws > 0) {
+        if (frame < 180 && (frame % 12) == 0)
             desktop_draw_full();
-            startup_draws--;
-        }
+        frame++;
         sys_vsync_wait();
     }
 

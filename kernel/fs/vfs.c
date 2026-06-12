@@ -25,6 +25,7 @@
 #include "aether/usb_fat32.h"
 #include "aether/printk.h"
 #include "aether/types.h"
+#include "aether/spinlock.h"
 
 /* ── fd table ────────────────────────────────────────────────────────────── */
 
@@ -52,6 +53,16 @@ typedef struct {
 } vfs_fd_t;
 
 static vfs_fd_t g_fds[VFS_MAX_FD];
+
+/*
+ * Protects slot allocation/release in g_fds[].  vfs_open/create/close do a
+ * check-then-act on g_fds[i].used; without this, two cores can claim the same
+ * slot and alias one fd → table corruption.  Held across the backend open
+ * (fat32/afs/usb), which take their own locks — order is always vfs→backend,
+ * never the reverse, so no deadlock.  vfs_read/write touch only an already-open
+ * distinct slot and need no lock.
+ */
+static spinlock_t g_vfs_lock = SPINLOCK_INIT;
 
 /* ── String helpers ──────────────────────────────────────────────────────── */
 
@@ -139,7 +150,7 @@ void vfs_init(void)
 
 /* ── Public: open ────────────────────────────────────────────────────────── */
 
-int vfs_open(const char *path)
+static int vfs_open_locked(const char *path)
 {
     if (!path) return -1;
 
@@ -217,6 +228,14 @@ int vfs_open(const char *path)
     return VFS_FD_BASE + slot;
 }
 
+int vfs_open(const char *path)
+{
+    spin_lock(&g_vfs_lock);
+    int r = vfs_open_locked(path);
+    spin_unlock(&g_vfs_lock);
+    return r;
+}
+
 /* ── Public: read ────────────────────────────────────────────────────────── */
 
 int vfs_read(int vfd, u8 *buf, u32 len)
@@ -255,7 +274,9 @@ void vfs_close(int vfd)
     if (!vfs_is_vfd(vfd)) return;
     int slot = vfd - VFS_FD_BASE;
     vfs_fd_t *f = &g_fds[slot];
-    if (!f->used) return;
+
+    spin_lock(&g_vfs_lock);
+    if (!f->used) { spin_unlock(&g_vfs_lock); return; }
 
     if (f->backend == VFS_BACK_FAT32)
         fat32_close(f->fat.fh);
@@ -265,11 +286,12 @@ void vfs_close(int vfd)
         usb_fat32_close(f->usb.fh);
 
     f->used = 0;
+    spin_unlock(&g_vfs_lock);
 }
 
 /* ── Public: create ──────────────────────────────────────────────────────── */
 
-int vfs_create(const char *path)
+static int vfs_create_locked(const char *path)
 {
     /* Only FAT32 is writable; initrd, AetherFS, and USB are read-only */
     if (!path) return -1;
@@ -300,6 +322,14 @@ int vfs_create(const char *path)
     f->backend = VFS_BACK_FAT32;
     f->fat.fh  = fh;
     return VFS_FD_BASE + slot;
+}
+
+int vfs_create(const char *path)
+{
+    spin_lock(&g_vfs_lock);
+    int r = vfs_create_locked(path);
+    spin_unlock(&g_vfs_lock);
+    return r;
 }
 
 /* ── Public: mkdir ───────────────────────────────────────────────────────── */

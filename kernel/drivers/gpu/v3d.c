@@ -29,6 +29,7 @@
 #include "aether/mm.h"
 #include "aether/printk.h"
 #include "aether/types.h"
+#include "aether/spinlock.h"
 
 /* ── MMIO accessor macros ─────────────────────────────────────────────── */
 
@@ -47,6 +48,10 @@ static volatile u32 * const g_hub = (volatile u32 *)V3D_HUB_BASE_PI4;
 static bool       g_present;
 static gpu_caps_t g_caps;
 static gpu_bo_t   g_bos[GPU_MAX_BOS];
+/* Protects the g_bos[] handle table against concurrent alloc/free across cores.
+ * Held only around the slot scan + claim; PMM alloc/free (their own lock) and
+ * logging happen outside it.  Order is always v3d_bo→pmm, never the reverse. */
+static spinlock_t g_bo_lock = SPINLOCK_INIT;
 
 /* Double-buffer back buffer (allocated by v3d_dbl_init when compositor claims FB) */
 static volatile u32 *g_back_buf;
@@ -418,21 +423,27 @@ int v3d_bo_alloc(u32 size_bytes)
     }
 
     for (int i = 0; i < GPU_MAX_BOS; i++) {
-        if (g_bos[i].handle) continue;
+        spin_lock(&g_bo_lock);
+        if (g_bos[i].handle) { spin_unlock(&g_bo_lock); continue; }
+        /* Reserve the slot under the lock so no other core can claim it. */
+        g_bos[i].handle = (u32)(i + 1);
+        spin_unlock(&g_bo_lock);
 
         uintptr_t phys = pmm_alloc_pages(npages);
         if (!phys) {
+            /* Roll back the reservation on allocation failure. */
+            spin_lock(&g_bo_lock);
+            g_bos[i].handle = 0;
+            spin_unlock(&g_bo_lock);
             kwarn("[V3D] bo_alloc: PMM out of pages (requested %u)\n", npages);
             return -1;
         }
 
         g_bos[i].phys   = phys;
         g_bos[i].pages  = npages;
-        g_bos[i].handle = (u32)(i + 1);
 
         kinfo("[V3D] BO alloc: handle=%u phys=0x%lx pages=%u (%u KB)\n",
-              g_bos[i].handle, (unsigned long)phys,
-              npages, npages * 4u);
+              (u32)(i + 1), (unsigned long)phys, npages, npages * 4u);
         return (int)(i + 1);
     }
 
@@ -445,17 +456,21 @@ int v3d_bo_free(u32 handle)
     if (!handle || handle > (u32)GPU_MAX_BOS) return -1;
 
     gpu_bo_t *bo = &g_bos[handle - 1u];
-    if (!bo->handle) return -1;
 
-    for (u32 i = 0; i < bo->pages; i++)
-        pmm_free_page(bo->phys + i * (u32)PMM_PAGE_SIZE);
-
-    kinfo("[V3D] BO free: handle=%u phys=0x%lx\n",
-          handle, (unsigned long)bo->phys);
-
+    /* Detach the slot under the lock, then free pages outside it. */
+    spin_lock(&g_bo_lock);
+    if (!bo->handle) { spin_unlock(&g_bo_lock); return -1; }
+    uintptr_t phys  = bo->phys;
+    u32       pages = bo->pages;
     bo->handle = 0;
     bo->phys   = 0;
     bo->pages  = 0;
+    spin_unlock(&g_bo_lock);
+
+    for (u32 i = 0; i < pages; i++)
+        pmm_free_page(phys + i * (u32)PMM_PAGE_SIZE);
+
+    kinfo("[V3D] BO free: handle=%u phys=0x%lx\n", handle, (unsigned long)phys);
     return 0;
 }
 
