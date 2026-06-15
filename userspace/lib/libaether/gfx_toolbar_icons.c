@@ -327,6 +327,18 @@ static void icon_close_small(int x, int y)
     gfx_fill(x+10, y+10, 2, 2, c);
 }
 
+/* Folder with a green plus — create new directory */
+static void icon_newfolder(int x, int y)
+{
+    gfx_fill(x,   y+3, 5,  2, IC_GOLD);                  /* folder tab */
+    gfx_fill(x,   y+5, 14, 9, IC_GOLD);                  /* folder body */
+    gfx_fill(x+5, y+3,  9, 2, IC_GOLD);                  /* body top to meet tab */
+    gfx_fill(x,   y+5, 14, 2, GFX_RGB(255, 210, 90));    /* lighter top edge */
+    /* green plus overlay */
+    gfx_fill(x+6, y+7, 2, 6, IC_GREEN);                  /* vertical bar */
+    gfx_fill(x+4, y+9, 6, 2, IC_GREEN);                  /* horizontal bar */
+}
+
 /* ── Dispatch ─────────────────────────────────────────────────────────────── */
 
 void gfx_toolbar_icon(int x, int y, unsigned char icon_id)
@@ -354,6 +366,7 @@ void gfx_toolbar_icon(int x, int y, unsigned char icon_id)
     case ICON_BTN_STAR_FILLED:  icon_star_filled(x, y);  break;
     case ICON_BTN_NEWTAB:       icon_newtab(x, y);       break;
     case ICON_BTN_CLOSE_SMALL:  icon_close_small(x, y);  break;
+    case ICON_BTN_NEWFOLDER:    icon_newfolder(x, y);    break;
     default: break;
     }
 }

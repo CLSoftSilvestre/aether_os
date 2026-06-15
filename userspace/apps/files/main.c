@@ -29,12 +29,12 @@
 /* ── Window geometry ──────────────────────────────────────────────────── */
 
 #define WIN_W         900
-#define WIN_H         636
+#define WIN_H         540   /* reduced so the window fits above the dock */
 #define TITLE_H        32   /* glass titlebar */
-#define CONT_H        (WIN_H - TITLE_H)    /* 604 — content including toolbar */
+#define CONT_H        (WIN_H - TITLE_H)    /* 508 — content including toolbar */
 #define TOOLBAR_H      36   /* nav toolbar */
 #define STATUS_H       26   /* status bar */
-#define PANE_H        (CONT_H - TOOLBAR_H - STATUS_H)  /* 542 */
+#define PANE_H        (CONT_H - TOOLBAR_H - STATUS_H)  /* 446 */
 
 #define SIDEBAR_HDR_H  20   /* "DRIVES" header above tree */
 #define TREE_W        220
@@ -60,6 +60,32 @@
 #define TBTN_SEP_X    178
 #define TBTN_PATH_X   190   /* breadcrumb display start */
 #define TBTN_H         24   /* button height */
+
+/* Action toolbar buttons — right-aligned: New Folder, New File, Delete, Refresh */
+#define ABTN_W         30   /* action button width  */
+#define ABTN_GAP        4   /* gap between buttons   */
+#define ABTN_COUNT      4
+#define ABTN_TOTAL_W   (ABTN_COUNT*ABTN_W + (ABTN_COUNT-1)*ABTN_GAP)  /* 132 */
+#define ABTN_X0        (WIN_W - 8 - ABTN_TOTAL_W)  /* left edge of first action btn */
+/* Action button indices (left-to-right within the action group) */
+#define ABTN_NEWDIR     0
+#define ABTN_NEWFILE    1
+#define ABTN_DELETE     2
+#define ABTN_REFRESH    3
+
+/* ── Modal dialog ─────────────────────────────────────────────────────── */
+#define DLG_NONE        0
+#define DLG_NEWFILE     1
+#define DLG_NEWDIR      2
+#define DLG_DELETE      3
+
+#define DLG_BOX_W     360
+#define DLG_BOX_H     150
+#define DLG_BOX_X     ((WIN_W - DLG_BOX_W) / 2)
+#define DLG_BOX_Y     ((CONT_H - DLG_BOX_H) / 2)
+#define DLG_BTN_W      84
+#define DLG_BTN_H      26
+#define DLG_INPUT_Y   (DLG_BOX_Y + 70)
 
 /* Double-click: 50 × 10 ms ticks = 500 ms */
 #define DCLICK_TICKS   50
@@ -153,11 +179,23 @@ static widget_t g_divider;
 static widget_t g_right;
 static widget_t g_statusbar;
 
+/* Modal dialog widgets (overlay covers the whole content area) */
+static widget_t g_overlay;
+static widget_t g_dlg_input;
+static widget_t g_dlg_ok;
+static widget_t g_dlg_cancel;
+
+static int  g_dlg_mode = DLG_NONE;
+static char g_dlg_title[48];
+static char g_dlg_msg[96];
+
 /* ── Forward declarations ─────────────────────────────────────────────── */
 
 static void files_navigate_core(const char *path);
 static void files_navigate_to(const char *path);
 static void draw_frame(void);
+static void dialog_close(void);
+static void dialog_open(int mode);
 /* static void draw_title_text(void); */
 
 /* ── Path pool allocator ──────────────────────────────────────────────── */
@@ -262,6 +300,29 @@ static void draw_glass_btn(int x, int y, int w, int h,
     int tx = x + (w - lw) / 2;
     int ty = y + (h - 8) / 2;
     gfx_text((unsigned)tx, (unsigned)ty, label, fg, bg);
+}
+
+/*
+ * Draw a glass-style toolbar button containing a 14×14 vector icon.
+ * enabled=0: dimmed appearance (icon still shown, button greyed).
+ */
+static void draw_icon_btn(int x, int y, int w, int h,
+                          unsigned char icon_id, int enabled)
+{
+    unsigned bg = enabled ? C_BTN_BG : C_BTN_DISABLED;
+    gfx_fill((unsigned)x, (unsigned)y, (unsigned)w, (unsigned)h, bg);
+    gfx_hline((unsigned)x, (unsigned)y, (unsigned)w, C_GLASS_HIGH); /* top glow */
+    gfx_rect((unsigned)x, (unsigned)y, (unsigned)w, (unsigned)h,
+              enabled ? GFX_RGB(55,48,100) : GFX_RGB(35,32,58));
+    int ix = x + (w - 14) / 2;
+    int iy = y + (h - 14) / 2;
+    gfx_toolbar_icon(ix, iy, icon_id);
+}
+
+/* Absolute-x of action button `i` (0..ABTN_COUNT-1) given toolbar origin ax */
+static int action_btn_x(int ax, int i)
+{
+    return ax + ABTN_X0 + i * (ABTN_W + ABTN_GAP);
 }
 
 /*
@@ -502,9 +563,21 @@ static void toolbar_draw(widget_t *w, int ax, int ay)
     gfx_vline((unsigned)(ax+TBTN_SEP_X), (unsigned)(ay+4),
               (unsigned)(ph-8), C_SEP);
 
-    /* Breadcrumb */
+    /* Breadcrumb — clipped so it never overlaps the action buttons */
     int bcy = ay + (ph - 8) / 2;
-    draw_breadcrumb(ax+TBTN_PATH_X, bcy, pw-TBTN_PATH_X-8);
+    draw_breadcrumb(ax+TBTN_PATH_X, bcy, ABTN_X0 - TBTN_PATH_X - 12);
+
+    /* Action buttons (right-aligned): New Folder, New File, Delete, Refresh */
+    int aby      = ay + (ph - TBTN_H) / 2;
+    int has_sel  = (g_selected_entry >= 0 && g_selected_entry < g_entry_count);
+    draw_icon_btn(action_btn_x(ax, ABTN_NEWDIR),  aby, ABTN_W, TBTN_H,
+                  ICON_BTN_NEWFOLDER, 1);
+    draw_icon_btn(action_btn_x(ax, ABTN_NEWFILE), aby, ABTN_W, TBTN_H,
+                  ICON_BTN_NEW, 1);
+    draw_icon_btn(action_btn_x(ax, ABTN_DELETE),  aby, ABTN_W, TBTN_H,
+                  ICON_BTN_CLEAR, has_sel);
+    draw_icon_btn(action_btn_x(ax, ABTN_REFRESH), aby, ABTN_W, TBTN_H,
+                  ICON_BTN_REFRESH, 1);
 }
 
 static int toolbar_event(widget_t *w, const widget_event_t *ev)
@@ -525,6 +598,23 @@ static int toolbar_event(widget_t *w, const widget_event_t *ev)
     if (rx >= TBTN_HOME_X && rx < TBTN_HOME_X+TBTN_HOME_W) {
         if (g_first_mount[0]) files_navigate_to(g_first_mount);
         return 1;
+    }
+
+    /* Action buttons (right-aligned) */
+    for (int i = 0; i < ABTN_COUNT; i++) {
+        int bx = ABTN_X0 + i * (ABTN_W + ABTN_GAP);
+        if (rx < bx || rx >= bx + ABTN_W) continue;
+        switch (i) {
+        case ABTN_NEWDIR:  dialog_open(DLG_NEWDIR);  return 1;
+        case ABTN_NEWFILE: dialog_open(DLG_NEWFILE); return 1;
+        case ABTN_DELETE:
+            if (g_selected_entry >= 0 && g_selected_entry < g_entry_count)
+                dialog_open(DLG_DELETE);
+            return 1;
+        case ABTN_REFRESH:
+            files_navigate_core(g_current_path);
+            return 1;
+        }
     }
     return 0;
 }
@@ -809,6 +899,119 @@ static void tree_on_expand(tv_node_t *node, void *ctx)
     }
 }
 
+/* ── Modal dialog (new file / new folder / delete) ────────────────────── */
+
+/* Join dir + name into a VFS path, handling the "/" root specially. */
+static void join_path(char *out, int max, const char *dir, const char *name)
+{
+    if (dir[0]=='/' && dir[1]=='\0')
+        snprintf(out, max, "/%s", name);
+    else
+        snprintf(out, max, "%s/%s", dir, name);
+}
+
+/* Hide the dialog and repaint the main UI. */
+static void dialog_close(void)
+{
+    g_dlg_mode      = DLG_NONE;
+    g_overlay.hidden = 1;
+    widget_set_focused(&g_right);
+    widget_invalidate_all(&g_root);
+}
+
+/* Open the dialog in the given mode (DLG_NEWFILE / DLG_NEWDIR / DLG_DELETE). */
+static void dialog_open(int mode)
+{
+    g_dlg_mode = mode;
+    if (mode == DLG_NEWFILE) {
+        strncpy(g_dlg_title, "New File", 47);
+        strncpy(g_dlg_msg,   "Enter file name:", 95);
+        textinput_clear(&g_dlg_input);
+        g_dlg_input.hidden = 0;
+    } else if (mode == DLG_NEWDIR) {
+        strncpy(g_dlg_title, "New Folder", 47);
+        strncpy(g_dlg_msg,   "Enter folder name:", 95);
+        textinput_clear(&g_dlg_input);
+        g_dlg_input.hidden = 0;
+    } else { /* DLG_DELETE */
+        strncpy(g_dlg_title, "Delete", 47);
+        snprintf(g_dlg_msg, sizeof(g_dlg_msg), "Delete \"%s\" ?",
+                 g_entries[g_selected_entry].name);
+        g_dlg_input.hidden = 1;
+    }
+    g_dlg_title[47] = '\0';
+    g_dlg_msg[95]   = '\0';
+
+    g_overlay.hidden = 0;
+    widget_invalidate_all(&g_overlay);
+
+    /* Focus the text field for name entry; the overlay itself for confirm. */
+    if (mode == DLG_DELETE) widget_set_focused(&g_overlay);
+    else                    widget_set_focused(&g_dlg_input);
+}
+
+/* Perform the action the dialog is confirming, then close + refresh. */
+static void dialog_confirm(void)
+{
+    int  mode = g_dlg_mode;
+    char path[160];
+
+    if (mode == DLG_NEWFILE || mode == DLG_NEWDIR) {
+        const char *name = textinput_get_text(&g_dlg_input);
+        if (!name || !name[0]) { dialog_close(); return; }
+        /* Reject path separators in a single-component name */
+        for (const char *p = name; *p; p++)
+            if (*p == '/') { dialog_close(); return; }
+        join_path(path, sizeof(path), g_current_path, name);
+        if (mode == DLG_NEWFILE) {
+            long vfd = sys_fs_create(path);
+            if (vfd >= 0) sys_fs_close(vfd);
+        } else {
+            sys_fs_mkdir(path);
+        }
+    } else if (mode == DLG_DELETE) {
+        if (g_selected_entry >= 0 && g_selected_entry < g_entry_count)
+            sys_fs_rm(g_entries[g_selected_entry].path);
+    }
+
+    dialog_close();
+    files_navigate_core(g_current_path);   /* reload the listing */
+}
+
+static void dlg_ok_click(widget_t *w)     { (void)w; dialog_confirm(); }
+static void dlg_cancel_click(widget_t *w) { (void)w; dialog_close(); }
+static void dlg_input_submit(widget_t *w) { (void)w; dialog_confirm(); }
+
+/* Overlay backdrop: dim wash + dialog box; also shields the grid from clicks. */
+static void overlay_draw(widget_t *w, int ax, int ay)
+{
+    gfx_fill((unsigned)ax, (unsigned)ay,
+             (unsigned)w->bounds.w, (unsigned)w->bounds.h, GFX_RGB(8, 7, 16));
+
+    int bx = ax + DLG_BOX_X;
+    int by = ay + DLG_BOX_Y;
+    gfx_fill_rounded((unsigned)bx, (unsigned)by, DLG_BOX_W, DLG_BOX_H,
+                     GFX_WIDGET_R, C_GLASS_TITLE);
+    gfx_rect_rounded((unsigned)bx, (unsigned)by, DLG_BOX_W, DLG_BOX_H,
+                     GFX_WIDGET_R, C_ACCENT);
+
+    gfx_text((unsigned)(bx+16), (unsigned)(by+14), g_dlg_title, C_TEXT, C_GLASS_TITLE);
+    gfx_hline((unsigned)(bx+12), (unsigned)(by+34), DLG_BOX_W-24, C_SEP);
+    gfx_text((unsigned)(bx+16), (unsigned)(by+46), g_dlg_msg, C_TEXT_DIM, C_GLASS_TITLE);
+}
+
+static int overlay_event(widget_t *w, const widget_event_t *ev)
+{
+    (void)w;
+    if (ev->type == WEV_KEY_DOWN) {
+        if (ev->keycode == KEY_ENTER) { dialog_confirm(); return 1; }
+        if (ev->keycode == KEY_ESC)   { dialog_close();   return 1; }
+        return 1;
+    }
+    /* Swallow all mouse activity on the backdrop (keeps the grid inert). */
+    return 1;
+}
+
 /* ── Window frame ─────────────────────────────────────────────────────── */
 
 static void draw_frame(void)
@@ -863,12 +1066,36 @@ static void build_ui(void)
                       "", WGT_ALIGN_LEFT);
     g_statusbar.draw_fn = statusbar_draw;
 
+    /* ── Modal dialog overlay (hidden until an action is invoked) ──────── */
+    int ix = DLG_BOX_X + 16;
+    int iw = DLG_BOX_W - 32;
+    widget_init_textinput(&g_dlg_input, ix, DLG_INPUT_Y, iw, 24,
+                          (void *)0, dlg_input_submit);
+
+    int btn_y    = DLG_BOX_Y + DLG_BOX_H - DLG_BTN_H - 14;
+    int ok_x     = DLG_BOX_X + DLG_BOX_W - 16 - DLG_BTN_W;
+    int cancel_x = ok_x - 12 - DLG_BTN_W;
+    widget_init_button(&g_dlg_ok, ok_x, btn_y, DLG_BTN_W, DLG_BTN_H,
+                       "OK", dlg_ok_click);
+    widget_init_button(&g_dlg_cancel, cancel_x, btn_y, DLG_BTN_W, DLG_BTN_H,
+                       "Cancel", dlg_cancel_click);
+
+    widget_init_panel(&g_overlay, 0, 0, WIN_W, CONT_H, C_WIN_BG);
+    g_overlay.draw_fn   = overlay_draw;
+    g_overlay.event_fn  = overlay_event;
+    g_overlay.focusable = 1;
+    g_overlay.hidden    = 1;
+    widget_add_child(&g_overlay, &g_dlg_input);
+    widget_add_child(&g_overlay, &g_dlg_cancel);
+    widget_add_child(&g_overlay, &g_dlg_ok);
+
     widget_add_child(&g_root, &g_toolbar);
     widget_add_child(&g_root, &g_sidebar_hdr);
     widget_add_child(&g_root, &g_tree);
     widget_add_child(&g_root, &g_divider);
     widget_add_child(&g_root, &g_right);
     widget_add_child(&g_root, &g_statusbar);
+    widget_add_child(&g_root, &g_overlay);   /* added LAST → topmost / modal */
 }
 
 /* ── Main ─────────────────────────────────────────────────────────────── */

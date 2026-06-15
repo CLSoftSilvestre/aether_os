@@ -244,6 +244,7 @@ void gfx_icon_file_generic(int x, int y, int sz);
 #define ICON_BTN_STAR_FILLED 20  /* filled star — bookmarked */
 #define ICON_BTN_NEWTAB      21  /* plus sign — new tab */
 #define ICON_BTN_CLOSE_SMALL 22  /* small X — close tab */
+#define ICON_BTN_NEWFOLDER   23  /* folder with green plus — new directory */
 
 /*
  * Draw a 14×14 toolbar icon centred at pixel (x, y) = top-left of the 14×14 cell.
